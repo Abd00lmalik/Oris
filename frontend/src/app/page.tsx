@@ -113,8 +113,6 @@ export default function HomePage() {
       <div className="archon-card p-6 text-center md:p-10">
         <div className="mx-auto flex w-full max-w-xl flex-col items-center">
           <Image src="/logo.svg" alt="Archon" width={220} height={70} priority />
-          <h1 className="mt-6 text-4xl font-semibold tracking-wide text-[#EAEAF0] md:text-5xl">Archon</h1>
-          <p className="mt-2 text-base text-[#9CA3AF]">Verifiable work. On-chain.</p>
         </div>
       </div>
 

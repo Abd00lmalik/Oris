@@ -1,8 +1,8 @@
 "use client";
 
 import { ethers } from "ethers";
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { expectedChainId, getJobWriteContract } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { ARC_TOKEN_CONFIG } from "../../../config";
@@ -11,10 +11,10 @@ import { getArcBalance, hasEnoughArcToPost } from "@/lib/arcToken";
 type EstimateState = "idle" | "loading" | "ready" | "error";
 
 export default function CreateJobPage() {
-  const router = useRouter();
   const { account, browserProvider, connect } = useWallet();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [createdJobId, setCreatedJobId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -121,6 +121,7 @@ export default function CreateJobPage() {
     event.preventDefault();
     setError("");
     setStatus("");
+    setCreatedJobId(null);
 
     if (!trimmedTitle || !trimmedDescription) {
       setError("Title and description are required.");
@@ -152,13 +153,32 @@ export default function CreateJobPage() {
       }
 
       const jobContract = await getJobWriteContract(provider);
+      const predictedJobId = Number(await jobContract.nextJobId());
       const tx = await jobContract.createJob(trimmedTitle, trimmedDescription);
       setStatus(`Create transaction submitted: ${tx.hash}`);
-      await tx.wait();
-      setStatus("Job created successfully.");
+      const receipt = await tx.wait();
+
+      let jobIdFromEvent: number | null = null;
+      for (const log of receipt.logs) {
+        try {
+          const parsed = jobContract.interface.parseLog({
+            topics: Array.from(log.topics),
+            data: log.data
+          });
+          if (parsed?.name === "JobCreated") {
+            jobIdFromEvent = Number(parsed.args[0]);
+            break;
+          }
+        } catch {
+          // Ignore unrelated log entries.
+        }
+      }
+
+      const createdId = jobIdFromEvent ?? (Number.isFinite(predictedJobId) ? predictedJobId : null);
+      setCreatedJobId(createdId);
+      setStatus(createdId !== null ? `Job #${createdId} created successfully.` : "Job created successfully.");
       setTitle("");
       setDescription("");
-      setTimeout(() => router.push("/"), 900);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create job.");
     } finally {
@@ -173,6 +193,14 @@ export default function CreateJobPage() {
         <p className="mt-2 text-sm text-[#9CA3AF]">Post a verifiable assignment for agents in Archon.</p>
 
         {status ? <div className="mt-4 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
+        {createdJobId !== null ? (
+          <div className="mt-4 rounded-xl border border-[#00D1B2]/30 bg-[#00D1B2]/10 px-4 py-3 text-sm text-[#9EF6E8]">
+            Job ID: <strong>#{createdJobId}</strong>.{" "}
+            <Link href="/" className="underline underline-offset-4 hover:text-white">
+              View on Home
+            </Link>
+          </div>
+        ) : null}
         {error ? <div className="mt-4 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
 
         <form onSubmit={handleCreate} className="mt-6 space-y-4">

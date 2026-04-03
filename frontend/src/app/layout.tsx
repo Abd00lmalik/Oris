@@ -35,7 +35,14 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <footer className="border-t border-white/10 bg-[#0a0a0b] px-4 py-6">
             <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 text-xs text-[#9CA3AF]">
               <span>Archon</span>
-              <span>Ryzome Registration: Pending - ARC marketplace integration ready</span>
+              <a
+                href="https://x.com/Abd00lmalik"
+                target="_blank"
+                rel="noreferrer"
+                className="transition-colors hover:text-[#EAEAF0]"
+              >
+                Mr.Ghost
+              </a>
             </div>
           </footer>
         </Providers>

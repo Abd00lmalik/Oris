@@ -1,20 +1,14 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="archonArc" x1="16" y1="16" x2="112" y2="112" gradientUnits="userSpaceOnUse">
+    <linearGradient id="archonGradient" x1="20" y1="20" x2="108" y2="108" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C5CE7"/>
       <stop offset="1" stop-color="#00D1B2"/>
     </linearGradient>
-    <radialGradient id="archonHalo" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(64 64) rotate(90) scale(44)">
-      <stop stop-color="#6C5CE7" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#6C5CE7" stop-opacity="0"/>
-    </radialGradient>
   </defs>
 
-  <circle cx="64" cy="64" r="44" fill="url(#archonHalo)"/>
-  <circle cx="64" cy="64" r="38" stroke="url(#archonArc)" stroke-width="6" opacity="0.95"/>
-  <path d="M29 79C35 93 48 102 64 102C85 102 102 85 102 64C102 51 95.5 39.6 85.5 32.8" stroke="url(#archonArc)" stroke-width="6" stroke-linecap="round"/>
-
-  <path d="M49 86L64 42L79 86" stroke="#EAEAF0" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M55 70H73" stroke="#EAEAF0" stroke-width="5.5" stroke-linecap="round"/>
-  <circle cx="64" cy="64" r="3.8" fill="#00D1B2"/>
+  <circle cx="64" cy="64" r="40" stroke="url(#archonGradient)" stroke-width="6"/>
+  <path d="M28 72C34 91 48 104 66 104" stroke="url(#archonGradient)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M45 88L64 40L83 88" stroke="#EAEAF0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M53 70H75" stroke="#EAEAF0" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="64" cy="64" r="4" fill="#00D1B2"/>
 </svg>
