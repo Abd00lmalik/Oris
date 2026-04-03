@@ -1,0 +1,19 @@
+{
+  "name": "oris-dapp",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "contracts",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "chain": "npm run node --workspace contracts",
+    "deploy:contracts": "npm run deploy --workspace contracts",
+    "deploy:arc": "npm run deploy:arc-testnet --workspace contracts",
+    "build": "npm run build --workspace frontend",
+    "lint": "npm run lint --workspace frontend",
+    "test": "npm run test --workspace contracts"
+  }
+}
