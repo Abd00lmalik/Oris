@@ -1,0 +1,23 @@
+{
+  "name": "oris-contracts",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "compile": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat compile",
+    "node": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat node",
+    "deploy": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat run scripts/deploy.ts --network localhost",
+    "deploy:arc-testnet": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat run scripts/deploy.ts --network arcTestnet",
+    "test": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat test",
+    "clean": "cross-env APPDATA=.hardhat-appdata LOCALAPPDATA=.hardhat-localappdata hardhat clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.4.7",
+    "hardhat": "^2.22.18",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2"
+  }
+}
