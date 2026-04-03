@@ -1,10 +1,10 @@
 {
-  "network": "localhost",
-  "chainId": 31337,
-  "rpcUrl": "http://127.0.0.1:8545",
+  "network": "arcTestnet",
+  "chainId": 5042002,
+  "rpcUrl": "https://rpc.testnet.arc.network",
   "contracts": {
     "validationRegistry": {
-      "address": "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
+      "address": "0x992542109CAef9e1Ac392D12aCEFC98FE64844F6",
       "abi": [
         {
           "inputs": [],
@@ -288,7 +288,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
+      "address": "0x57F48Cc5ab31246C5a30cd8c52C21574c200bBc8",
       "abi": [
         {
           "inputs": [
@@ -473,7 +473,7 @@
       ]
     },
     "job": {
-      "address": "0x68B1D87F95878fE05B998F19b66F4baba5De1aed",
+      "address": "0x3Df549C2D39cC0c85512c6726CfaF740e0001ff7",
       "abi": [
         {
           "inputs": [
