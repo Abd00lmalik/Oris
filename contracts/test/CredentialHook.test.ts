@@ -6,7 +6,7 @@ describe("CredentialHook", function () {
   async function deployFixture() {
     const [owner, client, agent, other] = await ethers.getSigners();
 
-    const registryFactory = await ethers.getContractFactory("MockERC8004ValidationRegistry");
+    const registryFactory = await ethers.getContractFactory("ERC8004ValidationRegistry");
     const registry: any = await registryFactory.connect(owner).deploy();
     await registry.waitForDeployment();
 
@@ -16,7 +16,7 @@ describe("CredentialHook", function () {
 
     await registry.connect(owner).authorizeIssuer(await hook.getAddress(), true);
 
-    const jobFactory = await ethers.getContractFactory("MockERC8183Job");
+    const jobFactory = await ethers.getContractFactory("ERC8183Job");
     const job: any = await jobFactory.connect(owner).deploy(await hook.getAddress());
     await job.waitForDeployment();
 
