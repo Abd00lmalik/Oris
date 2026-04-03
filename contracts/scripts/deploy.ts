@@ -37,10 +37,10 @@ async function main() {
 
   console.log(`Deploying contracts with ${deployer.address} on ${network.name} (chainId=${chainId})`);
 
-  const registry = await ethers.deployContract("MockERC8004ValidationRegistry");
+  const registry = await ethers.deployContract("ERC8004ValidationRegistry");
   await registry.waitForDeployment();
   const registryAddress = await registry.getAddress();
-  console.log(`MockERC8004ValidationRegistry: ${registryAddress}`);
+  console.log(`ERC8004ValidationRegistry: ${registryAddress}`);
 
   const hook = await ethers.deployContract("CredentialHook", [registryAddress]);
   await hook.waitForDeployment();
@@ -51,10 +51,10 @@ async function main() {
   await authorizeTx.wait();
   console.log(`Authorized hook as registry issuer.`);
 
-  const job = await ethers.deployContract("MockERC8183Job", [hookAddress]);
+  const job = await ethers.deployContract("ERC8183Job", [hookAddress]);
   await job.waitForDeployment();
   const jobAddress = await job.getAddress();
-  console.log(`MockERC8183Job: ${jobAddress}`);
+  console.log(`ERC8183Job: ${jobAddress}`);
 
   const registerTx = await hook.registerJobContract(jobAddress, true);
   await registerTx.wait();
@@ -67,7 +67,7 @@ async function main() {
     contracts: {
       validationRegistry: {
         address: registryAddress,
-        abi: await getAbi("MockERC8004ValidationRegistry")
+        abi: await getAbi("ERC8004ValidationRegistry")
       },
       credentialHook: {
         address: hookAddress,
@@ -75,7 +75,7 @@ async function main() {
       },
       job: {
         address: jobAddress,
-        abi: await getAbi("MockERC8183Job")
+        abi: await getAbi("ERC8183Job")
       }
     }
   };

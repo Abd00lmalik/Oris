@@ -184,7 +184,7 @@
                   "type": "bool"
                 }
               ],
-              "internalType": "struct MockERC8004ValidationRegistry.Credential",
+              "internalType": "struct ERC8004ValidationRegistry.Credential",
               "name": "",
               "type": "tuple"
             }
@@ -679,12 +679,12 @@
                   "type": "string"
                 },
                 {
-                  "internalType": "enum MockERC8183Job.JobStatus",
+                  "internalType": "enum ERC8183Job.JobStatus",
                   "name": "status",
                   "type": "uint8"
                 }
               ],
-              "internalType": "struct MockERC8183Job.Job[]",
+              "internalType": "struct ERC8183Job.Job[]",
               "name": "allJobs",
               "type": "tuple[]"
             }
@@ -735,12 +735,12 @@
                   "type": "string"
                 },
                 {
-                  "internalType": "enum MockERC8183Job.JobStatus",
+                  "internalType": "enum ERC8183Job.JobStatus",
                   "name": "status",
                   "type": "uint8"
                 }
               ],
-              "internalType": "struct MockERC8183Job.Job",
+              "internalType": "struct ERC8183Job.Job",
               "name": "",
               "type": "tuple"
             }

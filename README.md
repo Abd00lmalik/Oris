@@ -18,7 +18,7 @@ In agent and freelancer ecosystems, reputation can be fabricated by off-chain cl
 
 Oris uses three contracts with separated responsibilities.
 
-### 1) `MockERC8183Job.sol` (Job Lifecycle Contract)
+### 1) `ERC8183Job.sol` (Job Lifecycle Contract)
 
 This contract owns job state and enforces lifecycle transitions.
 
@@ -81,7 +81,7 @@ Typical guarded flow:
 - Hook validates caller authorization
 - Hook calls registry `issue(agent, jobId)`
 
-### 3) `MockERC8004ValidationRegistry.sol` (Credential Registry)
+### 3) `ERC8004ValidationRegistry.sol` (Credential Registry)
 
 This contract persists and exposes credential truth.
 

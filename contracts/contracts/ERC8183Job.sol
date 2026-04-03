@@ -5,7 +5,7 @@ interface ICredentialHook {
     function onJobComplete(address agent, uint256 jobId) external returns (uint256);
 }
 
-contract MockERC8183Job {
+contract ERC8183Job {
     enum JobStatus {
         Open,
         Accepted,
