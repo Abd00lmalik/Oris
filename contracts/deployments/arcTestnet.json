@@ -4,7 +4,7 @@
   "rpcUrl": "https://rpc.testnet.arc.network",
   "contracts": {
     "validationRegistry": {
-      "address": "0x992542109CAef9e1Ac392D12aCEFC98FE64844F6",
+      "address": "0xFF0a613c294d65028896ea1F572EfaDbbE502021",
       "abi": [
         {
           "inputs": [],
@@ -288,7 +288,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0x57F48Cc5ab31246C5a30cd8c52C21574c200bBc8",
+      "address": "0x3823e5d0A9d6fa010027cb4988c5A2DA530fA222",
       "abi": [
         {
           "inputs": [
@@ -473,7 +473,7 @@
       ]
     },
     "job": {
-      "address": "0x3Df549C2D39cC0c85512c6726CfaF740e0001ff7",
+      "address": "0xF55C85D2c24CC019EE37586dDf1d6071aD14084d",
       "abi": [
         {
           "inputs": [
@@ -503,8 +503,33 @@
             },
             {
               "indexed": false,
+              "internalType": "uint256",
+              "name": "credentialRecordId",
+              "type": "uint256"
+            }
+          ],
+          "name": "CredentialClaimed",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            },
+            {
+              "indexed": false,
               "internalType": "string",
-              "name": "deliverableHash",
+              "name": "deliverableLink",
               "type": "string"
             }
           ],
@@ -546,19 +571,31 @@
               "type": "address"
             },
             {
-              "indexed": true,
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
+              "indexed": false,
+              "internalType": "string",
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "description",
+              "type": "string"
             },
             {
               "indexed": false,
               "internalType": "uint256",
-              "name": "credentialRecordId",
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "rewardUSDC",
               "type": "uint256"
             }
           ],
-          "name": "JobApproved",
+          "name": "JobCreated",
           "type": "event"
         },
         {
@@ -573,23 +610,36 @@
             {
               "indexed": true,
               "internalType": "address",
-              "name": "client",
+              "name": "agent",
+              "type": "address"
+            }
+          ],
+          "name": "SubmissionApproved",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "agent",
               "type": "address"
             },
             {
               "indexed": false,
               "internalType": "string",
-              "name": "title",
-              "type": "string"
-            },
-            {
-              "indexed": false,
-              "internalType": "string",
-              "name": "description",
+              "name": "reviewerNote",
               "type": "string"
             }
           ],
-          "name": "JobCreated",
+          "name": "SubmissionRejected",
           "type": "event"
         },
         {
@@ -611,10 +661,34 @@
               "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
             }
           ],
-          "name": "approveJob",
+          "name": "approveSubmission",
           "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "claimCredential",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "credentialRecordId",
+              "type": "uint256"
+            }
+          ],
           "stateMutability": "nonpayable",
           "type": "function"
         },
@@ -629,6 +703,16 @@
               "internalType": "string",
               "name": "description",
               "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "rewardUSDC",
+              "type": "uint256"
             }
           ],
           "name": "createJob",
@@ -640,6 +724,25 @@
             }
           ],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getAcceptedAgents",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "",
+              "type": "address[]"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -659,11 +762,6 @@
                   "type": "address"
                 },
                 {
-                  "internalType": "address",
-                  "name": "agent",
-                  "type": "address"
-                },
-                {
                   "internalType": "string",
                   "name": "title",
                   "type": "string"
@@ -674,14 +772,29 @@
                   "type": "string"
                 },
                 {
-                  "internalType": "string",
-                  "name": "deliverableHash",
-                  "type": "string"
+                  "internalType": "uint256",
+                  "name": "deadline",
+                  "type": "uint256"
                 },
                 {
-                  "internalType": "enum ERC8183Job.JobStatus",
-                  "name": "status",
-                  "type": "uint8"
+                  "internalType": "uint256",
+                  "name": "rewardUSDC",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "createdAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "acceptedCount",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "submissionCount",
+                  "type": "uint256"
                 }
               ],
               "internalType": "struct ERC8183Job.Job[]",
@@ -715,11 +828,6 @@
                   "type": "address"
                 },
                 {
-                  "internalType": "address",
-                  "name": "agent",
-                  "type": "address"
-                },
-                {
                   "internalType": "string",
                   "name": "title",
                   "type": "string"
@@ -730,19 +838,141 @@
                   "type": "string"
                 },
                 {
-                  "internalType": "string",
-                  "name": "deliverableHash",
-                  "type": "string"
+                  "internalType": "uint256",
+                  "name": "deadline",
+                  "type": "uint256"
                 },
                 {
-                  "internalType": "enum ERC8183Job.JobStatus",
-                  "name": "status",
-                  "type": "uint8"
+                  "internalType": "uint256",
+                  "name": "rewardUSDC",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "createdAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "acceptedCount",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "submissionCount",
+                  "type": "uint256"
                 }
               ],
               "internalType": "struct ERC8183Job.Job",
               "name": "",
               "type": "tuple"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            }
+          ],
+          "name": "getSubmission",
+          "outputs": [
+            {
+              "components": [
+                {
+                  "internalType": "address",
+                  "name": "agent",
+                  "type": "address"
+                },
+                {
+                  "internalType": "string",
+                  "name": "deliverableLink",
+                  "type": "string"
+                },
+                {
+                  "internalType": "enum ERC8183Job.SubmissionStatus",
+                  "name": "status",
+                  "type": "uint8"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "submittedAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "string",
+                  "name": "reviewerNote",
+                  "type": "string"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "credentialClaimed",
+                  "type": "bool"
+                }
+              ],
+              "internalType": "struct ERC8183Job.Submission",
+              "name": "",
+              "type": "tuple"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getSubmissions",
+          "outputs": [
+            {
+              "components": [
+                {
+                  "internalType": "address",
+                  "name": "agent",
+                  "type": "address"
+                },
+                {
+                  "internalType": "string",
+                  "name": "deliverableLink",
+                  "type": "string"
+                },
+                {
+                  "internalType": "enum ERC8183Job.SubmissionStatus",
+                  "name": "status",
+                  "type": "uint8"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "submittedAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "string",
+                  "name": "reviewerNote",
+                  "type": "string"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "credentialClaimed",
+                  "type": "bool"
+                }
+              ],
+              "internalType": "struct ERC8183Job.SubmissionView[]",
+              "name": "allSubmissions",
+              "type": "tuple[]"
             }
           ],
           "stateMutability": "view",
@@ -756,6 +986,30 @@
               "internalType": "address",
               "name": "",
               "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "isAccepted",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
             }
           ],
           "stateMutability": "view",
@@ -782,8 +1036,31 @@
               "type": "uint256"
             },
             {
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            },
+            {
               "internalType": "string",
-              "name": "deliverableHash",
+              "name": "reviewerNote",
+              "type": "string"
+            }
+          ],
+          "name": "rejectSubmission",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "deliverableLink",
               "type": "string"
             }
           ],

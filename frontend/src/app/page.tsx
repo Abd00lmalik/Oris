@@ -5,23 +5,23 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   expectedChainId,
+  formatTimestamp,
+  formatUsdc,
   getJobReadContract,
   getJobWriteContract,
   getReadProvider,
   isContractsConfigured,
+  isJobOpen,
   JobRecord,
   parseJob,
-  statusLabel,
-  ZERO_ADDRESS
+  statusLabel
 } from "@/lib/contracts";
 import { subscribeToNewJobs } from "@/lib/events";
 import { useWallet } from "@/lib/wallet-context";
 
 function statusClasses(status: number) {
-  if (status === 0) return "bg-white/5 text-[#9CA3AF]";
-  if (status === 1) return "bg-[#6C5CE7]/15 text-[#B8AFF7]";
-  if (status === 2) return "bg-[#00D1B2]/15 text-[#6EF2DE]";
-  return "bg-emerald-500/15 text-emerald-300";
+  if (status === 0) return "bg-[#00D1B2]/15 text-[#6EF2DE]";
+  return "bg-white/5 text-[#9CA3AF]";
 }
 
 export default function HomePage() {
@@ -30,15 +30,13 @@ export default function HomePage() {
   const [animatedJobIds, setAnimatedJobIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyJobId, setBusyJobId] = useState<number | null>(null);
-  const [status, setStatus] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
 
   const configured = useMemo(() => isContractsConfigured(), []);
 
   const loadJobs = useCallback(async () => {
-    if (!configured) {
-      return;
-    }
+    if (!configured) return;
 
     setLoading(true);
     setError("");
@@ -59,15 +57,11 @@ export default function HomePage() {
   }, [loadJobs]);
 
   useEffect(() => {
-    if (!configured) {
-      return () => undefined;
-    }
+    if (!configured) return () => undefined;
 
     const unsubscribe = subscribeToNewJobs(getReadProvider(), (job) => {
       setJobs((previous) => {
-        if (previous.some((existing) => existing.jobId === job.jobId)) {
-          return previous;
-        }
+        if (previous.some((existing) => existing.jobId === job.jobId)) return previous;
         return [job, ...previous];
       });
       setAnimatedJobIds((previous) => [...new Set([job.jobId, ...previous])]);
@@ -86,9 +80,7 @@ export default function HomePage() {
 
     try {
       const provider = browserProvider ?? (await connect());
-      if (!provider) {
-        throw new Error("Wallet connection was not established.");
-      }
+      if (!provider) throw new Error("Wallet connection was not established.");
 
       const network = await provider.getNetwork();
       if (Number(network.chainId) !== expectedChainId) {
@@ -99,7 +91,7 @@ export default function HomePage() {
       const tx = await jobContract.acceptJob(jobId);
       setStatus(`Accept transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus(`Job ${jobId} accepted.`);
+      setStatus(`You accepted job #${jobId}.`);
       await loadJobs();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to accept job.");
@@ -135,7 +127,7 @@ export default function HomePage() {
 
       {!configured ? (
         <div className="archon-card border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Contracts are not configured yet. Run <code>npm run dev</code> from project root.
+          Contracts are not configured yet. Run <code>npm run deploy:contracts</code> and redeploy frontend.
         </div>
       ) : null}
 
@@ -145,7 +137,7 @@ export default function HomePage() {
       {loading ? (
         <div role="status" aria-busy="true" aria-label="Loading jobs" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((item) => (
-            <div key={item} className="archon-card h-44 animate-pulse p-4" />
+            <div key={item} className="archon-card h-52 animate-pulse p-4" />
           ))}
         </div>
       ) : jobs.length === 0 ? (
@@ -153,7 +145,7 @@ export default function HomePage() {
       ) : (
         <div aria-label="Job listings" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {jobs.map((job) => {
-            const canAccept = job.status === 0 && account !== null && account.toLowerCase() !== job.client.toLowerCase();
+            const canAccept = isJobOpen(job) && account !== null && account.toLowerCase() !== job.client.toLowerCase();
             return (
               <article key={job.jobId} className={`archon-card p-5 ${animatedJobIds.includes(job.jobId) ? "animate-slide-up" : ""}`}>
                 <div className="flex items-start justify-between gap-3">
@@ -163,20 +155,20 @@ export default function HomePage() {
                   <span className={`rounded-full px-2 py-1 text-xs ${statusClasses(job.status)}`}>{statusLabel(job.status)}</span>
                 </div>
 
-                <p className="mt-3 text-sm text-[#9CA3AF]">{job.description}</p>
+                <p className="mt-3 line-clamp-3 text-sm text-[#9CA3AF]">{job.description}</p>
 
                 <div className="mt-4 space-y-1 text-xs text-[#9CA3AF]">
                   <p>Client: {job.client.slice(0, 8)}...{job.client.slice(-6)}</p>
-                  <p>
-                    Agent: {job.agent === ZERO_ADDRESS ? "Unassigned" : `${job.agent.slice(0, 8)}...${job.agent.slice(-6)}`}
-                  </p>
+                  <p>Reward: {formatUsdc(job.rewardUSDC)} USDC</p>
+                  <p>Deadline: {formatTimestamp(job.deadline)}</p>
+                  <p>Accepted: {job.acceptedCount} | Submissions: {job.submissionCount}</p>
                 </div>
 
                 <div className="mt-4 flex items-center justify-between">
                   <Link href={`/job/${job.jobId}`} className="text-xs text-[#6C5CE7] transition-all duration-200 hover:text-[#8D80F0]">
                     View details
                   </Link>
-                  {job.status === 0 ? (
+                  {isJobOpen(job) ? (
                     <button
                       type="button"
                       disabled={!canAccept || busyJobId === job.jobId}
@@ -186,7 +178,7 @@ export default function HomePage() {
                       {busyJobId === job.jobId ? "Accepting..." : "Accept"}
                     </button>
                   ) : (
-                    <span className="text-xs text-[#9CA3AF]">No action</span>
+                    <span className="text-xs text-[#9CA3AF]">Closed</span>
                   )}
                 </div>
               </article>
@@ -197,4 +189,3 @@ export default function HomePage() {
     </section>
   );
 }
-

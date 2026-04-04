@@ -3,25 +3,38 @@
 import { ethers } from "ethers";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { expectedChainId, getJobWriteContract } from "@/lib/contracts";
+import { expectedChainId, formatTimestamp, getJobWriteContract } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { ARC_TOKEN_CONFIG } from "../../../config";
 import { getArcBalance, hasEnoughArcToPost } from "@/lib/arcToken";
 
 type EstimateState = "idle" | "loading" | "ready" | "error";
 
+function parseDeadline(deadlineInput: string) {
+  if (!deadlineInput) return 0;
+  return Math.floor(new Date(deadlineInput).getTime() / 1000);
+}
+
+function parseRewardToUnits(reward: string) {
+  const trimmed = reward.trim();
+  if (!trimmed) return 0n;
+  return ethers.parseUnits(trimmed, 6);
+}
+
 export default function CreateJobPage() {
   const { account, browserProvider, connect } = useWallet();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [deadlineInput, setDeadlineInput] = useState("");
+  const [rewardInput, setRewardInput] = useState("0");
   const [createdJobId, setCreatedJobId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [estimateState, setEstimateState] = useState<EstimateState>("idle");
-  const [estimateMessage, setEstimateMessage] = useState("Enter title and description to estimate gas.");
-  const [estimatedUnits, setEstimatedUnits] = useState<string>("");
-  const [estimatedCost, setEstimatedCost] = useState<string>("");
+  const [estimateMessage, setEstimateMessage] = useState("Enter all fields to estimate gas.");
+  const [estimatedUnits, setEstimatedUnits] = useState("");
+  const [estimatedCost, setEstimatedCost] = useState("");
   const [arcBalance, setArcBalance] = useState("0");
   const [arcGateAllowed, setArcGateAllowed] = useState(true);
   const [checkingArc, setCheckingArc] = useState(false);
@@ -31,6 +44,8 @@ export default function CreateJobPage() {
   const costSymbol = expectedChainId === 5042002 ? "USDC" : "ETH";
   const trimmedTitle = title.trim();
   const trimmedDescription = description.trim();
+  const deadline = parseDeadline(deadlineInput);
+  const deadlineDisplay = deadline ? formatTimestamp(deadline) : "";
 
   useEffect(() => {
     let active = true;
@@ -54,9 +69,7 @@ export default function CreateJobPage() {
         setArcGateAllowed(false);
         setArcBalance("0");
       } finally {
-        if (active) {
-          setCheckingArc(false);
-        }
+        if (active) setCheckingArc(false);
       }
     };
 
@@ -69,9 +82,9 @@ export default function CreateJobPage() {
   useEffect(() => {
     let active = true;
 
-    if (!trimmedTitle || !trimmedDescription) {
+    if (!trimmedTitle || !trimmedDescription || !deadlineInput) {
       setEstimateState("idle");
-      setEstimateMessage("Enter title and description to estimate gas.");
+      setEstimateMessage("Enter all fields to estimate gas.");
       setEstimatedUnits("");
       setEstimatedCost("");
       return () => {
@@ -90,9 +103,11 @@ export default function CreateJobPage() {
           setEstimateMessage("Unable to estimate (wallet not connected).");
           return;
         }
+
         try {
+          const rewardUnits = parseRewardToUnits(rewardInput);
           const jobContract = await getJobWriteContract(browserProvider);
-          const gas = (await jobContract.createJob.estimateGas(trimmedTitle, trimmedDescription)) as bigint;
+          const gas = (await jobContract.createJob.estimateGas(trimmedTitle, trimmedDescription, deadline, rewardUnits)) as bigint;
           const feeData = await browserProvider.getFeeData();
           const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas;
           const totalCost = gasPrice ? ethers.formatEther(gas * gasPrice) : "";
@@ -115,7 +130,7 @@ export default function CreateJobPage() {
       active = false;
       clearTimeout(timer);
     };
-  }, [browserProvider, trimmedDescription, trimmedTitle]);
+  }, [browserProvider, deadline, deadlineInput, rewardInput, trimmedDescription, trimmedTitle]);
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -135,17 +150,27 @@ export default function CreateJobPage() {
       setError("Description must be 500 characters or fewer.");
       return;
     }
+    if (!deadlineInput || deadline <= Math.floor(Date.now() / 1000)) {
+      setError("Set a future deadline for this job.");
+      return;
+    }
     if (gateEnabled && !arcGateAllowed) {
       setError(`You need at least ${ARC_TOKEN_CONFIG.minBalanceToPost} ${ARC_TOKEN_CONFIG.symbol} to post a job.`);
+      return;
+    }
+
+    let rewardUnits: bigint;
+    try {
+      rewardUnits = parseRewardToUnits(rewardInput);
+    } catch {
+      setError("Enter a valid USDC reward amount.");
       return;
     }
 
     setSubmitting(true);
     try {
       const provider = browserProvider ?? (await connect());
-      if (!provider) {
-        throw new Error("Wallet connection was not established.");
-      }
+      if (!provider) throw new Error("Wallet connection was not established.");
 
       const network = await provider.getNetwork();
       if (Number(network.chainId) !== expectedChainId) {
@@ -154,7 +179,7 @@ export default function CreateJobPage() {
 
       const jobContract = await getJobWriteContract(provider);
       const predictedJobId = Number(await jobContract.nextJobId());
-      const tx = await jobContract.createJob(trimmedTitle, trimmedDescription);
+      const tx = await jobContract.createJob(trimmedTitle, trimmedDescription, deadline, rewardUnits);
       setStatus(`Create transaction submitted: ${tx.hash}`);
       const receipt = await tx.wait();
 
@@ -179,6 +204,8 @@ export default function CreateJobPage() {
       setStatus(createdId !== null ? `Job #${createdId} created successfully.` : "Job created successfully.");
       setTitle("");
       setDescription("");
+      setDeadlineInput("");
+      setRewardInput("0");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create job.");
     } finally {
@@ -187,10 +214,10 @@ export default function CreateJobPage() {
   };
 
   return (
-    <section className="mx-auto max-w-[500px]">
+    <section className="mx-auto max-w-[560px]">
       <div className="archon-card p-6 md:p-7">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Create Job</h1>
-        <p className="mt-2 text-sm text-[#9CA3AF]">Post a verifiable assignment for agents in Archon.</p>
+        <p className="mt-2 text-sm text-[#9CA3AF]">Set reward and deadline so accepted users can submit before time runs out.</p>
 
         {status ? <div className="mt-4 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
         {createdJobId !== null ? (
@@ -224,6 +251,34 @@ export default function CreateJobPage() {
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="Create and deploy a responsive marketing page."
+              required
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Deadline (date & time)</span>
+            <input
+              aria-label="Job deadline"
+              type="datetime-local"
+              className="archon-input"
+              value={deadlineInput}
+              onChange={(event) => setDeadlineInput(event.target.value)}
+              required
+            />
+            {deadlineDisplay ? <p className="mt-1 text-xs text-[#9CA3AF]">Ends: {deadlineDisplay}</p> : null}
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Reward (USDC)</span>
+            <input
+              aria-label="Reward amount in USDC"
+              type="number"
+              min="0"
+              step="0.000001"
+              className="archon-input"
+              value={rewardInput}
+              onChange={(event) => setRewardInput(event.target.value)}
+              placeholder="100"
               required
             />
           </label>
