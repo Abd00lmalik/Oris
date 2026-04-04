@@ -15,7 +15,8 @@ type DeploymentContracts = {
   validationRegistry: DeploymentContract;
   credentialHook: DeploymentContract;
   usdc?: DeploymentContract;
-  job: DeploymentContract;
+  job?: DeploymentContract;
+  jobContract?: DeploymentContract;
   githubSource?: DeploymentContract;
   communitySource?: DeploymentContract;
   agentTaskSource?: DeploymentContract;
@@ -26,7 +27,10 @@ type DeploymentContracts = {
 type DeploymentConfig = {
   network: string;
   chainId: number;
-  rpcUrl: string;
+  rpcUrl?: string;
+  usdcAddress?: string;
+  platformTreasury?: string;
+  platformFeeBps?: number;
   platform?: {
     treasury: string;
     feeBps: number;
@@ -171,16 +175,23 @@ export type GovernanceActivityRecord = {
 const deployment = deploymentRaw as DeploymentConfig;
 const overrideRpcUrl = process.env.NEXT_PUBLIC_RPC_URL ?? process.env.NEXT_PUBLIC_ARC_RPC_URL;
 const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.NEXT_PUBLIC_ARC_CHAIN_ID;
+const fallbackRpcUrl = process.env.NEXT_PUBLIC_ARC_RPC_URL ?? "https://rpc.testnet.arc.network";
+const resolvedJobContract = deployment.contracts.jobContract ?? deployment.contracts.job;
+const resolvedUsdcAddress = deployment.usdcAddress ?? deployment.contracts.usdc?.address ?? ZERO_ADDRESS;
+const ERC20_MIN_ABI = [
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)"
+] as const;
 
 export const expectedChainId = overrideChainId ? Number(overrideChainId) : deployment.chainId;
-export const rpcUrl = overrideRpcUrl ?? deployment.rpcUrl;
+export const rpcUrl = overrideRpcUrl ?? deployment.rpcUrl ?? fallbackRpcUrl;
 export const deploymentNetworkName = deployment.network;
 export const contractAddresses = {
   sourceRegistry: deployment.contracts.sourceRegistry?.address ?? ZERO_ADDRESS,
   validationRegistry: deployment.contracts.validationRegistry.address,
   credentialHook: deployment.contracts.credentialHook.address,
-  usdc: deployment.contracts.usdc?.address ?? ZERO_ADDRESS,
-  job: deployment.contracts.job.address,
+  usdc: resolvedUsdcAddress,
+  job: resolvedJobContract?.address ?? ZERO_ADDRESS,
   githubSource: deployment.contracts.githubSource?.address ?? ZERO_ADDRESS,
   communitySource: deployment.contracts.communitySource?.address ?? ZERO_ADDRESS,
   agentTaskSource: deployment.contracts.agentTaskSource?.address ?? ZERO_ADDRESS,
@@ -196,7 +207,8 @@ export function getDeploymentConfig() {
 
 export function isContractsConfigured(): boolean {
   return (
-    deployment.contracts.job.address !== ZERO_ADDRESS &&
+    !!resolvedJobContract &&
+    resolvedJobContract.address !== ZERO_ADDRESS &&
     deployment.contracts.validationRegistry.address !== ZERO_ADDRESS &&
     deployment.contracts.credentialHook.address !== ZERO_ADDRESS
   );
@@ -243,7 +255,7 @@ export function getSourceLabelForDisplay(sourceType: string) {
 
 function contractForSourceType(sourceType: string) {
   const normalized = sourceTypeKey(sourceType);
-  if (normalized === "job") return deployment.contracts.job;
+  if (normalized === "job") return resolvedJobContract;
   if (normalized === "github") return deployment.contracts.githubSource;
   if (normalized === "community") return deployment.contracts.communitySource;
   if (normalized === "agent_task") return deployment.contracts.agentTaskSource;
@@ -436,7 +448,7 @@ function getContractFromConfig(
 
 export function getJobReadContract() {
   ensureContractsConfigured();
-  return getContractFromConfig(deployment.contracts.job, getReadProvider());
+  return getContractFromConfig(resolvedJobContract, getReadProvider());
 }
 
 export function getRegistryReadContract() {
@@ -452,7 +464,7 @@ export function getSourceReadContract(sourceType: string) {
 export async function getJobWriteContract(browserProvider: ethers.BrowserProvider) {
   ensureContractsConfigured();
   const signer = await browserProvider.getSigner();
-  return getContractFromConfig(deployment.contracts.job, signer);
+  return getContractFromConfig(resolvedJobContract, signer);
 }
 
 export async function getSourceWriteContract(
@@ -882,11 +894,13 @@ export async function txApproveUsdcIfNeeded(
   spender: string,
   amount: bigint
 ) {
-  if (!deployment.contracts.usdc || deployment.contracts.usdc.address === ZERO_ADDRESS) {
+  if (!resolvedUsdcAddress || resolvedUsdcAddress === ZERO_ADDRESS) {
     return null;
   }
   const signer = await browserProvider.getSigner();
-  const usdc = getContractFromConfig(deployment.contracts.usdc, signer);
+  const usdc = deployment.contracts.usdc
+    ? getContractFromConfig(deployment.contracts.usdc, signer)
+    : new ethers.Contract(resolvedUsdcAddress, ERC20_MIN_ABI, signer);
   const ownerAddress = await signer.getAddress();
   const allowance = (await usdc.allowance(ownerAddress, spender)) as bigint;
   if (allowance >= amount) {
