@@ -69,15 +69,22 @@ export function subscribeToJobUpdates(
       onUpdate(3);
     }
   };
+  const rejected = (eventJobId: bigint) => {
+    if (Number(eventJobId) === jobId) {
+      onUpdate(4);
+    }
+  };
 
   contract.on("JobAccepted", accepted);
   contract.on("DeliverableSubmitted", submitted);
-  contract.on("JobApproved", approved);
+  contract.on("SubmissionApproved", approved);
+  contract.on("SubmissionRejected", rejected);
 
   return () => {
     contract.off("JobAccepted", accepted);
     contract.off("DeliverableSubmitted", submitted);
-    contract.off("JobApproved", approved);
+    contract.off("SubmissionApproved", approved);
+    contract.off("SubmissionRejected", rejected);
   };
 }
 
@@ -92,15 +99,14 @@ export function subscribeToCredentials(
 
   const normalized = agentAddress.toLowerCase();
   const contract = getRegistryContract(provider);
-  const handler = (agent: string, jobId: bigint) => {
+  const handler = (agent: string, jobId: bigint, credentialRecordId: bigint) => {
     if (agent.toLowerCase() !== normalized) {
       return;
     }
-    const numericJobId = Number(jobId);
     onCredential({
       agent,
-      jobId: numericJobId,
-      credentialId: numericJobId
+      jobId: Number(jobId),
+      credentialId: Number(credentialRecordId)
     });
   };
 
