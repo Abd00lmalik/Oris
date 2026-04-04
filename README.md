@@ -1,5 +1,23 @@
 # Archon
 
+Live: https://archon-dapp.vercel.app  
+Network: Arc Testnet (Chain ID: 5042002)
+
+## Deployed Contracts (Arc Testnet)
+| Contract | Address |
+|---|---|
+| SourceRegistry | `0x06d27bF057caA9e18658969c8d2c12ce4171700D` |
+| ValidationRegistry | `0x94c93F66f596c4e2a4318CC7997AE086F8FB960E` |
+| CredentialHook | `0xcB0501250D0eacB3777AaFD3a2Af7230f98DF65b` |
+| ERC8183Job | `0x7745FdB11B007588A7C758360ED6B05910a2BF94` |
+| GitHubSource | `0x54032197b0574dc2cb1a3495ED35C81B0702B4c1` |
+| CommunitySource | `0x7c51f2FdF5Af06580531c5539B4D5D95ee993Ec0` |
+| AgentTaskSource | `0x3442cb98De01Eb96cc45cAeAF43e939D58c0d1D7` |
+| PeerAttestationSource | `0xb2B97771519fD7dA591536e559a87CD754Bc9E30` |
+| DAOGovernanceSource | `0x4E0C9d4E0B22c33D509973C806c7ae11c0519B64` |
+| USDC (Arc ERC-20) | `0x3600000000000000000000000000000000000000` |
+| Platform Treasury | `0x25265b9dBEb6c653b0CA281110Bb0697a9685107` |
+
 Archon is an on-chain provenance dApp that turns completed work into verifiable credentials.
 
 Instead of trusting self-reported reputation, Archon binds proof of completion to blockchain state transitions:
