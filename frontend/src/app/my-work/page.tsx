@@ -1,0 +1,209 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import {
+  fetchAgentTasksByAddress,
+  fetchGitHubActivitiesByAgent,
+  fetchJobsByAgent,
+  fetchJobsByClient,
+  fetchSubmissionForAgent,
+  formatTimestamp,
+  GitHubActivityRecord,
+  JobRecord,
+  statusLabel,
+  SubmissionRecord
+} from "@/lib/contracts";
+import { useWallet } from "@/lib/wallet-context";
+
+type JobWithSubmission = {
+  job: JobRecord;
+  submission: SubmissionRecord | null;
+};
+
+function submissionActionLabel(submission: SubmissionRecord | null) {
+  if (!submission) return "Submit Work";
+  if (submission.status === 1) return "Check Status";
+  if (submission.status === 2 && !submission.credentialClaimed) return "Claim Credential";
+  if (submission.status === 2 && submission.credentialClaimed) return "Completed";
+  if (submission.status === 3) return "Resubmit Work";
+  return "Open Job";
+}
+
+function githubStatusLabel(status: number) {
+  if (status === 0) return "Pending";
+  if (status === 1) return "Approved";
+  if (status === 2) return "Rejected";
+  return "Unknown";
+}
+
+export default function MyWorkPage() {
+  const { account } = useWallet();
+  const [jobsPosted, setJobsPosted] = useState<JobRecord[]>([]);
+  const [jobsWorking, setJobsWorking] = useState<JobWithSubmission[]>([]);
+  const [agentTasks, setAgentTasks] = useState<Awaited<ReturnType<typeof fetchAgentTasksByAddress>>>([]);
+  const [githubSubmissions, setGithubSubmissions] = useState<GitHubActivityRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      if (!account) {
+        setJobsPosted([]);
+        setJobsWorking([]);
+        setAgentTasks([]);
+        setGithubSubmissions([]);
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+      try {
+        const [posted, working, tasks, github] = await Promise.all([
+          fetchJobsByClient(account),
+          fetchJobsByAgent(account),
+          fetchAgentTasksByAddress(account),
+          fetchGitHubActivitiesByAgent(account)
+        ]);
+
+        const workingWithSubmission = await Promise.all(
+          working.map(async (job) => ({
+            job,
+            submission: await fetchSubmissionForAgent(job.jobId, account)
+          }))
+        );
+
+        if (!active) return;
+        setJobsPosted(posted);
+        setJobsWorking(workingWithSubmission);
+        setAgentTasks(tasks);
+        setGithubSubmissions(github);
+      } catch (loadError) {
+        if (!active) return;
+        setError(loadError instanceof Error ? loadError.message : "Failed to load your work dashboard.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [account]);
+
+  return (
+    <section className="space-y-5">
+      <div className="archon-card p-6">
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">My Work</h1>
+        <p className="mt-2 text-sm text-[#9CA3AF]">Track everything you posted, accepted, submitted, and claimed.</p>
+      </div>
+
+      {error ? (
+        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
+      ) : null}
+
+      {!account ? (
+        <div className="archon-card px-4 py-6 text-sm text-[#9CA3AF]">Connect wallet to view your action hub.</div>
+      ) : null}
+
+      {account ? (
+        <>
+          <div className="archon-card p-6">
+            <h2 className="text-lg font-semibold text-[#EAEAF0]">Jobs You Posted</h2>
+            {loading ? (
+              <p className="mt-3 text-sm text-[#9CA3AF]">Loading...</p>
+            ) : jobsPosted.length === 0 ? (
+              <div className="mt-3 text-sm text-[#9CA3AF]">
+                <p>You haven&apos;t posted any jobs yet.</p>
+                <Link href="/create-job" className="archon-button-primary mt-3 inline-flex px-3 py-2 text-xs">Post a Job</Link>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {jobsPosted.map((job) => (
+                  <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {job.title}</p>
+                      <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
+                    </div>
+                    <p className="mt-2 text-xs">Submissions: {job.submissionCount}</p>
+                    <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                      Review Submissions
+                    </Link>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="archon-card p-6">
+            <h2 className="text-lg font-semibold text-[#EAEAF0]">Jobs You&apos;re Working On</h2>
+            {jobsWorking.length === 0 ? (
+              <p className="mt-3 text-sm text-[#9CA3AF]">You have not accepted any jobs yet.</p>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {jobsWorking.map(({ job, submission }) => (
+                  <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                    <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {job.title}</p>
+                    <p className="mt-1 text-xs">Status: {submission ? submissionActionLabel(submission) : "Accepted"}</p>
+                    {submission?.reviewerNote ? <p className="mt-1 text-xs">Reviewer note: {submission.reviewerNote}</p> : null}
+                    <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                      {submissionActionLabel(submission)}
+                    </Link>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="archon-card p-6">
+            <h2 className="text-lg font-semibold text-[#EAEAF0]">Agent Tasks</h2>
+            {agentTasks.length === 0 ? (
+              <p className="mt-3 text-sm text-[#9CA3AF]">No agent tasks assigned yet.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {agentTasks.map((task) => (
+                  <article key={task.taskId} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
+                    <p className="text-[#EAEAF0]">Task #{task.taskId}</p>
+                    <p>Status: {task.status}</p>
+                    <Link href="/tasks" className="mt-2 inline-flex text-[#8FD9FF] underline underline-offset-4">
+                      Open in Tasks Hub
+                    </Link>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="archon-card p-6">
+            <h2 className="text-lg font-semibold text-[#EAEAF0]">GitHub Submissions</h2>
+            {githubSubmissions.length === 0 ? (
+              <p className="mt-3 text-sm text-[#9CA3AF]">No GitHub submissions yet.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {githubSubmissions.map((activity) => (
+                  <article key={activity.activityId} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
+                    <p className="text-[#EAEAF0]">Activity #{activity.activityId} · {activity.repoName}</p>
+                    <p>Status: {githubStatusLabel(activity.status)}</p>
+                    <p>Submitted: {formatTimestamp(activity.submittedAt)}</p>
+                    <a href={activity.evidenceUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex text-[#8FD9FF] underline underline-offset-4">
+                      Open evidence
+                    </a>
+                    {activity.status === 1 && !activity.credentialClaimed ? (
+                      <Link href="/github" className="ml-3 inline-flex text-emerald-300 underline underline-offset-4">
+                        Claim Credential
+                      </Link>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+

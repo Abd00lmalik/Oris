@@ -5,6 +5,7 @@ import {ICredentialHook} from "./interfaces/ICredentialHook.sol";
 import {ICredentialSource} from "./interfaces/ICredentialSource.sol";
 import {IERC20Minimal} from "./interfaces/IERC20Minimal.sol";
 import {ISourceRegistry} from "./interfaces/ISourceRegistry.sol";
+import {IValidationRegistry} from "./interfaces/IValidationRegistry.sol";
 
 contract ERC8183Job is ICredentialSource {
     enum SubmissionStatus {
@@ -59,17 +60,26 @@ contract ERC8183Job is ICredentialSource {
     address public immutable hook;
     address public immutable sourceRegistry;
     IERC20Minimal public immutable usdc;
+    address public validationRegistry;
     address public platformTreasury;
     uint256 public platformFeeBps;
+    uint256 public minJobStake = 5_000_000; // 5 USDC (6 decimals)
+    bool public requireCredentialToPost;
     mapping(address => uint256) public lastCredentialClaim;
+    mapping(address => uint256) public jobsCreatedByWallet;
+    mapping(address => uint256) public jobsCompletedByWallet;
     mapping(uint256 => Job) private jobs;
     mapping(uint256 => address[]) private acceptedAgentsByJob;
+    mapping(address => uint256[]) private jobsByClient;
+    mapping(address => uint256[]) private jobsByAgent;
     mapping(uint256 => mapping(address => bool)) public isAccepted;
     mapping(uint256 => address[]) private submissionAgentsByJob;
     mapping(uint256 => mapping(address => Submission)) private submissions;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event PlatformConfigUpdated(address indexed platformTreasury, uint256 platformFeeBps);
+    event JobPostingRulesUpdated(uint256 minJobStake, bool requireCredentialToPost);
+    event ValidationRegistryUpdated(address indexed validationRegistry);
     event JobCreated(
         uint256 indexed jobId,
         address indexed client,
@@ -126,6 +136,7 @@ contract ERC8183Job is ICredentialSource {
         sourceRegistry = sourceRegistryAddress;
         platformTreasury = treasuryAddress;
         platformFeeBps = feeBps;
+        validationRegistry = address(0);
     }
 
     function sourceType() external pure returns (string memory) {
@@ -159,6 +170,23 @@ contract ERC8183Job is ICredentialSource {
         emit PlatformConfigUpdated(treasuryAddress, feeBps);
     }
 
+    function setValidationRegistry(address validationRegistryAddress) external onlyOwner {
+        require(validationRegistryAddress != address(0), "invalid validation registry");
+        validationRegistry = validationRegistryAddress;
+        emit ValidationRegistryUpdated(validationRegistryAddress);
+    }
+
+    function setMinJobStake(uint256 amount) external onlyOwner {
+        require(amount > 0, "invalid minimum stake");
+        minJobStake = amount;
+        emit JobPostingRulesUpdated(minJobStake, requireCredentialToPost);
+    }
+
+    function setRequireCredentialToPost(bool required) external onlyOwner {
+        requireCredentialToPost = required;
+        emit JobPostingRulesUpdated(minJobStake, required);
+    }
+
     function createJob(
         string calldata title,
         string calldata description,
@@ -172,8 +200,14 @@ contract ERC8183Job is ICredentialSource {
         require(bytes(title).length > 0, "title required");
         require(bytes(description).length > 0, "description required");
         require(deadline >= block.timestamp + MIN_JOB_DURATION, "deadline too soon");
-        require(rewardUSDC > 0, "reward required");
-        require(rewardUSDC >= MAX_APPROVALS_PER_JOB, "reward too low");
+        require(rewardUSDC >= minJobStake, "reward below minimum stake");
+        if (requireCredentialToPost) {
+            require(validationRegistry != address(0), "validation registry not set");
+            require(
+                IValidationRegistry(validationRegistry).credentialCount(msg.sender) >= 1,
+                "need at least 1 credential to post jobs"
+            );
+        }
         require(usdc.transferFrom(msg.sender, address(this), rewardUSDC), "usdc transfer failed");
 
         createdJobId = nextJobId;
@@ -194,6 +228,8 @@ contract ERC8183Job is ICredentialSource {
             paidOutUSDC: 0,
             refunded: false
         });
+        jobsByClient[msg.sender].push(createdJobId);
+        jobsCreatedByWallet[msg.sender] += 1;
 
         emit JobCreated(createdJobId, msg.sender, title, description, deadline, rewardUSDC);
     }
@@ -206,6 +242,7 @@ contract ERC8183Job is ICredentialSource {
 
         isAccepted[jobId][msg.sender] = true;
         acceptedAgentsByJob[jobId].push(msg.sender);
+        jobsByAgent[msg.sender].push(jobId);
         job.acceptedCount += 1;
 
         emit JobAccepted(jobId, msg.sender);
@@ -292,6 +329,7 @@ contract ERC8183Job is ICredentialSource {
         submission.credentialClaimed = true;
         job.claimedCount += 1;
         job.paidOutUSDC += grossReward;
+        jobsCompletedByWallet[msg.sender] += 1;
         lastCredentialClaim[msg.sender] = block.timestamp;
 
         uint256 platformFee = (grossReward * platformFeeBps) / BASIS_POINTS;
@@ -340,6 +378,14 @@ contract ERC8183Job is ICredentialSource {
         return acceptedAgentsByJob[jobId];
     }
 
+    function getJobsByClient(address client) external view returns (uint256[] memory) {
+        return jobsByClient[client];
+    }
+
+    function getJobsByAgent(address agent) external view returns (uint256[] memory) {
+        return jobsByAgent[agent];
+    }
+
     function getSubmissions(uint256 jobId) external view returns (SubmissionView[] memory allSubmissions) {
         _getExistingJob(jobId);
         address[] storage agents = submissionAgentsByJob[jobId];
@@ -368,6 +414,44 @@ contract ERC8183Job is ICredentialSource {
     function getRewardPerApproval(uint256 jobId) external view returns (uint256) {
         _getExistingJob(jobId);
         return _rewardPerApproval(jobs[jobId].rewardUSDC);
+    }
+
+    function jobEscrow(uint256 jobId) external view returns (uint256) {
+        Job storage job = _getExistingJob(jobId);
+        return job.rewardUSDC - job.paidOutUSDC;
+    }
+
+    function approvedAgentCount(uint256 jobId) external view returns (uint256) {
+        Job storage job = _getExistingJob(jobId);
+        return job.approvedCount;
+    }
+
+    function getSuspicionScore(
+        address agent,
+        uint256 jobId
+    ) external view returns (uint256 score, string memory reason) {
+        Job storage job = _getExistingJob(jobId);
+        Submission storage sub = submissions[jobId][agent];
+        if (sub.agent == address(0) || sub.submittedAt == 0) {
+            return (100, "submission missing; ");
+        }
+
+        if (sub.submittedAt > job.createdAt) {
+            uint256 timeToComplete = sub.submittedAt - job.createdAt;
+            if (timeToComplete < 2 hours) {
+                score += 30;
+                reason = "submission too fast; ";
+            }
+        }
+
+        uint256 clientJobs = jobsCreatedByWallet[job.client];
+        uint256 agentCompleted = jobsCompletedByWallet[agent];
+        if (clientJobs > 5 && agentCompleted > 5) {
+            score += 20;
+            reason = string.concat(reason, "high volume accounts; ");
+        }
+
+        return (score, reason);
     }
 
     function _getExistingJob(uint256 jobId) internal view returns (Job storage) {
