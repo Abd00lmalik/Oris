@@ -17,3 +17,5 @@ frontend/tsconfig.tsbuildinfo
 *.log
 .env
 .env.local
+verifyme/
+verifyme-work/

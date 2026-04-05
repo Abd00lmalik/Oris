@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -7,23 +7,29 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AgentTaskRecord,
   CredentialRecord,
-  expectedChainId,
   fetchAllJobs,
+  fetchJobsCreatedCount,
   fetchOpenAgentTasks,
+  fetchSubmissionForAgent,
   formatTimestamp,
   formatUsdc,
-  getJobWriteContract,
+  getJobReadContract,
   getReadProvider,
   getRegistryReadContract,
   getSourceLabelForDisplay,
-  statusLabel,
   isContractsConfigured,
-  isJobOpen,
   JobRecord,
-  parseCredential
+  parseCredential,
+  statusLabel,
+  SubmissionRecord
 } from "@/lib/contracts";
 import { subscribeToNewJobs, subscribeToOpenTasks } from "@/lib/events";
 import { useWallet } from "@/lib/wallet-context";
+
+type JobViewerState = {
+  submission: SubmissionRecord | null;
+  accepted: boolean;
+};
 
 function statusClasses(status: number) {
   if (status === 0) return "bg-[#00D1B2]/15 text-[#6EF2DE]";
@@ -40,13 +46,13 @@ function sourceBadgeClass(sourceType: string) {
 }
 
 export default function HomePage() {
-  const { account, browserProvider, connect } = useWallet();
+  const { account, browserProvider } = useWallet();
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [tasks, setTasks] = useState<AgentTaskRecord[]>([]);
   const [recentCredentials, setRecentCredentials] = useState<CredentialRecord[]>([]);
+  const [viewerStateByJob, setViewerStateByJob] = useState<Record<number, JobViewerState>>({});
+  const [creatorJobCount, setCreatorJobCount] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
-  const [busyJobId, setBusyJobId] = useState<number | null>(null);
-  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [stats, setStats] = useState({
     totalCredentials: 0,
@@ -60,10 +66,40 @@ export default function HomePage() {
     if (!configured) return;
     setLoading(true);
     setError("");
+
     try {
       const [jobRows, taskRows] = await Promise.all([fetchAllJobs(), fetchOpenAgentTasks()]);
-      setJobs(jobRows.slice(0, 12));
+      const visibleJobs = jobRows.slice(0, 12);
+      setJobs(visibleJobs);
       setTasks(taskRows.filter((task) => task.status === 0).slice(0, 8));
+
+      const uniqueCreators = Array.from(new Set(visibleJobs.map((job) => job.client.toLowerCase())));
+      const creatorCounts = await Promise.all(
+        uniqueCreators.map(async (creator) => [creator, await fetchJobsCreatedCount(creator)] as const)
+      );
+      setCreatorJobCount(Object.fromEntries(creatorCounts));
+
+      if (account) {
+        const readContract = getJobReadContract();
+        const viewerEntries = await Promise.all(
+          visibleJobs.map(async (job) => {
+            const [submission, accepted] = await Promise.all([
+              fetchSubmissionForAgent(job.jobId, account),
+              (async () => {
+                try {
+                  return (await readContract.isAccepted(job.jobId, account)) as boolean;
+                } catch {
+                  return false;
+                }
+              })()
+            ]);
+            return [job.jobId, { submission, accepted }] as const;
+          })
+        );
+        setViewerStateByJob(Object.fromEntries(viewerEntries));
+      } else {
+        setViewerStateByJob({});
+      }
 
       const registry = getRegistryReadContract();
       const totalCredentials = Number(await registry.totalCredentials());
@@ -91,7 +127,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [configured]);
+  }, [account, configured]);
 
   useEffect(() => {
     void loadFeed();
@@ -101,11 +137,8 @@ export default function HomePage() {
     if (!configured) return () => undefined;
     const provider = browserProvider ?? getReadProvider();
     const unsubs = [
-      subscribeToNewJobs(provider, (job) => {
-        setJobs((previous) => {
-          if (previous.some((existing) => existing.jobId === job.jobId)) return previous;
-          return [job, ...previous].slice(0, 12);
-        });
+      subscribeToNewJobs(provider, () => {
+        void loadFeed();
       }),
       subscribeToOpenTasks(provider, () => {
         void loadFeed();
@@ -115,32 +148,6 @@ export default function HomePage() {
       for (const unsub of unsubs) unsub();
     };
   }, [browserProvider, configured, loadFeed]);
-
-  const handleAccept = async (jobId: number) => {
-    setError("");
-    setStatus("");
-    setBusyJobId(jobId);
-
-    try {
-      const provider = browserProvider ?? (await connect());
-      if (!provider) throw new Error("Wallet connection was not established.");
-      const network = await provider.getNetwork();
-      if (Number(network.chainId) !== expectedChainId) {
-        throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
-      }
-
-      const jobContract = await getJobWriteContract(provider);
-      const tx = await jobContract.acceptJob(jobId);
-      setStatus(`Accept transaction submitted: ${tx.hash}`);
-      await tx.wait();
-      setStatus(`You accepted job #${jobId}.`);
-      await loadFeed();
-    } catch (acceptError) {
-      setError(acceptError instanceof Error ? acceptError.message : "Failed to accept job.");
-    } finally {
-      setBusyJobId(null);
-    }
-  };
 
   return (
     <section className="space-y-8">
@@ -166,15 +173,8 @@ export default function HomePage() {
         </div>
       </div>
 
-      {status ? (
-        <div className="archon-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          {status}
-        </div>
-      ) : null}
       {error ? (
-        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {error}
-        </div>
+        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
       ) : null}
 
       <div className="archon-card p-5">
@@ -203,9 +203,7 @@ export default function HomePage() {
                   <span className={`rounded-full px-2 py-0.5 text-xs ${sourceBadgeClass(credential.sourceType)}`}>
                     {getSourceLabelForDisplay(credential.sourceType)}
                   </span>
-                  <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-[#9CA3AF]">
-                    +{credential.weight} pts
-                  </span>
+                  <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-[#9CA3AF]">+{credential.weight} pts</span>
                 </div>
               </div>
             ))}
@@ -230,24 +228,23 @@ export default function HomePage() {
         </div>
       </div>
 
-      {!configured ? (
-        <div className="archon-card border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          Contracts are not configured yet. Run contract deployment and redeploy frontend.
-        </div>
-      ) : null}
-
       {loading && jobs.length === 0 ? (
         <div role="status" aria-busy="true" aria-label="Loading jobs" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((item) => (
-            <div key={item} className="archon-card h-52 animate-pulse p-4" />
+            <div key={item} className="archon-card h-56 animate-pulse p-4" />
           ))}
         </div>
       ) : jobs.length === 0 ? (
-        <div className="archon-card px-5 py-10 text-center text-sm text-[#9CA3AF]">No jobs available yet.</div>
+        <div className="archon-card px-5 py-10 text-center text-sm text-[#9CA3AF]">No jobs available yet. Create the first posting.</div>
       ) : (
         <div aria-label="Job listings" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {jobs.map((job) => {
-            const canAccept = isJobOpen(job) && account !== null && account.toLowerCase() !== job.client.toLowerCase();
+            const creatorKey = job.client.toLowerCase();
+            const creatorCount = creatorJobCount[creatorKey] ?? 0;
+            const viewerState = viewerStateByJob[job.jobId];
+            const isCreator = Boolean(account && account.toLowerCase() === creatorKey);
+            const hasSubmission = Boolean(viewerState?.submission);
+
             return (
               <article key={job.jobId} className="archon-card p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -263,27 +260,32 @@ export default function HomePage() {
                   <p>Reward Pool: {formatUsdc(job.rewardUSDC)} USDC</p>
                   <p>Paid Out: {formatUsdc(job.paidOutUSDC)} USDC</p>
                   <p>Deadline: {formatTimestamp(job.deadline)}</p>
+                  <p>Creator: {creatorCount} jobs posted</p>
                   <p>
-                    Accepted: {job.acceptedCount} | Approved: {job.approvedCount}
+                    Accepted: {job.acceptedCount} | Submissions: {job.submissionCount} | Approved: {job.approvedCount}
                   </p>
                 </div>
 
-                <div className="mt-4 flex items-center justify-between">
-                  <Link href={`/job/${job.jobId}`} className="text-xs text-[#6C5CE7] transition-all duration-200 hover:text-[#8D80F0]">
-                    View details
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Link href={`/job/${job.jobId}`} className="archon-button-secondary px-3 py-1.5 text-xs">
+                    View Job
                   </Link>
-                  {isJobOpen(job) ? (
-                    <button
-                      type="button"
-                      disabled={!canAccept || busyJobId === job.jobId}
-                      onClick={() => void handleAccept(job.jobId)}
-                      className="archon-button-primary px-3 py-1.5 text-xs transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {busyJobId === job.jobId ? "Accepting..." : "Accept"}
-                    </button>
-                  ) : (
-                    <span className="text-xs text-[#9CA3AF]">Closed</span>
-                  )}
+
+                  {account ? (
+                    isCreator ? (
+                      <Link href={`/job/${job.jobId}`} className="archon-button-primary px-3 py-1.5 text-xs">
+                        Review Submissions ({job.submissionCount})
+                      </Link>
+                    ) : hasSubmission ? (
+                      <Link href={`/job/${job.jobId}`} className="archon-button-primary px-3 py-1.5 text-xs">
+                        View My Submission
+                      </Link>
+                    ) : (
+                      <Link href={`/job/${job.jobId}`} className="archon-button-primary px-3 py-1.5 text-xs">
+                        View & Apply
+                      </Link>
+                    )
+                  ) : null}
                 </div>
               </article>
             );
@@ -316,3 +318,4 @@ export default function HomePage() {
     </section>
   );
 }
+

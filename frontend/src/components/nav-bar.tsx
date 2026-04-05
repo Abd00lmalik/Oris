@@ -9,10 +9,17 @@ import { useWallet } from "@/lib/wallet-context";
 import { RouteAnnouncer } from "@/components/route-announcer";
 import { WrongNetworkBanner } from "@/components/wrong-network-banner";
 
-const baseNavLinks = [
+const disconnectedNavLinks = [
+  { href: "/", label: "Home" },
+  { href: "/earn", label: "Earn" },
+  { href: "/tasks", label: "Tasks" }
+];
+
+const connectedNavLinks = [
   { href: "/", label: "Home" },
   { href: "/earn", label: "Earn" },
   { href: "/tasks", label: "Tasks" },
+  { href: "/my-work", label: "My Work" },
   { href: "/profile", label: "Profile" }
 ];
 
@@ -29,8 +36,11 @@ export function NavBar() {
   );
 
   const navLinks = useMemo(
-    () => (isAdmin ? [...baseNavLinks, { href: "/admin", label: "Admin" }] : baseNavLinks),
-    [isAdmin]
+    () => {
+      if (!account) return disconnectedNavLinks;
+      return isAdmin ? [...connectedNavLinks, { href: "/admin", label: "Admin" }] : connectedNavLinks;
+    },
+    [account, isAdmin]
   );
 
   return (

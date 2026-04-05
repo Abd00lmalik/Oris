@@ -172,6 +172,11 @@ export type GovernanceActivityRecord = {
   claimedAt: number;
 };
 
+export type SuspicionResult = {
+  score: number;
+  reason: string;
+};
+
 const deployment = deploymentRaw as DeploymentConfig;
 const overrideRpcUrl = process.env.NEXT_PUBLIC_RPC_URL ?? process.env.NEXT_PUBLIC_ARC_RPC_URL;
 const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.NEXT_PUBLIC_ARC_CHAIN_ID;
@@ -181,6 +186,15 @@ const resolvedUsdcAddress = deployment.usdcAddress ?? deployment.contracts.usdc?
 const ERC20_MIN_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)"
+] as const;
+const JOB_OPTIONAL_ABI = [
+  "function getJobsByClient(address client) view returns (uint256[])",
+  "function getJobsByAgent(address agent) view returns (uint256[])",
+  "function jobEscrow(uint256 jobId) view returns (uint256)",
+  "function approvedAgentCount(uint256 jobId) view returns (uint256)",
+  "function getSuspicionScore(address agent, uint256 jobId) view returns (uint256,string)",
+  "function jobsCreatedByWallet(address wallet) view returns (uint256)",
+  "function jobsCompletedByWallet(address wallet) view returns (uint256)"
 ] as const;
 
 export const expectedChainId = overrideChainId ? Number(overrideChainId) : deployment.chainId;
@@ -451,6 +465,13 @@ export function getJobReadContract() {
   return getContractFromConfig(resolvedJobContract, getReadProvider());
 }
 
+function getOptionalJobReadContract() {
+  if (!contractAddresses.job || contractAddresses.job === ZERO_ADDRESS) {
+    throw new Error("Job contract is not configured.");
+  }
+  return new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, getReadProvider());
+}
+
 export function getRegistryReadContract() {
   ensureContractsConfigured();
   return getContractFromConfig(deployment.contracts.validationRegistry, getReadProvider());
@@ -497,10 +518,149 @@ export async function fetchJob(jobId: number): Promise<JobRecord | null> {
   }
 }
 
+export async function fetchSubmissionForAgent(
+  jobId: number,
+  agentAddress: string
+): Promise<SubmissionRecord | null> {
+  if (!agentAddress) return null;
+  try {
+    const contract = getJobReadContract();
+    const raw = await contract.getSubmission(jobId, agentAddress);
+    const parsed = parseSubmission(raw);
+    if (!parsed.agent || parsed.agent === ZERO_ADDRESS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchSubmissions(jobId: number): Promise<SubmissionRecord[]> {
   const contract = getJobReadContract();
   const raw = (await contract.getSubmissions(jobId)) as unknown[];
   return raw.map((item) => parseSubmission(item));
+}
+
+export async function fetchJobsByClient(clientAddress: string): Promise<JobRecord[]> {
+  if (!clientAddress) return [];
+  try {
+    const optional = getOptionalJobReadContract();
+    const ids = (await optional.getJobsByClient(clientAddress)) as unknown[];
+    const jobs: JobRecord[] = [];
+    for (const id of ids) {
+      const job = await fetchJob(toNumber(id));
+      if (job) jobs.push(job);
+    }
+    return jobs.sort((a, b) => b.jobId - a.jobId);
+  } catch {
+    const allJobs = await fetchAllJobs();
+    return allJobs
+      .filter((job) => job.client.toLowerCase() === clientAddress.toLowerCase())
+      .sort((a, b) => b.jobId - a.jobId);
+  }
+}
+
+export async function fetchJobsByAgent(agentAddress: string): Promise<JobRecord[]> {
+  if (!agentAddress) return [];
+  try {
+    const optional = getOptionalJobReadContract();
+    const ids = (await optional.getJobsByAgent(agentAddress)) as unknown[];
+    const jobs: JobRecord[] = [];
+    for (const id of ids) {
+      const job = await fetchJob(toNumber(id));
+      if (job) jobs.push(job);
+    }
+    return jobs.sort((a, b) => b.jobId - a.jobId);
+  } catch {
+    const allJobs = await fetchAllJobs();
+    const contract = getJobReadContract();
+    const acceptedChecks = await Promise.all(
+      allJobs.map(async (job) => {
+        try {
+          const accepted = (await contract.isAccepted(job.jobId, agentAddress)) as boolean;
+          return accepted ? job : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    return acceptedChecks
+      .filter((job): job is JobRecord => Boolean(job))
+      .sort((a, b) => b.jobId - a.jobId);
+  }
+}
+
+export async function fetchJobsCreatedCount(walletAddress: string): Promise<number> {
+  if (!walletAddress) return 0;
+  try {
+    const optional = getOptionalJobReadContract();
+    return Number(await optional.jobsCreatedByWallet(walletAddress));
+  } catch {
+    const jobs = await fetchJobsByClient(walletAddress);
+    return jobs.length;
+  }
+}
+
+export async function fetchJobsCompletedCount(walletAddress: string): Promise<number> {
+  if (!walletAddress) return 0;
+  try {
+    const optional = getOptionalJobReadContract();
+    return Number(await optional.jobsCompletedByWallet(walletAddress));
+  } catch {
+    try {
+      const registry = getRegistryReadContract();
+      return Number(await registry.credentialCount(walletAddress));
+    } catch {
+      return 0;
+    }
+  }
+}
+
+export async function fetchJobEscrow(jobId: number): Promise<bigint> {
+  try {
+    const optional = getOptionalJobReadContract();
+    return (await optional.jobEscrow(jobId)) as bigint;
+  } catch {
+    const job = await fetchJob(jobId);
+    if (!job) return 0n;
+    return BigInt(job.rewardUSDC) - BigInt(job.paidOutUSDC || "0");
+  }
+}
+
+export async function fetchApprovedAgentCount(jobId: number): Promise<number> {
+  try {
+    const optional = getOptionalJobReadContract();
+    return Number(await optional.approvedAgentCount(jobId));
+  } catch {
+    const job = await fetchJob(jobId);
+    return job?.approvedCount ?? 0;
+  }
+}
+
+export async function fetchSuspicionScore(
+  jobId: number,
+  agentAddress: string
+): Promise<SuspicionResult> {
+  try {
+    const optional = getOptionalJobReadContract();
+    const result = (await optional.getSuspicionScore(agentAddress, jobId)) as [bigint, string];
+    return { score: Number(result[0]), reason: result[1] };
+  } catch {
+    const [job, submission] = await Promise.all([
+      fetchJob(jobId),
+      fetchSubmissionForAgent(jobId, agentAddress)
+    ]);
+    if (!job || !submission || !submission.submittedAt) {
+      return { score: 0, reason: "" };
+    }
+    let score = 0;
+    let reason = "";
+    const timeToComplete = submission.submittedAt - job.createdAt;
+    if (timeToComplete > 0 && timeToComplete < 2 * 60 * 60) {
+      score += 30;
+      reason = "submission too fast; ";
+    }
+    return { score, reason };
+  }
 }
 
 export async function fetchOpenAgentTasks(): Promise<AgentTaskRecord[]> {
@@ -528,11 +688,34 @@ export async function fetchOpenAgentTasks(): Promise<AgentTaskRecord[]> {
 export async function fetchAgentTasksByAddress(agentAddress: string): Promise<AgentTaskRecord[]> {
   if (!agentAddress || !deployment.contracts.agentTaskSource) return [];
   const contract = getSourceReadContract("agent_task");
-  const taskIds = (await contract.tasksByAgent(agentAddress)) as unknown[];
+  let taskIds: unknown[] = [];
+  let usedIndexedRead = false;
+  try {
+    taskIds = (await (
+      contract as unknown as {
+        getTasksByAgent: (address: string) => Promise<unknown[]>;
+      }
+    ).getTasksByAgent(agentAddress)) as unknown[];
+    usedIndexedRead = true;
+  } catch {
+    // Fallback for older deployments below.
+  }
+
   const tasks: AgentTaskRecord[] = [];
-  for (const taskId of taskIds) {
-    const rawTask = await contract.tasks(taskId);
-    tasks.push(parseAgentTask(rawTask));
+  if (usedIndexedRead) {
+    for (const taskId of taskIds) {
+      const rawTask = await contract.tasks(taskId);
+      tasks.push(parseAgentTask(rawTask));
+    }
+  } else {
+    const nextTaskId = Number(await contract.nextTaskId());
+    for (let taskId = 0; taskId < nextTaskId; taskId++) {
+      const rawTask = await contract.tasks(taskId);
+      const task = parseAgentTask(rawTask);
+      if (task.assignedAgent.toLowerCase() === agentAddress.toLowerCase()) {
+        tasks.push(task);
+      }
+    }
   }
   return tasks.sort((a, b) => b.taskId - a.taskId);
 }
@@ -540,11 +723,34 @@ export async function fetchAgentTasksByAddress(agentAddress: string): Promise<Ag
 export async function fetchPosterTasksByAddress(posterAddress: string): Promise<AgentTaskRecord[]> {
   if (!posterAddress || !deployment.contracts.agentTaskSource) return [];
   const contract = getSourceReadContract("agent_task");
-  const taskIds = (await contract.tasksByPoster(posterAddress)) as unknown[];
+  let taskIds: unknown[] = [];
+  let usedIndexedRead = false;
+  try {
+    taskIds = (await (
+      contract as unknown as {
+        getTasksByPoster: (address: string) => Promise<unknown[]>;
+      }
+    ).getTasksByPoster(posterAddress)) as unknown[];
+    usedIndexedRead = true;
+  } catch {
+    // Fallback for older deployments below.
+  }
+
   const tasks: AgentTaskRecord[] = [];
-  for (const taskId of taskIds) {
-    const rawTask = await contract.tasks(taskId);
-    tasks.push(parseAgentTask(rawTask));
+  if (usedIndexedRead) {
+    for (const taskId of taskIds) {
+      const rawTask = await contract.tasks(taskId);
+      tasks.push(parseAgentTask(rawTask));
+    }
+  } else {
+    const nextTaskId = Number(await contract.nextTaskId());
+    for (let taskId = 0; taskId < nextTaskId; taskId++) {
+      const rawTask = await contract.tasks(taskId);
+      const task = parseAgentTask(rawTask);
+      if (task.taskPoster.toLowerCase() === posterAddress.toLowerCase()) {
+        tasks.push(task);
+      }
+    }
   }
   return tasks.sort((a, b) => b.taskId - a.taskId);
 }

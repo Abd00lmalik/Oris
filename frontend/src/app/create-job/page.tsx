@@ -7,6 +7,7 @@ import {
   contractAddresses,
   expectedChainId,
   formatTimestamp,
+  getJobReadContract,
   getJobWriteContract,
   txApproveUsdcIfNeeded
 } from "@/lib/contracts";
@@ -44,6 +45,7 @@ export default function CreateJobPage() {
   const [arcBalance, setArcBalance] = useState("0");
   const [arcGateAllowed, setArcGateAllowed] = useState(true);
   const [checkingArc, setCheckingArc] = useState(false);
+  const [minRewardUsdc, setMinRewardUsdc] = useState("5");
 
   const gateEnabled = ARC_TOKEN_CONFIG.tokenAddress !== "0x0000000000000000000000000000000000000000";
   const submitDisabled = submitting || (gateEnabled && !arcGateAllowed);
@@ -52,6 +54,25 @@ export default function CreateJobPage() {
   const trimmedDescription = description.trim();
   const deadline = parseDeadline(deadlineInput);
   const deadlineDisplay = deadline ? formatTimestamp(deadline) : "";
+
+  useEffect(() => {
+    let active = true;
+    const loadMinStake = async () => {
+      try {
+        const readContract = getJobReadContract();
+        const minStake = (await (readContract as unknown as { minJobStake: () => Promise<bigint> }).minJobStake()) as bigint;
+        if (!active) return;
+        setMinRewardUsdc(ethers.formatUnits(minStake, 6));
+      } catch {
+        if (!active) return;
+        setMinRewardUsdc("5");
+      }
+    };
+    void loadMinStake();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -172,6 +193,11 @@ export default function CreateJobPage() {
       setError("Enter a valid USDC reward amount.");
       return;
     }
+    const minRewardUnits = parseRewardToUnits(minRewardUsdc);
+    if (rewardUnits < minRewardUnits) {
+      setError(`Minimum reward is ${minRewardUsdc} USDC.`);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -286,7 +312,7 @@ export default function CreateJobPage() {
             <input
               aria-label="Reward amount in USDC"
               type="number"
-              min="0"
+              min={minRewardUsdc}
               step="0.000001"
               className="archon-input"
               value={rewardInput}
@@ -294,6 +320,7 @@ export default function CreateJobPage() {
               placeholder="100"
               required
             />
+            <p className="mt-1 text-xs text-[#9CA3AF]">Minimum reward: {minRewardUsdc} USDC</p>
           </label>
 
           {gateEnabled && !arcGateAllowed ? (

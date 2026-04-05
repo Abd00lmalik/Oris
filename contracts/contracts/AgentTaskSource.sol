@@ -257,6 +257,14 @@ contract AgentTaskSource is ICredentialSource {
         platformFeeBps = feeBps;
     }
 
+    function getTasksByAgent(address agent) external view returns (uint256[] memory) {
+        return tasksByAgent[agent];
+    }
+
+    function getTasksByPoster(address poster) external view returns (uint256[] memory) {
+        return tasksByPoster[poster];
+    }
+
     function _getExistingTask(uint256 taskId) internal view returns (AgentTask storage) {
         AgentTask storage task = tasks[taskId];
         require(task.taskPoster != address(0), "task does not exist");
