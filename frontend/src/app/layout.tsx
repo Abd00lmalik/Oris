@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Archon— Universal On-Chain Reputation",
+  title: "Archon - Universal On-Chain Reputation",
   description:
     "Earn verifiable credentials from jobs, GitHub, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
   metadataBase: new URL("https://archon-dapp.vercel.app"),
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     apple: "/logo-icon.svg"
   },
   openGraph: {
-    title: "Archon— Universal On-Chain Reputation",
+    title: "Archon - Universal On-Chain Reputation",
     description:
       "Earn verifiable credentials from jobs, GitHub, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
     images: ["/logo.svg"]
@@ -52,4 +52,3 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     </html>
   );
 }
-

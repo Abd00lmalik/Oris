@@ -10,9 +10,16 @@ type JobStatusListener = (status: number) => void;
 type CredentialListener = (credential: ReturnType<typeof parseCredential>) => void;
 type TaskListener = (taskId: number) => void;
 
-function getContract(contractKey: keyof ReturnType<typeof getDeploymentConfig>["contracts"], provider: ethers.Provider) {
+function getContract(
+  contractKey: keyof ReturnType<typeof getDeploymentConfig>["contracts"] | "job",
+  provider: ethers.Provider
+) {
   const deployment = getDeploymentConfig();
-  const config = deployment.contracts[contractKey];
+  const config =
+    contractKey === "job"
+      ? ((deployment.contracts as Record<string, { address: string; abi: unknown[] } | undefined>).jobContract ??
+        (deployment.contracts as Record<string, { address: string; abi: unknown[] } | undefined>).job)
+      : deployment.contracts[contractKey];
   if (!config || config.address === "0x0000000000000000000000000000000000000000") {
     return null;
   }

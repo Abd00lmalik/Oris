@@ -6,13 +6,14 @@ import { useEffect, useMemo, useState } from "react";
 function labelFromPath(pathname: string) {
   if (pathname === "/") return "Home";
   if (pathname === "/earn") return "Earn";
-  if (pathname === "/tasks") return "Tasks";
+  if (pathname === "/tasks") return "Agentic Tasks";
   if (pathname === "/github") return "GitHub";
   if (pathname === "/community") return "Community";
   if (pathname === "/governance") return "Governance";
   if (pathname === "/attest") return "Attest";
+  if (pathname === "/apply") return "Get Started";
   if (pathname === "/admin") return "Admin";
-  if (pathname === "/create-job") return "Create Job";
+  if (pathname === "/create-job") return "Create Task";
   if (pathname === "/submit-work") return "Submit Work";
   if (pathname === "/approve-job") return "Approve Job";
   if (pathname === "/profile") return "Profile";

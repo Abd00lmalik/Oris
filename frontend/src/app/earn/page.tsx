@@ -1,80 +1,81 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { fetchCredentialsForAgent } from "@/lib/contracts";
+import { IconAttest, IconCommunity, IconGitHub, IconGovernance, IconRobot, IconStar, IconTask, IconWallet } from "@/lib/icons";
 import { calculateWeightedScore, getReputationTier } from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
 
 type SourceCard = {
   key: string;
-  icon: string;
   name: string;
   what: string;
   weight: string;
-  payment: string;
+  paid: boolean;
   href: string;
   cta: string;
+  icon: ReactNode;
 };
 
 const SOURCE_CARDS: SourceCard[] = [
   {
     key: "job",
-    icon: "??",
+    icon: <IconTask className="h-5 w-5" />,
     name: "Complete Jobs",
     what: "Browse open jobs, do the work, submit a link, get paid in USDC + earn a credential when approved.",
-    weight: "+100 pts per job",
-    payment: "?? Paid (USDC)",
+    weight: "Credential weight: +100 pts per job",
+    paid: true,
     href: "/",
     cta: "Browse Open Jobs"
   },
   {
     key: "github",
-    icon: "??",
+    icon: <IconGitHub className="h-5 w-5" />,
     name: "GitHub Contributions",
     what: "Submit proof of a merged PR, resolved issue, or code contribution on GitHub. A verifier reviews and approves.",
-    weight: "+70 to +150 pts (varies by type)",
-    payment: "?? Reputation only",
+    weight: "Credential weight: +70 to +150 pts",
+    paid: false,
     href: "/github",
     cta: "Submit GitHub Activity"
   },
   {
     key: "agent_task",
-    icon: "??",
+    icon: <IconRobot className="h-5 w-5" />,
     name: "AI Agent Tasks",
     what: "Claim a task, complete it autonomously or manually, submit your output. Get paid in USDC + earn a credential.",
-    weight: "+130 pts per task",
-    payment: "?? Paid (USDC)",
+    weight: "Credential weight: +130 pts per task",
+    paid: true,
     href: "/tasks",
     cta: "Browse Tasks"
   },
   {
     key: "community",
-    icon: "??",
+    icon: <IconCommunity className="h-5 w-5" />,
     name: "Community Work",
     what: "Earn credentials for helping users, creating content, moderation, or running events. Awarded by verified moderators.",
-    weight: "+50 to +120 pts (varies by activity)",
-    payment: "?? Reputation only",
+    weight: "Credential weight: +50 to +120 pts",
+    paid: false,
     href: "/community",
     cta: "View Community Credentials"
   },
   {
     key: "peer_attestation",
-    icon: "??",
+    icon: <IconAttest className="h-5 w-5" />,
     name: "Peer Vouching",
-    what: "Other verified users (with credentials) can vouch for your work. You automatically receive a credential when attested.",
-    weight: "+60 pts per attestation",
-    payment: "?? Reputation only",
+    what: "Other verified users with strong reputation can vouch for your work. You receive a credential when attested.",
+    weight: "Credential weight: +60 pts per attestation",
+    paid: false,
     href: "/attest",
     cta: "Give or Receive Attestations"
   },
   {
     key: "dao_governance",
-    icon: "???",
+    icon: <IconGovernance className="h-5 w-5" />,
     name: "DAO Voting",
-    what: "Prove you voted on an on-chain governance proposal. Verified instantly and automatically — no review needed.",
-    weight: "+90 pts per vote",
-    payment: "?? Reputation only",
+    what: "Prove you voted on an on-chain governance proposal. Verified instantly and automatically with no review queue.",
+    weight: "Credential weight: +90 pts per vote",
+    paid: false,
     href: "/governance",
     cta: "Claim Voting Credential"
   }
@@ -139,7 +140,7 @@ export default function EarnPage() {
               "Loading your score..."
             ) : (
               <span>
-                Your current score: <strong className="text-[#EAEAF0]">{score}</strong> · Tier{" "}
+                Your current score: <strong className="text-[#EAEAF0]">{score}</strong> | Tier{" "}
                 <span className="text-[#00D1B2]">{tier}</span>
               </span>
             )
@@ -153,15 +154,22 @@ export default function EarnPage() {
         {SOURCE_CARDS.map((card) => (
           <article key={card.key} className="archon-card flex h-full flex-col p-5">
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xl" aria-hidden="true">{card.icon}</p>
-                <h2 className="mt-1 text-lg font-semibold text-[#EAEAF0]">{card.name}</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-[#EAEAF0]">{card.icon}</span>
+                <h2 className="text-lg font-semibold text-[#EAEAF0]">{card.name}</h2>
               </div>
               <span className="rounded-full bg-white/5 px-2 py-1 text-xs text-[#9CA3AF]">{card.weight}</span>
             </div>
+
             <p className="mt-3 text-sm text-[#9CA3AF]">{card.what}</p>
-            <p className="mt-3 text-xs text-[#9CA3AF]">{card.payment}</p>
-            <p className="mt-2 text-sm text-[#EAEAF0]">You have earned: <strong>{counts[card.key] ?? 0}</strong> credentials from this source</p>
+            <p className="mt-3 inline-flex items-center gap-2 text-xs text-[#9CA3AF]">
+              {card.paid ? <IconWallet className="h-4 w-4" /> : <IconStar className="h-4 w-4" />}
+              {card.paid ? "Paid in USDC" : "Reputation only"}
+            </p>
+            <p className="mt-2 text-sm text-[#EAEAF0]">
+              You have earned: <strong>{counts[card.key] ?? 0}</strong> credentials from this source
+            </p>
+
             <div className="mt-auto pt-5">
               <Link href={card.href} className="archon-button-primary inline-flex px-3 py-2 text-sm">
                 {card.cta}
@@ -176,15 +184,21 @@ export default function EarnPage() {
         <div className="mt-4 space-y-4 text-sm text-[#9CA3AF]">
           <div>
             <p className="font-medium text-[#EAEAF0]">What is a credential?</p>
-            <p className="mt-1">A permanent on-chain record proving you did real work. It cannot be deleted, transferred, or faked.</p>
+            <p className="mt-1">
+              A permanent on-chain record proving you did real work. It cannot be deleted, transferred, or faked.
+            </p>
           </div>
           <div>
             <p className="font-medium text-[#EAEAF0]">What is a reputation score?</p>
-            <p className="mt-1">The sum of weights from all your credentials, capped at 2000. Higher scores unlock Elite and Legend tier status.</p>
+            <p className="mt-1">
+              The sum of weights from all your credentials, capped at 2000. Higher scores unlock Keystone and Arc Founder tier status.
+            </p>
           </div>
           <div>
             <p className="font-medium text-[#EAEAF0]">Can I game the system?</p>
-            <p className="mt-1">The platform uses time locks, economic friction, and suspicion scoring to detect farming. Fake credentials have zero value to employers or other users.</p>
+            <p className="mt-1">
+              The platform uses time locks, economic friction, and suspicion scoring to detect farming. Fake credentials have zero value to employers or other users.
+            </p>
           </div>
         </div>
       </div>

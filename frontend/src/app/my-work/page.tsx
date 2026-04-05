@@ -117,8 +117,8 @@ export default function MyWorkPage() {
               <p className="mt-3 text-sm text-[#9CA3AF]">Loading...</p>
             ) : jobsPosted.length === 0 ? (
               <div className="mt-3 text-sm text-[#9CA3AF]">
-                <p>You haven&apos;t posted any jobs yet.</p>
-                <Link href="/create-job" className="archon-button-primary mt-3 inline-flex px-3 py-2 text-xs">Post a Job</Link>
+                <p>You haven&apos;t posted any tasks yet.</p>
+                <Link href="/create-job" className="archon-button-primary mt-3 inline-flex px-3 py-2 text-xs">Post a Task</Link>
               </div>
             ) : (
               <div className="mt-3 space-y-3">
@@ -185,7 +185,7 @@ export default function MyWorkPage() {
               <div className="mt-3 space-y-2">
                 {githubSubmissions.map((activity) => (
                   <article key={activity.activityId} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
-                    <p className="text-[#EAEAF0]">Activity #{activity.activityId} · {activity.repoName}</p>
+                    <p className="text-[#EAEAF0]">Activity #{activity.activityId} | {activity.repoName}</p>
                     <p>Status: {githubStatusLabel(activity.status)}</p>
                     <p>Submitted: {formatTimestamp(activity.submittedAt)}</p>
                     <a href={activity.evidenceUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex text-[#8FD9FF] underline underline-offset-4">
@@ -206,4 +206,5 @@ export default function MyWorkPage() {
     </section>
   );
 }
+
 

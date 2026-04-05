@@ -3,22 +3,23 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
-import { expectedChainId, shortAddress } from "@/lib/contracts";
+import { useEffect, useMemo, useState } from "react";
+import { expectedChainId, fetchCredentialsForAgent, shortAddress } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { RouteAnnouncer } from "@/components/route-announcer";
 import { WrongNetworkBanner } from "@/components/wrong-network-banner";
 
 const disconnectedNavLinks = [
   { href: "/", label: "Home" },
+  { href: "/apply", label: "Get Started" },
   { href: "/earn", label: "Earn" },
-  { href: "/tasks", label: "Tasks" }
+  { href: "/tasks", label: "Agentic Tasks" }
 ];
 
 const connectedNavLinks = [
   { href: "/", label: "Home" },
   { href: "/earn", label: "Earn" },
-  { href: "/tasks", label: "Tasks" },
+  { href: "/tasks", label: "Agentic Tasks" },
   { href: "/my-work", label: "My Work" },
   { href: "/profile", label: "Profile" }
 ];
@@ -27,6 +28,7 @@ export function NavBar() {
   const pathname = usePathname();
   const { account, chainId, connect, disconnect } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [credentialCount, setCredentialCount] = useState<number | null>(null);
   const adminWallet = process.env.NEXT_PUBLIC_ADMIN_WALLET?.toLowerCase() ?? "";
 
   const isWrongNetwork = chainId !== null && chainId !== expectedChainId;
@@ -34,13 +36,37 @@ export function NavBar() {
     () => Boolean(account && adminWallet && account.toLowerCase() === adminWallet),
     [account, adminWallet]
   );
+  const showGetStarted = !account || credentialCount === 0;
+
+  useEffect(() => {
+    let active = true;
+    const loadCount = async () => {
+      if (!account) {
+        setCredentialCount(0);
+        return;
+      }
+      try {
+        const credentials = await fetchCredentialsForAgent(account);
+        if (!active) return;
+        setCredentialCount(credentials.length);
+      } catch {
+        if (!active) return;
+        setCredentialCount(null);
+      }
+    };
+    void loadCount();
+    return () => {
+      active = false;
+    };
+  }, [account]);
 
   const navLinks = useMemo(
     () => {
       if (!account) return disconnectedNavLinks;
-      return isAdmin ? [...connectedNavLinks, { href: "/admin", label: "Admin" }] : connectedNavLinks;
+      const links = showGetStarted ? [{ href: "/apply", label: "Get Started" }, ...connectedNavLinks] : connectedNavLinks;
+      return isAdmin ? [...links, { href: "/admin", label: "Admin" }] : links;
     },
-    [account, isAdmin]
+    [account, isAdmin, showGetStarted]
   );
 
   return (

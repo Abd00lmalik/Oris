@@ -127,6 +127,18 @@ contract ERC8004ValidationRegistry {
         return credentialIdsByAgent[agent].length;
     }
 
+    function getWeightedScore(address agent) external view returns (uint256) {
+        uint256[] storage ids = credentialIdsByAgent[agent];
+        uint256 total = 0;
+        for (uint256 i = 0; i < ids.length; i++) {
+            Credential storage credential = credentials[ids[i]];
+            if (credential.valid) {
+                total += credential.weight;
+            }
+        }
+        return total > 2000 ? 2000 : total;
+    }
+
     function _activityKey(string calldata sourceType, uint256 activityId) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(sourceType, activityId));
     }

@@ -98,7 +98,7 @@ export default function GitHubPage() {
       const tx = await txSubmitGitHubActivity(provider, activityType, evidenceUrl.trim(), repoName.trim());
       setStatus(`Submission transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus("Under review — platform verifiers typically respond within 24 hours.");
+      setStatus("Under review - platform verifiers typically respond within 24 hours.");
       setEvidenceUrl("");
       setRepoName("");
       setTab("submissions");
@@ -236,7 +236,7 @@ export default function GitHubPage() {
             </button>
           </form>
           <p className="mt-3 text-xs text-[#9CA3AF]">
-            Under review — platform verifiers typically respond within 24 hours.
+            Under review - platform verifiers typically respond within 24 hours.
           </p>
         </div>
       ) : null}
