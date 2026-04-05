@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -30,8 +30,9 @@ export default function AttestPage() {
   const [received, setReceived] = useState<Array<{ id: number; from: string; category: string; note: string; issuedAt: number }>>([]);
   const [given, setGiven] = useState<Array<{ id: number; to: string; category: string; note: string; issuedAt: number }>>([]);
 
-  const canAttest = score >= 300;
+  const canAttest = score >= 1000;
   const noteLength = note.trim().length;
+  const pointsToKeystone = Math.max(0, 1000 - score);
 
   const load = useCallback(async () => {
     if (!account) {
@@ -103,7 +104,7 @@ export default function AttestPage() {
     try {
       const provider = await withProvider();
       if (!canAttest) {
-        throw new Error("Reach Architect tier (300 pts) to give attestations.");
+        throw new Error("Reach Keystone tier (1000 pts) to give attestations.");
       }
       if (noteLength < 50) {
         throw new Error("Note must be at least 50 characters.");
@@ -129,22 +130,29 @@ export default function AttestPage() {
     if (canAttest) {
       return `Your current score: ${score} pts. You can give attestations.`;
     }
-    return `Your current score: ${score} pts. You need 300 pts (Architect tier) to give attestations. Earn more credentials to unlock this.`;
-  }, [canAttest, score]);
+    return `Your score: ${score} pts - You need 1000 pts to give attestations. That is ${pointsToKeystone} pts away. Keep completing tasks and earning credentials.`;
+  }, [canAttest, pointsToKeystone, score]);
 
   return (
     <section className="space-y-6">
       <div className="archon-card p-6">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Peer Attestations</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Vouch for real contributions from people you have worked with. Attestations are weighted and rare.
+          Vouch for real contributions from people you have worked with. Attestations are weighted and rare - they
+          carry significant reputation value.
         </p>
 
         <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-sm text-[#9CA3AF]">
-          To give attestations, you must reach Architect tier (300 reputation points). This prevents newly created
-          accounts from gaming the attestation system.
+          Only Keystone and Arc Founder tier members can vouch for others. This makes peer attestations the rarest
+          and most valuable credential on the platform - they signal true community trust.
         </div>
-        <div className="mt-2 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-sm text-[#9CA3AF]">
+
+        <div className="mt-3 rounded-xl border border-[#6C5CE7]/35 bg-[#6C5CE7]/10 px-4 py-3 text-xs text-[#EAEAF0]">
+          <p>Surveyor - Draftsman - Architect - Master Builder - <strong>[Keystone]</strong> - Arc Founder</p>
+          <p className="mt-1 text-[#C7BFFF]">Unlocks peer vouching at Keystone (1000 pts).</p>
+        </div>
+
+        <div className="mt-3 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-sm text-[#9CA3AF]">
           {eligibilityText}
         </div>
 
@@ -197,7 +205,7 @@ export default function AttestPage() {
 
           {!canAttest ? (
             <p className="mt-4 text-sm text-[#9CA3AF]">
-              You cannot give attestations yet. Reach Architect tier first.
+              You cannot give attestations yet. Reach Keystone tier first.
             </p>
           ) : (
             <form onSubmit={handleAttest} className="mt-4 space-y-3">
@@ -227,7 +235,7 @@ export default function AttestPage() {
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
                   maxLength={200}
-                  placeholder="Describe specifically what this person did, why it was valuable, and how you interacted with them."
+                  placeholder="Describe specifically what this person did, why it was valuable, and how you interacted with them. Vague notes will be visible to everyone."
                   required
                 />
                 <p className="mt-1 text-xs text-[#9CA3AF]">{noteLength}/200 characters</p>

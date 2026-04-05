@@ -72,8 +72,8 @@ contract PeerAttestationSource is ICredentialSource {
         require(recipient != msg.sender, "cannot attest self");
         require(bytes(category).length > 0, "category required");
         require(
-            IValidationRegistry(registry).getWeightedScore(msg.sender) >= 300,
-            "reach Architect tier (300 pts) to give attestations"
+            IValidationRegistry(registry).getWeightedScore(msg.sender) >= 1000,
+            "reach Keystone tier (1000 pts) to give attestations"
         );
         require(
             bytes(note).length >= 50,

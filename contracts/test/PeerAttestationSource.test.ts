@@ -25,8 +25,8 @@ describe("PeerAttestationSource", function () {
   it("issues peer attestations and auto-mints recipient credentials", async function () {
     const { owner, attester, recipient, registry, peer } = await deployFixture();
 
-    // Bootstrap attester to Builder threshold (>= 300 points).
-    await registry.connect(owner).issue(attester.address, 999, "job", 300);
+    // Bootstrap attester to Keystone threshold (>= 1000 points).
+    await registry.connect(owner).issue(attester.address, 999, "job", 1000);
 
     await expect(
       peer
@@ -69,13 +69,13 @@ describe("PeerAttestationSource", function () {
           "Meaningful detailed note that still should fail due to insufficient attester score."
         )
     ).to.be.revertedWith(
-      "reach Architect tier (300 pts) to give attestations"
+      "reach Keystone tier (1000 pts) to give attestations"
     );
   });
 
   it("enforces weekly anti-spam caps for attesters and recipients", async function () {
     const { owner, attester, recipient, altRecipient, registry, peer } = await deployFixture();
-    await registry.connect(owner).issue(attester.address, 1, "job", 300);
+    await registry.connect(owner).issue(attester.address, 1, "job", 1000);
 
     await peer
       .connect(attester)
@@ -127,8 +127,8 @@ describe("PeerAttestationSource", function () {
 
   it("prevents mutual attestation loops between two wallets", async function () {
     const { owner, attester, recipient, registry, peer } = await deployFixture();
-    await registry.connect(owner).issue(attester.address, 1, "job", 300);
-    await registry.connect(owner).issue(recipient.address, 2, "job", 300);
+    await registry.connect(owner).issue(attester.address, 1, "job", 1000);
+    await registry.connect(owner).issue(recipient.address, 2, "job", 1000);
 
     await peer
       .connect(attester)
