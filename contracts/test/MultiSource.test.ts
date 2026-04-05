@@ -118,11 +118,13 @@ describe("MultiSource Integration", function () {
 
     // Source 1: Job
     const jobDeadline = (await time.latest()) + 3 * 60 * 60;
-    await job.connect(client).createJob("Landing", "Build page", jobDeadline, ethers.parseUnits("300", 6));
+    await job
+      .connect(client)
+      .createJob("Landing", "Build page", jobDeadline, ethers.parseUnits("300", 6), 3);
     await job.connect(agent).acceptJob(0);
     await job.connect(agent).submitDeliverable(0, "https://github.com/org/repo/pull/1");
-    await time.increase(16 * 60);
-    await job.connect(client).approveSubmission(0, agent.address);
+    await time.increase(61 * 60);
+    await job.connect(client).approveSubmission(0, agent.address, ethers.parseUnits("100", 6));
     await job.connect(agent).claimCredential(0);
 
     // Source 2: GitHub
@@ -144,8 +146,14 @@ describe("MultiSource Integration", function () {
     await agentTasks.connect(agent).claimRewardAndCredential(0);
 
     // Source 5: Peer attestation (attester must already have a credential).
-    await registry.connect(owner).issue(verifier.address, 4000, "job", 100);
-    await peer.connect(verifier).attest(agent.address, "technical", "Reliable contributor");
+    await registry.connect(owner).issue(verifier.address, 4000, "job", 300);
+    await peer
+      .connect(verifier)
+      .attest(
+        agent.address,
+        "technical",
+        "Worked directly with this contributor on production fixes and reviewed their output quality."
+      );
 
     // Source 6: DAO governance
     await governor.setVoted(42, agent.address, true);

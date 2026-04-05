@@ -15,8 +15,8 @@ contract PeerAttestationSource is ICredentialSource {
         uint256 issuedAt;
     }
 
-    uint256 public constant ATTESTATIONS_PER_WEEK = 3;
-    uint256 public constant RECEIVED_PER_WEEK = 2;
+    uint256 public constant ATTESTATIONS_PER_WEEK = 2;
+    uint256 public constant RECEIVED_PER_WEEK = 1;
     uint256 public constant WINDOW = 7 days;
 
     uint256 public nextAttestationId;
@@ -29,6 +29,7 @@ contract PeerAttestationSource is ICredentialSource {
     mapping(address => uint256) public attestationsReceivedThisWeek;
     mapping(address => uint256) public weekStartTimestamp;
     mapping(address => uint256) public weekStartTimestampReceived;
+    mapping(address => mapping(address => bool)) public hasAttestedBefore;
 
     event AttestationIssued(
         uint256 indexed attestationId,
@@ -70,9 +71,19 @@ contract PeerAttestationSource is ICredentialSource {
         require(recipient != address(0), "invalid recipient");
         require(recipient != msg.sender, "cannot attest self");
         require(bytes(category).length > 0, "category required");
-        require(bytes(note).length > 0, "note required");
+        require(
+            IValidationRegistry(registry).getWeightedScore(msg.sender) >= 300,
+            "reach Architect tier (300 pts) to give attestations"
+        );
+        require(
+            bytes(note).length >= 50,
+            "note must be at least 50 characters explaining the contribution"
+        );
         require(bytes(note).length <= 200, "note too long");
-        require(IValidationRegistry(registry).credentialCount(msg.sender) >= 1, "attester needs credential");
+        require(
+            !hasAttestedBefore[recipient][msg.sender],
+            "this person has already attested you - mutual attestations not allowed"
+        );
 
         _syncGivenWindow(msg.sender);
         _syncReceivedWindow(recipient);
@@ -86,6 +97,7 @@ contract PeerAttestationSource is ICredentialSource {
         nextAttestationId += 1;
         attestationsGivenThisWeek[msg.sender] += 1;
         attestationsReceivedThisWeek[recipient] += 1;
+        hasAttestedBefore[msg.sender][recipient] = true;
 
         attestations[attestationId] = Attestation({
             attestationId: attestationId,

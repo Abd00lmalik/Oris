@@ -38,6 +38,7 @@ contract ERC8183Job is ICredentialSource {
         uint256 submittedAt;
         string reviewerNote;
         bool credentialClaimed;
+        uint256 allocatedReward;
     }
 
     struct SubmissionView {
@@ -47,10 +48,10 @@ contract ERC8183Job is ICredentialSource {
         uint256 submittedAt;
         string reviewerNote;
         bool credentialClaimed;
+        uint256 allocatedReward;
     }
 
     uint256 public constant BASIS_POINTS = 10_000;
-    uint256 public constant MAX_APPROVALS_PER_JOB = 3;
     uint256 public constant MIN_JOB_DURATION = 1 hours;
     uint256 public constant MIN_REVIEW_DELAY = 15 minutes;
     uint256 public constant CREDENTIAL_COOLDOWN = 6 hours;
@@ -68,6 +69,8 @@ contract ERC8183Job is ICredentialSource {
     mapping(address => uint256) public lastCredentialClaim;
     mapping(address => uint256) public jobsCreatedByWallet;
     mapping(address => uint256) public jobsCompletedByWallet;
+    mapping(uint256 => uint256) public maxApprovalsForJob;
+    mapping(uint256 => uint256) public approvedAgentCount;
     mapping(uint256 => Job) private jobs;
     mapping(uint256 => address[]) private acceptedAgentsByJob;
     mapping(address => uint256[]) private jobsByClient;
@@ -90,7 +93,11 @@ contract ERC8183Job is ICredentialSource {
     );
     event JobAccepted(uint256 indexed jobId, address indexed agent);
     event DeliverableSubmitted(uint256 indexed jobId, address indexed agent, string deliverableLink);
-    event SubmissionApproved(uint256 indexed jobId, address indexed agent);
+    event SubmissionApproved(
+        uint256 indexed jobId,
+        address indexed agent,
+        uint256 allocatedReward
+    );
     event SubmissionRejected(uint256 indexed jobId, address indexed agent, string reviewerNote);
     event RewardPaid(
         uint256 indexed jobId,
@@ -191,7 +198,8 @@ contract ERC8183Job is ICredentialSource {
         string calldata title,
         string calldata description,
         uint256 deadline,
-        uint256 rewardUSDC
+        uint256 rewardUSDC,
+        uint256 maxApprovals
     ) external returns (uint256 createdJobId) {
         require(
             ISourceRegistry(sourceRegistry).isApprovedFor("job", msg.sender),
@@ -200,7 +208,12 @@ contract ERC8183Job is ICredentialSource {
         require(bytes(title).length > 0, "title required");
         require(bytes(description).length > 0, "description required");
         require(deadline >= block.timestamp + MIN_JOB_DURATION, "deadline too soon");
+        require(maxApprovals >= 1 && maxApprovals <= 20, "maxApprovals must be between 1 and 20");
         require(rewardUSDC >= minJobStake, "reward below minimum stake");
+        require(
+            rewardUSDC >= minJobStake * maxApprovals,
+            "reward pool too small for number of approvals"
+        );
         if (requireCredentialToPost) {
             require(validationRegistry != address(0), "validation registry not set");
             require(
@@ -228,6 +241,8 @@ contract ERC8183Job is ICredentialSource {
             paidOutUSDC: 0,
             refunded: false
         });
+        maxApprovalsForJob[createdJobId] = maxApprovals;
+        approvedAgentCount[createdJobId] = 0;
         jobsByClient[msg.sender].push(createdJobId);
         jobsCreatedByWallet[msg.sender] += 1;
 
@@ -273,23 +288,39 @@ contract ERC8183Job is ICredentialSource {
         emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
     }
 
-    function approveSubmission(uint256 jobId, address agent) external onlyClient(jobId) {
+    function approveSubmission(
+        uint256 jobId,
+        address agent,
+        uint256 rewardAmount
+    ) external onlyClient(jobId) {
         Job storage job = _getExistingJob(jobId);
         require(agent != address(0), "invalid agent");
-        require(job.approvedCount < MAX_APPROVALS_PER_JOB, "max approvals reached");
-
         Submission storage submission = submissions[jobId][agent];
         require(submission.status == SubmissionStatus.Submitted, "submission not pending");
+        require(block.timestamp >= job.createdAt + MIN_JOB_DURATION, "job too new");
         require(
             block.timestamp >= submission.submittedAt + MIN_REVIEW_DELAY,
             "review delay not elapsed"
         );
+        require(
+            approvedAgentCount[jobId] < maxApprovalsForJob[jobId],
+            "maximum approvals reached for this job"
+        );
+        require(rewardAmount > 0, "reward must be positive");
+
+        uint256 alreadyAllocated = _totalAllocated(jobId);
+        require(
+            alreadyAllocated + rewardAmount <= job.rewardUSDC,
+            "reward exceeds remaining escrow balance"
+        );
 
         submission.status = SubmissionStatus.Approved;
         submission.reviewerNote = "";
+        submission.allocatedReward = rewardAmount;
+        approvedAgentCount[jobId] += 1;
         job.approvedCount += 1;
 
-        emit SubmissionApproved(jobId, agent);
+        emit SubmissionApproved(jobId, agent, rewardAmount);
     }
 
     function rejectSubmission(
@@ -320,11 +351,10 @@ contract ERC8183Job is ICredentialSource {
             "credential cooldown active"
         );
 
-        uint256 grossReward = _rewardPerApproval(job.rewardUSDC);
-        uint256 reserved = _reservedReward(job.rewardUSDC, job.approvedCount, job.claimedCount);
+        uint256 grossReward = submission.allocatedReward;
+        require(grossReward > 0, "no reward allocated");
         uint256 available = job.rewardUSDC - job.paidOutUSDC;
         require(available >= grossReward, "insufficient escrow");
-        require(reserved >= grossReward, "reward not reserved");
 
         submission.credentialClaimed = true;
         job.claimedCount += 1;
@@ -353,7 +383,7 @@ contract ERC8183Job is ICredentialSource {
         require(block.timestamp > job.deadline, "job not expired");
         require(!job.refunded, "already refunded");
 
-        uint256 reserved = _reservedReward(job.rewardUSDC, job.approvedCount, job.claimedCount);
+        uint256 reserved = _reservedUnclaimed(jobId);
         uint256 available = job.rewardUSDC - job.paidOutUSDC;
         require(available > reserved, "nothing refundable");
 
@@ -399,7 +429,8 @@ contract ERC8183Job is ICredentialSource {
                 status: submission.status,
                 submittedAt: submission.submittedAt,
                 reviewerNote: submission.reviewerNote,
-                credentialClaimed: submission.credentialClaimed
+                credentialClaimed: submission.credentialClaimed,
+                allocatedReward: submission.allocatedReward
             });
         }
     }
@@ -412,18 +443,17 @@ contract ERC8183Job is ICredentialSource {
     }
 
     function getRewardPerApproval(uint256 jobId) external view returns (uint256) {
-        _getExistingJob(jobId);
-        return _rewardPerApproval(jobs[jobId].rewardUSDC);
+        Job storage job = _getExistingJob(jobId);
+        uint256 maxApprovals = maxApprovalsForJob[jobId];
+        if (maxApprovals == 0) {
+            return 0;
+        }
+        return job.rewardUSDC / maxApprovals;
     }
 
     function jobEscrow(uint256 jobId) external view returns (uint256) {
         Job storage job = _getExistingJob(jobId);
         return job.rewardUSDC - job.paidOutUSDC;
-    }
-
-    function approvedAgentCount(uint256 jobId) external view returns (uint256) {
-        Job storage job = _getExistingJob(jobId);
-        return job.approvedCount;
     }
 
     function getSuspicionScore(
@@ -460,18 +490,23 @@ contract ERC8183Job is ICredentialSource {
         return job;
     }
 
-    function _rewardPerApproval(uint256 rewardPool) internal pure returns (uint256) {
-        return rewardPool / MAX_APPROVALS_PER_JOB;
+    function _totalAllocated(uint256 jobId) internal view returns (uint256 total) {
+        address[] storage agents = submissionAgentsByJob[jobId];
+        for (uint256 i = 0; i < agents.length; i++) {
+            Submission storage sub = submissions[jobId][agents[i]];
+            if (sub.status == SubmissionStatus.Approved || sub.credentialClaimed) {
+                total += sub.allocatedReward;
+            }
+        }
     }
 
-    function _reservedReward(
-        uint256 rewardPool,
-        uint256 approvedCount,
-        uint256 claimedCount
-    ) internal pure returns (uint256) {
-        if (approvedCount <= claimedCount) {
-            return 0;
+    function _reservedUnclaimed(uint256 jobId) internal view returns (uint256 total) {
+        address[] storage agents = submissionAgentsByJob[jobId];
+        for (uint256 i = 0; i < agents.length; i++) {
+            Submission storage sub = submissions[jobId][agents[i]];
+            if (sub.status == SubmissionStatus.Approved && !sub.credentialClaimed) {
+                total += sub.allocatedReward;
+            }
         }
-        return _rewardPerApproval(rewardPool) * (approvedCount - claimedCount);
     }
 }

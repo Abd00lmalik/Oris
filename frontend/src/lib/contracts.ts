@@ -72,6 +72,7 @@ type RawSubmissionRecord = {
   submittedAt: unknown;
   reviewerNote: unknown;
   credentialClaimed: unknown;
+  allocatedReward?: unknown;
 };
 
 export type JobRecord = {
@@ -98,6 +99,7 @@ export type SubmissionRecord = {
   submittedAt: number;
   reviewerNote: string;
   credentialClaimed: boolean;
+  allocatedReward: string;
 };
 
 export type CredentialRecord = {
@@ -192,6 +194,7 @@ const JOB_OPTIONAL_ABI = [
   "function getJobsByAgent(address agent) view returns (uint256[])",
   "function jobEscrow(uint256 jobId) view returns (uint256)",
   "function approvedAgentCount(uint256 jobId) view returns (uint256)",
+  "function maxApprovalsForJob(uint256 jobId) view returns (uint256)",
   "function getSuspicionScore(address agent, uint256 jobId) view returns (uint256,string)",
   "function jobsCreatedByWallet(address wallet) view returns (uint256)",
   "function jobsCompletedByWallet(address wallet) view returns (uint256)"
@@ -315,7 +318,7 @@ export function formatUsdc(units: string | number | bigint) {
 }
 
 export function formatTimestamp(ts: number) {
-  if (!ts) return "—";
+  if (!ts) return "-";
   return new Date(ts * 1000).toLocaleString();
 }
 
@@ -348,7 +351,8 @@ export function parseSubmission(rawSubmission: unknown): SubmissionRecord {
     status: toNumber(candidate.status),
     submittedAt: toNumber(candidate.submittedAt),
     reviewerNote: toString(candidate.reviewerNote),
-    credentialClaimed: toBoolean(candidate.credentialClaimed)
+    credentialClaimed: toBoolean(candidate.credentialClaimed),
+    allocatedReward: toString(candidate.allocatedReward ?? "0")
   };
 }
 
@@ -502,10 +506,32 @@ export async function getRegistryWriteContract(browserProvider: ethers.BrowserPr
   return getContractFromConfig(deployment.contracts.validationRegistry, signer);
 }
 
+export async function getSourceRegistryWriteContract(browserProvider: ethers.BrowserProvider) {
+  if (!deployment.contracts.sourceRegistry) {
+    throw new Error("Source registry is not configured on this network.");
+  }
+  const signer = await browserProvider.getSigner();
+  return getContractFromConfig(deployment.contracts.sourceRegistry, signer);
+}
+
 export async function fetchAllJobs(): Promise<JobRecord[]> {
   const contract = getJobReadContract();
-  const rawJobs = (await contract.getAllJobs()) as unknown[];
-  return rawJobs.map((item) => parseJob(item)).sort((a, b) => b.jobId - a.jobId);
+  try {
+    const rawJobs = (await contract.getAllJobs()) as unknown[];
+    return rawJobs.map((item) => parseJob(item)).sort((a, b) => b.jobId - a.jobId);
+  } catch {
+    const nextJobId = Number(await contract.nextJobId());
+    const jobs: JobRecord[] = [];
+    for (let jobId = 0; jobId < nextJobId; jobId++) {
+      try {
+        const rawJob = await contract.getJob(jobId);
+        jobs.push(parseJob(rawJob));
+      } catch {
+        // Ignore sparse indexes.
+      }
+    }
+    return jobs.sort((a, b) => b.jobId - a.jobId);
+  }
 }
 
 export async function fetchJob(jobId: number): Promise<JobRecord | null> {
@@ -633,6 +659,16 @@ export async function fetchApprovedAgentCount(jobId: number): Promise<number> {
   } catch {
     const job = await fetchJob(jobId);
     return job?.approvedCount ?? 0;
+  }
+}
+
+export async function fetchMaxApprovalsForJob(jobId: number): Promise<number> {
+  try {
+    const optional = getOptionalJobReadContract();
+    const value = (await optional.maxApprovalsForJob(jobId)) as bigint;
+    return Number(value);
+  } catch {
+    return 3;
   }
 }
 
@@ -921,11 +957,17 @@ export async function txCreateJob(
   title: string,
   description: string,
   deadline: number,
-  rewardUSDC: bigint
+  rewardUSDC: bigint,
+  maxApprovals: number
 ) {
   const contract = await getJobWriteContract(browserProvider);
-  const tx = await contract.createJob(title, description, deadline, rewardUSDC);
-  return tx as ethers.TransactionResponse;
+  try {
+    const tx = await contract.createJob(title, description, deadline, rewardUSDC, maxApprovals);
+    return tx as ethers.TransactionResponse;
+  } catch {
+    const tx = await contract.createJob(title, description, deadline, rewardUSDC);
+    return tx as ethers.TransactionResponse;
+  }
 }
 
 export async function txAcceptJob(browserProvider: ethers.BrowserProvider, jobId: number) {
@@ -945,10 +987,15 @@ export async function txSubmitDeliverable(
 export async function txApproveSubmission(
   browserProvider: ethers.BrowserProvider,
   jobId: number,
-  agent: string
+  agent: string,
+  rewardAmount: bigint
 ) {
   const contract = await getJobWriteContract(browserProvider);
-  return (await contract.approveSubmission(jobId, agent)) as ethers.TransactionResponse;
+  try {
+    return (await contract.approveSubmission(jobId, agent, rewardAmount)) as ethers.TransactionResponse;
+  } catch {
+    return (await contract.approveSubmission(jobId, agent)) as ethers.TransactionResponse;
+  }
 }
 
 export async function txRejectSubmission(
@@ -1120,4 +1167,13 @@ export async function isApprovedSourceOperator(sourceType: string, operator: str
   if (!deployment.contracts.sourceRegistry || !operator) return false;
   const contract = getContractFromConfig(deployment.contracts.sourceRegistry, getReadProvider());
   return (await contract.isApprovedFor(sourceType, operator)) as boolean;
+}
+
+export async function txApplyToOperate(
+  browserProvider: ethers.BrowserProvider,
+  sourceType: string,
+  profileURI: string
+) {
+  const contract = await getSourceRegistryWriteContract(browserProvider);
+  return (await contract.applyToOperate(sourceType, profileURI)) as ethers.TransactionResponse;
 }

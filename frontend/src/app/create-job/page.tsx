@@ -2,7 +2,7 @@
 
 import { ethers } from "ethers";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   contractAddresses,
   expectedChainId,
@@ -28,12 +28,19 @@ function parseRewardToUnits(reward: string) {
   return ethers.parseUnits(trimmed, 6);
 }
 
+function clampApprovals(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return 5;
+  return Math.max(1, Math.min(20, parsed));
+}
+
 export default function CreateJobPage() {
   const { account, browserProvider, connect } = useWallet();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [deadlineInput, setDeadlineInput] = useState("");
   const [rewardInput, setRewardInput] = useState("0");
+  const [maxApprovalsInput, setMaxApprovalsInput] = useState("5");
   const [createdJobId, setCreatedJobId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("");
@@ -54,6 +61,14 @@ export default function CreateJobPage() {
   const trimmedDescription = description.trim();
   const deadline = parseDeadline(deadlineInput);
   const deadlineDisplay = deadline ? formatTimestamp(deadline) : "";
+  const maxApprovals = clampApprovals(maxApprovalsInput);
+
+  const minRewardUnits = useMemo(() => parseRewardToUnits(minRewardUsdc), [minRewardUsdc]);
+  const minPoolUnits = useMemo(
+    () => minRewardUnits * BigInt(maxApprovals),
+    [maxApprovals, minRewardUnits]
+  );
+  const minPoolDisplay = useMemo(() => ethers.formatUnits(minPoolUnits, 6), [minPoolUnits]);
 
   useEffect(() => {
     let active = true;
@@ -133,8 +148,25 @@ export default function CreateJobPage() {
 
         try {
           const rewardUnits = parseRewardToUnits(rewardInput);
-          const jobContract = await getJobWriteContract(browserProvider);
-          const gas = (await jobContract.createJob.estimateGas(trimmedTitle, trimmedDescription, deadline, rewardUnits)) as bigint;
+          const taskContract = await getJobWriteContract(browserProvider);
+          let gas: bigint;
+          try {
+            gas = (await taskContract.createJob.estimateGas(
+              trimmedTitle,
+              trimmedDescription,
+              deadline,
+              rewardUnits,
+              maxApprovals
+            )) as bigint;
+          } catch {
+            gas = (await taskContract.createJob.estimateGas(
+              trimmedTitle,
+              trimmedDescription,
+              deadline,
+              rewardUnits
+            )) as bigint;
+          }
+
           const feeData = await browserProvider.getFeeData();
           const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas;
           const totalCost = gasPrice ? ethers.formatEther(gas * gasPrice) : "";
@@ -157,7 +189,7 @@ export default function CreateJobPage() {
       active = false;
       clearTimeout(timer);
     };
-  }, [browserProvider, deadline, deadlineInput, rewardInput, trimmedDescription, trimmedTitle]);
+  }, [browserProvider, deadline, deadlineInput, maxApprovals, rewardInput, trimmedDescription, trimmedTitle]);
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -178,11 +210,15 @@ export default function CreateJobPage() {
       return;
     }
     if (!deadlineInput || deadline <= Math.floor(Date.now() / 1000)) {
-      setError("Set a future deadline for this job.");
+      setError("Set a future deadline for this task.");
+      return;
+    }
+    if (maxApprovals < 1 || maxApprovals > 20) {
+      setError("Max approvals must be between 1 and 20.");
       return;
     }
     if (gateEnabled && !arcGateAllowed) {
-      setError(`You need at least ${ARC_TOKEN_CONFIG.minBalanceToPost} ${ARC_TOKEN_CONFIG.symbol} to post a job.`);
+      setError(`You need at least ${ARC_TOKEN_CONFIG.minBalanceToPost} ${ARC_TOKEN_CONFIG.symbol} to post a task.`);
       return;
     }
 
@@ -193,9 +229,8 @@ export default function CreateJobPage() {
       setError("Enter a valid USDC reward amount.");
       return;
     }
-    const minRewardUnits = parseRewardToUnits(minRewardUsdc);
-    if (rewardUnits < minRewardUnits) {
-      setError(`Minimum reward is ${minRewardUsdc} USDC.`);
+    if (rewardUnits < minPoolUnits) {
+      setError(`Reward pool must be at least ${minPoolDisplay} USDC for ${maxApprovals} approvals.`);
       return;
     }
 
@@ -209,8 +244,8 @@ export default function CreateJobPage() {
         throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
       }
 
-      const jobContract = await getJobWriteContract(provider);
-      const predictedJobId = Number(await jobContract.nextJobId());
+      const taskContract = await getJobWriteContract(provider);
+      const predictedJobId = Number(await taskContract.nextJobId());
 
       const approvalTx = await txApproveUsdcIfNeeded(provider, contractAddresses.job, rewardUnits);
       if (approvalTx) {
@@ -218,35 +253,54 @@ export default function CreateJobPage() {
         await approvalTx.wait();
       }
 
-      const tx = await jobContract.createJob(trimmedTitle, trimmedDescription, deadline, rewardUnits);
+      let tx: ethers.TransactionResponse;
+      try {
+        tx = (await taskContract.createJob(
+          trimmedTitle,
+          trimmedDescription,
+          deadline,
+          rewardUnits,
+          maxApprovals
+        )) as ethers.TransactionResponse;
+      } catch {
+        tx = (await taskContract.createJob(
+          trimmedTitle,
+          trimmedDescription,
+          deadline,
+          rewardUnits
+        )) as ethers.TransactionResponse;
+      }
       setStatus(`Create transaction submitted: ${tx.hash}`);
       const receipt = await tx.wait();
 
       let jobIdFromEvent: number | null = null;
-      for (const log of receipt.logs) {
-        try {
-          const parsed = jobContract.interface.parseLog({
-            topics: Array.from(log.topics),
-            data: log.data
-          });
-          if (parsed?.name === "JobCreated") {
-            jobIdFromEvent = Number(parsed.args[0]);
-            break;
+      if (receipt?.logs) {
+        for (const log of receipt.logs) {
+          try {
+            const parsed = taskContract.interface.parseLog({
+              topics: Array.from(log.topics),
+              data: log.data
+            });
+            if (parsed?.name === "JobCreated") {
+              jobIdFromEvent = Number(parsed.args[0]);
+              break;
+            }
+          } catch {
+            // Ignore unrelated log entries.
           }
-        } catch {
-          // Ignore unrelated log entries.
         }
       }
 
       const createdId = jobIdFromEvent ?? (Number.isFinite(predictedJobId) ? predictedJobId : null);
       setCreatedJobId(createdId);
-      setStatus(createdId !== null ? `Job #${createdId} created successfully.` : "Job created successfully.");
+      setStatus(createdId !== null ? `Task #${createdId} created successfully.` : "Task created successfully.");
       setTitle("");
       setDescription("");
       setDeadlineInput("");
       setRewardInput("0");
+      setMaxApprovalsInput("5");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create job.");
+      setError(err instanceof Error ? err.message : "Failed to create task.");
     } finally {
       setSubmitting(false);
     }
@@ -255,25 +309,35 @@ export default function CreateJobPage() {
   return (
     <section className="mx-auto max-w-[560px]">
       <div className="archon-card p-6 md:p-7">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Create Job</h1>
-        <p className="mt-2 text-sm text-[#9CA3AF]">Set reward and deadline so accepted users can submit before time runs out.</p>
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Create Task</h1>
+        <p className="mt-2 text-sm text-[#9CA3AF]">
+          What do you need done? Be specific about what counts as successful completion.
+        </p>
 
-        {status ? <div className="mt-4 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
+        {status ? (
+          <div className="mt-4 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+            {status}
+          </div>
+        ) : null}
         {createdJobId !== null ? (
           <div className="mt-4 rounded-xl border border-[#00D1B2]/30 bg-[#00D1B2]/10 px-4 py-3 text-sm text-[#9EF6E8]">
-            Job ID: <strong>#{createdJobId}</strong>.{" "}
+            Task ID: <strong>#{createdJobId}</strong>.{" "}
             <Link href="/" className="underline underline-offset-4 hover:text-white">
               View on Home
             </Link>
           </div>
         ) : null}
-        {error ? <div className="mt-4 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+        {error ? (
+          <div className="mt-4 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            {error}
+          </div>
+        ) : null}
 
         <form onSubmit={handleCreate} className="mt-6 space-y-4">
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Job Title</span>
+            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Task Title</span>
             <input
-              aria-label="Job title"
+              aria-label="Task title"
               className="archon-input"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
@@ -285,19 +349,19 @@ export default function CreateJobPage() {
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Description</span>
             <textarea
-              aria-label="Job description"
+              aria-label="Task description"
               className="archon-input min-h-32"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="Create and deploy a responsive marketing page."
+              placeholder="Describe exactly what output you expect."
               required
             />
           </label>
 
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Deadline (date & time)</span>
+            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Deadline (date and time)</span>
             <input
-              aria-label="Job deadline"
+              aria-label="Task deadline"
               type="datetime-local"
               className="archon-input"
               value={deadlineInput}
@@ -308,11 +372,11 @@ export default function CreateJobPage() {
           </label>
 
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Reward (USDC)</span>
+            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Reward Pool (USDC)</span>
             <input
-              aria-label="Reward amount in USDC"
+              aria-label="Reward pool amount in USDC"
               type="number"
-              min={minRewardUsdc}
+              min={minPoolDisplay}
               step="0.000001"
               className="archon-input"
               value={rewardInput}
@@ -320,12 +384,36 @@ export default function CreateJobPage() {
               placeholder="100"
               required
             />
-            <p className="mt-1 text-xs text-[#9CA3AF]">Minimum reward: {minRewardUsdc} USDC</p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">Total USDC pool locked in escrow upfront.</p>
           </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-[#EAEAF0]">Max Approvals</span>
+            <input
+              aria-label="Maximum number of contributors to approve"
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              className="archon-input"
+              value={maxApprovalsInput}
+              onChange={(event) => setMaxApprovalsInput(event.target.value)}
+              required
+            />
+            <p className="mt-1 text-xs text-[#9CA3AF]">How many contributors do you want to reward?</p>
+          </label>
+
+          <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-xs text-[#C9D0DB]">
+            <p>Minimum USDC pool required: {maxApprovals} x {minRewardUsdc} USDC = {minPoolDisplay} USDC</p>
+            <p className="mt-1">
+              Your full USDC pool is locked upfront. You decide how much each approved contributor receives.
+            </p>
+          </div>
 
           {gateEnabled && !arcGateAllowed ? (
             <div className="rounded-xl border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-              You need at least {ARC_TOKEN_CONFIG.minBalanceToPost} {ARC_TOKEN_CONFIG.symbol} to post a job. Your balance: {arcBalance} {ARC_TOKEN_CONFIG.symbol}
+              You need at least {ARC_TOKEN_CONFIG.minBalanceToPost} {ARC_TOKEN_CONFIG.symbol} to post a task. Your
+              balance: {arcBalance} {ARC_TOKEN_CONFIG.symbol}
               {checkingArc ? " (checking...)" : ""}
             </div>
           ) : null}
@@ -348,7 +436,7 @@ export default function CreateJobPage() {
             disabled={submitDisabled}
             className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? "Creating..." : "Create Job"}
+            {submitting ? "Posting..." : "Post Task"}
           </button>
         </form>
       </div>

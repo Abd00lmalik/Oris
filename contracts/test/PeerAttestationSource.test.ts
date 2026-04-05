@@ -25,10 +25,18 @@ describe("PeerAttestationSource", function () {
   it("issues peer attestations and auto-mints recipient credentials", async function () {
     const { owner, attester, recipient, registry, peer } = await deployFixture();
 
-    // Bootstrap attester with one credential.
-    await registry.connect(owner).issue(attester.address, 999, "job", 100);
+    // Bootstrap attester to Builder threshold (>= 300 points).
+    await registry.connect(owner).issue(attester.address, 999, "job", 300);
 
-    await expect(peer.connect(attester).attest(recipient.address, "technical", "Great architecture review"))
+    await expect(
+      peer
+        .connect(attester)
+        .attest(
+          recipient.address,
+          "technical",
+          "Great architecture review with concrete implementation guidance and validation support."
+        )
+    )
       .to.emit(peer, "AttestationIssued")
       .withArgs(0, attester.address, recipient.address, "technical", 2, 60);
 
@@ -41,30 +49,103 @@ describe("PeerAttestationSource", function () {
   it("blocks self-attestation and requires attester credentials", async function () {
     const { attester, recipient, peer } = await deployFixture();
 
-    await expect(peer.connect(attester).attest(attester.address, "technical", "self")).to.be.revertedWith(
+    await expect(
+      peer
+        .connect(attester)
+        .attest(
+          attester.address,
+          "technical",
+          "This is a deliberately verbose self-attestation note to satisfy minimum length."
+        )
+    ).to.be.revertedWith(
       "cannot attest self"
     );
-    await expect(peer.connect(attester).attest(recipient.address, "technical", "note")).to.be.revertedWith(
-      "attester needs credential"
+    await expect(
+      peer
+        .connect(attester)
+        .attest(
+          recipient.address,
+          "technical",
+          "Meaningful detailed note that still should fail due to insufficient attester score."
+        )
+    ).to.be.revertedWith(
+      "reach Architect tier (300 pts) to give attestations"
     );
   });
 
   it("enforces weekly anti-spam caps for attesters and recipients", async function () {
     const { owner, attester, recipient, altRecipient, registry, peer } = await deployFixture();
-    await registry.connect(owner).issue(attester.address, 1, "job", 100);
+    await registry.connect(owner).issue(attester.address, 1, "job", 300);
 
-    await peer.connect(attester).attest(recipient.address, "community", "First");
-    await peer.connect(attester).attest(recipient.address, "community", "Second");
-    await expect(peer.connect(attester).attest(recipient.address, "community", "Third")).to.be.revertedWith(
+    await peer
+      .connect(attester)
+      .attest(
+        recipient.address,
+        "community",
+        "First attestation note includes enough detail for reviewer confidence and historical trace."
+      );
+    await expect(
+      peer
+        .connect(attester)
+        .attest(
+          recipient.address,
+          "community",
+          "Second attestation note also detailed but should fail due to recipient weekly cap."
+        )
+    ).to.be.revertedWith(
       "recipient weekly cap reached"
     );
 
-    await peer.connect(attester).attest(altRecipient.address, "technical", "Third recipient");
-    await expect(peer.connect(attester).attest(owner.address, "technical", "Fourth")).to.be.revertedWith(
+    await peer
+      .connect(attester)
+      .attest(
+        altRecipient.address,
+        "technical",
+        "Third recipient note exceeds minimum length and should consume the final weekly slot."
+      );
+    await expect(
+      peer
+        .connect(attester)
+        .attest(
+          owner.address,
+          "technical",
+          "Fourth attestation note should fail because weekly attestation cap is now two."
+        )
+    ).to.be.revertedWith(
       "weekly attestation cap"
     );
 
     await time.increase(7 * 24 * 60 * 60 + 1);
-    await peer.connect(attester).attest(owner.address, "technical", "After reset");
+    await peer
+      .connect(attester)
+      .attest(
+        owner.address,
+        "technical",
+        "After reset note should now pass because weekly counters are rolled over to a new window."
+      );
+  });
+
+  it("prevents mutual attestation loops between two wallets", async function () {
+    const { owner, attester, recipient, registry, peer } = await deployFixture();
+    await registry.connect(owner).issue(attester.address, 1, "job", 300);
+    await registry.connect(owner).issue(recipient.address, 2, "job", 300);
+
+    await peer
+      .connect(attester)
+      .attest(
+        recipient.address,
+        "technical",
+        "Recipient delivered strong technical outcomes with reproducible output evidence over multiple tasks."
+      );
+
+    await expect(
+      peer
+        .connect(recipient)
+        .attest(
+          attester.address,
+          "technical",
+          "Attempting reverse attestation should fail due to anti-reciprocity protection in the source."
+        )
+    ).to.be.revertedWith("this person has already attested you - mutual attestations not allowed");
   });
 });

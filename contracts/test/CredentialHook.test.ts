@@ -38,10 +38,17 @@ describe("CredentialHook + ERC8183Job", function () {
     return { owner, client, agentA, agentB, treasury, other, sourceRegistry, registry, hook, usdc, job };
   }
 
-  async function createJob(job: any, client: any, reward = ethers.parseUnits("300", 6)) {
+  async function createJob(
+    job: any,
+    client: any,
+    reward = ethers.parseUnits("300", 6),
+    maxApprovals = 3
+  ) {
     const deadline = (await time.latest()) + 2 * 60 * 60;
-    await job.connect(client).createJob("Build Landing", "Ship responsive page", deadline, reward);
-    return { deadline, reward };
+    await job
+      .connect(client)
+      .createJob("Build Landing", "Ship responsive page", deadline, reward, maxApprovals);
+    return { deadline, reward, maxApprovals };
   }
 
   it("deploys and wires source registry, hook authorization, and job registration", async function () {
@@ -56,16 +63,16 @@ describe("CredentialHook + ERC8183Job", function () {
     const deadline = (await time.latest()) + 7200;
     const reward = ethers.parseUnits("300", 6);
 
-    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward)).to.be.revertedWith(
+    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward, 3)).to.be.revertedWith(
       "source operator not approved"
     );
 
     await sourceRegistry.approveOperator("job", other.address);
-    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward)).to.be.revertedWith(
+    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward, 3)).to.be.revertedWith(
       "insufficient allowance"
     );
 
-    await expect(job.connect(client).createJob("Title", "Desc", deadline, reward))
+    await expect(job.connect(client).createJob("Title", "Desc", deadline, reward, 3))
       .to.emit(job, "JobCreated")
       .withArgs(0, client.address, "Title", "Desc", deadline, reward);
   });
@@ -78,27 +85,32 @@ describe("CredentialHook + ERC8183Job", function () {
     await job.connect(agentA).acceptJob(0);
     await job.connect(agentA).submitDeliverable(0, "https://github.com/a");
 
-    await expect(job.connect(client).approveSubmission(0, agentA.address)).to.be.revertedWith(
-      "review delay not elapsed"
+    await expect(job.connect(client).approveSubmission(0, agentA.address, ethers.parseUnits("100", 6))).to.be.revertedWith(
+      "job too new"
     );
-    await time.increase(16 * 60);
-    await job.connect(client).approveSubmission(0, agentA.address);
+    await time.increase(61 * 60);
+    await job.connect(client).approveSubmission(0, agentA.address, ethers.parseUnits("100", 6));
 
     await job.connect(agentB).acceptJob(0);
     await job.connect(agentB).submitDeliverable(0, "https://github.com/b");
+    await expect(job.connect(client).approveSubmission(0, agentB.address, ethers.parseUnits("100", 6))).to.be.revertedWith(
+      "review delay not elapsed"
+    );
     await time.increase(16 * 60);
-    await job.connect(client).approveSubmission(0, agentB.address);
+    await job.connect(client).approveSubmission(0, agentB.address, ethers.parseUnits("100", 6));
 
     await job.connect(other).acceptJob(0);
     await job.connect(other).submitDeliverable(0, "https://github.com/c");
     await time.increase(16 * 60);
-    await job.connect(client).approveSubmission(0, other.address);
+    await job.connect(client).approveSubmission(0, other.address, ethers.parseUnits("100", 6));
 
     const fourth = (await ethers.getSigners())[6];
     await job.connect(fourth).acceptJob(0);
     await job.connect(fourth).submitDeliverable(0, "https://github.com/d");
     await time.increase(16 * 60);
-    await expect(job.connect(client).approveSubmission(0, fourth.address)).to.be.revertedWith("max approvals reached");
+    await expect(
+      job.connect(client).approveSubmission(0, fourth.address, ethers.parseUnits("100", 6))
+    ).to.be.revertedWith("maximum approvals reached for this job");
   });
 
   it("pays reward + mints weighted credential when approved submitter claims", async function () {
@@ -107,8 +119,8 @@ describe("CredentialHook + ERC8183Job", function () {
 
     await job.connect(agentA).acceptJob(0);
     await job.connect(agentA).submitDeliverable(0, "https://github.com/work");
-    await time.increase(16 * 60);
-    await job.connect(client).approveSubmission(0, agentA.address);
+    await time.increase(61 * 60);
+    await job.connect(client).approveSubmission(0, agentA.address, ethers.parseUnits("100", 6));
 
     const treasuryBefore = await usdc.balanceOf(treasury.address);
     const agentBefore = await usdc.balanceOf(agentA.address);

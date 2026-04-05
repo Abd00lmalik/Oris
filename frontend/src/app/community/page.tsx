@@ -1,23 +1,51 @@
-"use client";
+﻿"use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CommunityActivityRecord,
   expectedChainId,
   fetchCommunityActivitiesByRecipient,
   isApprovedSourceOperator,
+  shortAddress,
   txAwardCommunityActivity,
   txClaimCommunityCredential
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 
 const COMMUNITY_TYPES = [
-  { id: 0, label: "Discord Help", weight: 50 },
-  { id: 1, label: "Moderation", weight: 80 },
-  { id: 2, label: "Content Creation", weight: 90 },
-  { id: 3, label: "Event Organization", weight: 120 },
-  { id: 4, label: "Bug Report", weight: 100 }
+  { id: 0, label: "Helped a user solve a problem (Discord/Telegram)" },
+  { id: 1, label: "Moderated community spaces" },
+  { id: 2, label: "Created a tutorial, guide or thread" },
+  { id: 3, label: "Organized a community event or workshop" },
+  { id: 4, label: "Submitted a verified bug report" }
 ] as const;
+
+type CommunityApplication = {
+  address: string;
+  summary: string;
+  evidenceLink: string;
+  submittedAt: number;
+};
+
+const APPLICATION_KEY = "archon.community.applications";
+
+function readApplications(): CommunityApplication[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(APPLICATION_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as CommunityApplication[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+function writeApplications(items: CommunityApplication[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(APPLICATION_KEY, JSON.stringify(items));
+}
 
 export default function CommunityPage() {
   const { account, browserProvider, connect } = useWallet();
@@ -27,11 +55,24 @@ export default function CommunityPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [showApply, setShowApply] = useState(false);
+
+  const [applicationSummary, setApplicationSummary] = useState("");
+  const [applicationLink, setApplicationLink] = useState("");
 
   const [recipient, setRecipient] = useState("");
   const [activityType, setActivityType] = useState(0);
   const [platform, setPlatform] = useState("discord");
   const [evidenceNote, setEvidenceNote] = useState("");
+
+  const myApplication = account
+    ? readApplications().find((item) => item.address.toLowerCase() === account.toLowerCase()) ?? null
+    : null;
+
+  const pendingAwards = useMemo(
+    () => activities.filter((activity) => !activity.credentialClaimed),
+    [activities]
+  );
 
   const load = useCallback(async () => {
     if (!account) {
@@ -111,24 +152,141 @@ export default function CommunityPage() {
     }
   };
 
+  const handleApplication = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setStatus("");
+    if (!account) {
+      setError("Connect your wallet before submitting an application.");
+      return;
+    }
+    if (applicationSummary.trim().length < 20) {
+      setError("Please describe your contribution in more detail.");
+      return;
+    }
+
+    const list = readApplications().filter(
+      (item) => item.address.toLowerCase() !== account.toLowerCase()
+    );
+    list.push({
+      address: account,
+      summary: applicationSummary.trim(),
+      evidenceLink: applicationLink.trim(),
+      submittedAt: Date.now()
+    });
+    writeApplications(list);
+    setStatus("Application submitted. Review typically takes 24-48 hours.");
+    setApplicationSummary("");
+    setApplicationLink("");
+    setShowApply(false);
+  };
+
   return (
     <section className="space-y-6">
       <div className="archon-card p-6">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Community Source</h1>
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Community Credentials</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Moderators can award on-chain community credits; recipients claim credentials.
+          Awarded by verified platform moderators for real contributions to the CredentialHook community.
         </p>
+
+        <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-sm text-[#9CA3AF]">
+          Community credentials are awarded by platform-approved moderators. You cannot self-claim these. If you
+          believe you deserve one, apply below and a moderator will review.
+        </div>
       </div>
 
-      {status ? <div className="archon-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}
-      {error ? <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+      {status ? (
+        <div className="archon-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          {status}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="archon-card p-6">
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">Claim a Community Credential</h2>
+        {loading ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">Loading awards...</p>
+        ) : pendingAwards.length === 0 ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">You have no pending community awards.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {pendingAwards.map((activity) => (
+              <article key={activity.activityId} className="rounded-xl border border-white/10 bg-[#111214] p-3 text-sm text-[#9CA3AF]">
+                <p className="font-medium text-[#EAEAF0]">Award #{activity.activityId}</p>
+                <p className="mt-1 text-xs">{COMMUNITY_TYPES[activity.activityType]?.label ?? `Type ${activity.activityType}`}</p>
+                <p className="mt-1 text-xs">Platform: {activity.platform}</p>
+                <p className="mt-1 text-xs">Evidence: {activity.evidenceNote}</p>
+                <button
+                  type="button"
+                  onClick={() => void handleClaim(activity.activityId)}
+                  disabled={busyId === activity.activityId}
+                  className="archon-button-secondary mt-3 px-3 py-2 text-xs"
+                >
+                  {busyId === activity.activityId ? "Claiming..." : "Claim Credential"}
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-xs text-[#9CA3AF]">
+          <p>This is a request, not a guarantee. A moderator will review within 48 hours.</p>
+          {myApplication ? (
+            <p className="mt-1">
+              Current status: Pending | Applied as {shortAddress(myApplication.address)} on{" "}
+              {new Date(myApplication.submittedAt).toLocaleString()}
+            </p>
+          ) : (
+            <p className="mt-1">Current status: Not Applied</p>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowApply((previous) => !previous)}
+          className="archon-button-primary mt-3 px-3 py-2 text-sm"
+        >
+          Apply for Community Recognition
+        </button>
+
+        {showApply ? (
+          <form onSubmit={handleApplication} className="mt-4 space-y-3">
+            <label className="block text-sm text-[#9CA3AF]">
+              Describe what you did
+              <textarea
+                className="archon-input mt-1 min-h-24"
+                value={applicationSummary}
+                onChange={(event) => setApplicationSummary(event.target.value)}
+                required
+              />
+            </label>
+            <label className="block text-sm text-[#9CA3AF]">
+              Optional supporting link
+              <input
+                className="archon-input mt-1"
+                value={applicationLink}
+                onChange={(event) => setApplicationLink(event.target.value)}
+                placeholder="https://..."
+              />
+            </label>
+            <button type="submit" className="archon-button-secondary px-3 py-2 text-sm">
+              Submit Application
+            </button>
+          </form>
+        ) : null}
+      </div>
 
       {isOperator ? (
         <div className="archon-card p-6">
-          <h2 className="text-lg font-semibold text-[#EAEAF0]">Moderator Award Panel</h2>
+          <h2 className="text-lg font-semibold text-[#EAEAF0]">Award a Credential</h2>
+          <p className="mt-1 text-sm text-[#9CA3AF]">Visible because your wallet is approved for source type &quot;community&quot;.</p>
           <form onSubmit={handleAward} className="mt-4 space-y-3">
             <label className="block text-sm text-[#9CA3AF]">
-              Recipient wallet
+              Recipient address
               <input
                 className="archon-input mt-1"
                 value={recipient}
@@ -175,50 +333,8 @@ export default function CommunityPage() {
             </button>
           </form>
         </div>
-      ) : (
-        <div className="archon-card p-6 text-sm text-[#9CA3AF]">
-          <p className="text-[#EAEAF0]">How to earn community credentials</p>
-          <p className="mt-2">
-            Contribute in verified community channels (Discord, forum, social threads, moderation, events).
-            Approved moderators can award your activity record.
-          </p>
-        </div>
-      )}
-
-      <div className="archon-card p-6">
-        <h2 className="text-lg font-semibold text-[#EAEAF0]">Received Awards</h2>
-        {loading ? (
-          <p className="mt-3 text-sm text-[#9CA3AF]">Loading awards...</p>
-        ) : activities.length === 0 ? (
-          <p className="mt-3 text-sm text-[#9CA3AF]">No community awards received yet.</p>
-        ) : (
-          <div className="mt-3 space-y-3">
-            {activities.map((activity) => (
-              <article key={activity.activityId} className="rounded-xl border border-white/10 bg-[#111214] p-3 text-sm text-[#9CA3AF]">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold text-[#EAEAF0]">Award #{activity.activityId}</p>
-                  <span className="rounded-full bg-white/5 px-2 py-1 text-xs">
-                    Type {activity.activityType}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs">Platform: {activity.platform}</p>
-                <p className="mt-1 text-xs">Note: {activity.evidenceNote}</p>
-                <p className="mt-1 text-xs">Claimed: {activity.credentialClaimed ? "Yes" : "No"}</p>
-                {!activity.credentialClaimed ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleClaim(activity.activityId)}
-                    disabled={busyId === activity.activityId}
-                    className="archon-button-secondary mt-3 px-3 py-2 text-xs"
-                  >
-                    {busyId === activity.activityId ? "Claiming..." : "Claim Credential"}
-                  </button>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
+      ) : null}
     </section>
   );
 }
+

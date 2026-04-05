@@ -8,6 +8,8 @@ import {
   AgentTaskRecord,
   CredentialRecord,
   fetchAllJobs,
+  fetchCredentialsForAgent,
+  fetchJobsByAgent,
   fetchJobsCreatedCount,
   fetchOpenAgentTasks,
   fetchSubmissionForAgent,
@@ -54,6 +56,7 @@ export default function HomePage() {
   const [creatorJobCount, setCreatorJobCount] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showWelcomeBanner, setShowWelcomeBanner] = useState(false);
   const [stats, setStats] = useState({
     totalCredentials: 0,
     totalUsdcPaidOut: "0",
@@ -149,6 +152,51 @@ export default function HomePage() {
     };
   }, [browserProvider, configured, loadFeed]);
 
+  useEffect(() => {
+    let active = true;
+    const checkWelcome = async () => {
+      if (!account) {
+        setShowWelcomeBanner(false);
+        return;
+      }
+      const dismissKey = `archon.welcome.dismissed.${account.toLowerCase()}`;
+      if (typeof window !== "undefined" && window.localStorage.getItem(dismissKey) === "true") {
+        setShowWelcomeBanner(false);
+        return;
+      }
+
+      try {
+        const [credentials, jobsAsAgent] = await Promise.all([
+          fetchCredentialsForAgent(account),
+          fetchJobsByAgent(account)
+        ]);
+        let hasSubmitted = false;
+        for (const job of jobsAsAgent) {
+          const submission = await fetchSubmissionForAgent(job.jobId, account);
+          if (submission && submission.submittedAt > 0) {
+            hasSubmitted = true;
+            break;
+          }
+        }
+        if (!active) return;
+        setShowWelcomeBanner(credentials.length === 0 && !hasSubmitted);
+      } catch {
+        if (!active) return;
+        setShowWelcomeBanner(false);
+      }
+    };
+    void checkWelcome();
+    return () => {
+      active = false;
+    };
+  }, [account]);
+
+  const dismissWelcome = () => {
+    if (!account || typeof window === "undefined") return;
+    window.localStorage.setItem(`archon.welcome.dismissed.${account.toLowerCase()}`, "true");
+    setShowWelcomeBanner(false);
+  };
+
   return (
     <section className="space-y-8">
       <div className="archon-card p-6 text-center md:p-8">
@@ -157,6 +205,26 @@ export default function HomePage() {
           <h1 className="text-3xl font-semibold tracking-wide text-[#EAEAF0]">Archon</h1>
         </div>
       </div>
+
+      {showWelcomeBanner ? (
+        <div className="archon-card border border-[#00D1B2]/30 bg-[#00D1B2]/10 p-4">
+          <p className="text-sm font-semibold text-[#EAEAF0]">Welcome to Archon - Start Building Your Reputation</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/" className="archon-button-secondary px-3 py-2 text-xs">
+              Browse Tasks
+            </Link>
+            <Link href="/github" className="archon-button-secondary px-3 py-2 text-xs">
+              Submit GitHub Work
+            </Link>
+            <Link href="/attest" className="archon-button-secondary px-3 py-2 text-xs">
+              Get Vouched By Peers
+            </Link>
+            <button type="button" onClick={dismissWelcome} className="archon-button-primary px-3 py-2 text-xs">
+              Dismiss - do not show again
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="archon-card p-4">
@@ -195,7 +263,7 @@ export default function HomePage() {
               >
                 <div>
                   <p className="text-[#EAEAF0]">
-                    Credential #{credential.credentialId} · {credential.agent.slice(0, 8)}...{credential.agent.slice(-4)}
+                    Credential #{credential.credentialId} | {credential.agent.slice(0, 8)}...{credential.agent.slice(-4)}
                   </p>
                   <p className="text-xs text-[#9CA3AF]">{formatTimestamp(credential.issuedAt)}</p>
                 </div>
@@ -223,7 +291,7 @@ export default function HomePage() {
             Refresh
           </button>
           <Link href="/create-job" className="archon-button-primary px-4 py-2 text-sm transition-all duration-200">
-            Create Job
+            Create Task
           </Link>
         </div>
       </div>
@@ -318,4 +386,5 @@ export default function HomePage() {
     </section>
   );
 }
+
 

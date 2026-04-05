@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { SUPPORTED_CHAINS } from "@/lib/crosschain";
 import { CredentialRecord, getReadProvider, shortAddress, verifyCredentialOnChain } from "@/lib/contracts";
+import { IconCheck, IconClock, IconWarning } from "@/lib/icons";
 import { getSourceColor, getSourceLabel } from "@/lib/reputation";
 
 type VerificationState = "idle" | "loading" | "verified" | "missing" | "error";
@@ -26,9 +27,9 @@ export function CredentialCard({
   const sourceColor = getSourceColor(credential.sourceType);
 
   const verificationLabel = useMemo(() => {
-    if (verification === "verified") return "✓ Verified";
-    if (verification === "missing") return "✗ Not Found";
-    if (verification === "error") return "✗ Verification Failed";
+    if (verification === "verified") return "Verified";
+    if (verification === "missing") return "Not Found";
+    if (verification === "error") return "Verification Failed";
     return "";
   }, [verification]);
 
@@ -91,7 +92,12 @@ export function CredentialCard({
       </div>
 
       {verificationLabel ? (
-        <div className={`mt-3 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${verificationClass}`}>
+        <div className={`mt-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${verificationClass}`}>
+          {verification === "verified" ? (
+            <IconCheck className="h-3.5 w-3.5" />
+          ) : (
+            <IconWarning className="h-3.5 w-3.5" />
+          )}
           {verificationLabel}
         </div>
       ) : null}
@@ -114,22 +120,16 @@ export function CredentialCard({
         <div className="mt-2 flex flex-wrap gap-2">
           {SUPPORTED_CHAINS.map((chain) => {
             const isSource = chain.role === "source";
-            const label = isSource
-              ? `${chain.name} ✓ (${chain.role})`
-              : `${chain.name} ○ (pending)`;
             return (
               <span
                 key={chain.chainId}
-                title={
-                  isSource
-                    ? "Credential minted on source chain."
-                    : "Cross-chain mirroring via LayerZero — coming soon"
-                }
+                title={isSource ? "Credential minted on source chain." : "Cross-chain mirroring via LayerZero - coming soon"}
                 className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ${
                   isSource ? "bg-[#00D1B2]/15 text-[#6EF2DE]" : "bg-white/5 text-[#9CA3AF]"
                 }`}
               >
-                {label}
+                {isSource ? <IconCheck className="h-3.5 w-3.5" /> : <IconClock className="h-3.5 w-3.5" />}
+                {isSource ? `${chain.name} (${chain.role})` : `${chain.name} (pending)`}
               </span>
             );
           })}

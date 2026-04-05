@@ -10,4 +10,6 @@ interface IValidationRegistry {
     ) external returns (uint256);
 
     function credentialCount(address agent) external view returns (uint256);
+
+    function getWeightedScore(address agent) external view returns (uint256);
 }

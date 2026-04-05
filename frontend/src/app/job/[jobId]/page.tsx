@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -10,6 +10,7 @@ import {
   fetchJobEscrow,
   fetchJobsCompletedCount,
   fetchJobsCreatedCount,
+  fetchMaxApprovalsForJob,
   fetchSubmissionForAgent,
   fetchSubmissions,
   fetchSuspicionScore,
@@ -37,8 +38,6 @@ type AgentInsight = {
   completedCount: number;
 };
 
-const MAX_APPROVALS = 3;
-
 function shortAddress(address: string) {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -61,6 +60,25 @@ function isHttpUrl(value: string) {
   return value.startsWith("http://") || value.startsWith("https://");
 }
 
+function parseUsdcInput(value: string): bigint | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const [whole, frac = ""] = trimmed.split(".");
+    const safeWhole = whole === "" ? "0" : whole;
+    const safeFrac = frac.slice(0, 6).padEnd(6, "0");
+    if (!/^\d+$/.test(safeWhole) || !/^\d+$/.test(safeFrac)) return null;
+    return BigInt(safeWhole) * 1_000_000n + BigInt(safeFrac);
+  } catch {
+    return null;
+  }
+}
+
+function formatDraftValue(units: bigint | null) {
+  if (units === null) return "0";
+  return formatUsdc(units);
+}
+
 export default function JobDetailsPage() {
   const params = useParams<{ jobId: string }>();
   const { account, browserProvider, connect } = useWallet();
@@ -71,6 +89,7 @@ export default function JobDetailsPage() {
   const [isAccepted, setIsAccepted] = useState(false);
   const [escrowLocked, setEscrowLocked] = useState<bigint>(0n);
   const [approvalsUsed, setApprovalsUsed] = useState(0);
+  const [maxApprovals, setMaxApprovals] = useState(3);
   const [platformFeeBps, setPlatformFeeBps] = useState(
     getDeploymentConfig().platformFeeBps ?? getDeploymentConfig().platform?.feeBps ?? 1000
   );
@@ -78,6 +97,7 @@ export default function JobDetailsPage() {
   const [insightsByAgent, setInsightsByAgent] = useState<Record<string, AgentInsight>>({});
   const [deliverableLink, setDeliverableLink] = useState("");
   const [rejectNotes, setRejectNotes] = useState<Record<string, string>>({});
+  const [rewardDraftByAgent, setRewardDraftByAgent] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -87,20 +107,44 @@ export default function JobDetailsPage() {
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
 
-  const grossPerApproval = useMemo(() => {
-    if (!job) return 0n;
-    return BigInt(job.rewardUSDC) / BigInt(MAX_APPROVALS);
-  }, [job]);
+  const allocatedReserved = useMemo(() => {
+    return submissions.reduce((sum, submission) => {
+      if (submission.status === 2 || submission.credentialClaimed) {
+        return sum + BigInt(submission.allocatedReward || "0");
+      }
+      return sum;
+    }, 0n);
+  }, [submissions]);
 
-  const netPerApproval = useMemo(() => {
+  const remainingBeforeDraft = useMemo(() => {
     if (!job) return 0n;
-    const fee = (grossPerApproval * BigInt(platformFeeBps)) / 10_000n;
-    return grossPerApproval - fee;
-  }, [grossPerApproval, job, platformFeeBps]);
+    const pool = BigInt(job.rewardUSDC);
+    if (allocatedReserved >= pool) return 0n;
+    return pool - allocatedReserved;
+  }, [allocatedReserved, job]);
+
+  const draftTotal = useMemo(() => {
+    return Object.values(rewardDraftByAgent).reduce((sum, value) => {
+      const parsed = parseUsdcInput(value);
+      if (!parsed) return sum;
+      return sum + parsed;
+    }, 0n);
+  }, [rewardDraftByAgent]);
+
+  const remainingWithDraft = useMemo(() => {
+    return remainingBeforeDraft > draftTotal ? remainingBeforeDraft - draftTotal : 0n;
+  }, [draftTotal, remainingBeforeDraft]);
 
   const myStatus = mySubmission?.status ?? 0;
   const canSubmit = isConnected && !isCreator && isAccepted && (mySubmission === null || myStatus === 3);
   const canClaim = isConnected && !isCreator && mySubmission?.status === 2 && !mySubmission.credentialClaimed;
+
+  const netForMyClaim = useMemo(() => {
+    if (!mySubmission?.allocatedReward) return 0n;
+    const gross = BigInt(mySubmission.allocatedReward);
+    const fee = (gross * BigInt(platformFeeBps)) / 10_000n;
+    return gross - fee;
+  }, [mySubmission?.allocatedReward, platformFeeBps]);
 
   const loadJobData = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0) {
@@ -112,11 +156,12 @@ export default function JobDetailsPage() {
     setError("");
 
     try {
-      const [jobData, submissionRows, escrow, approvedCount] = await Promise.all([
+      const [jobData, submissionRows, escrow, approvedCount, maxAllowed] = await Promise.all([
         fetchJob(jobId),
         fetchSubmissions(jobId),
         fetchJobEscrow(jobId),
-        fetchApprovedAgentCount(jobId)
+        fetchApprovedAgentCount(jobId),
+        fetchMaxApprovalsForJob(jobId)
       ]);
 
       if (!jobData) {
@@ -129,6 +174,7 @@ export default function JobDetailsPage() {
       setSubmissions(submissionRows);
       setEscrowLocked(escrow);
       setApprovalsUsed(approvedCount);
+      setMaxApprovals(Math.max(1, maxAllowed || 3));
       setCreatorPostedCount(await fetchJobsCreatedCount(jobData.client));
 
       try {
@@ -172,7 +218,7 @@ export default function JobDetailsPage() {
         setInsightsByAgent({});
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load job data.");
+      setError(loadError instanceof Error ? loadError.message : "Failed to load task data.");
     } finally {
       setLoading(false);
     }
@@ -201,10 +247,10 @@ export default function JobDetailsPage() {
       const tx = await txAcceptJob(provider, jobId);
       setStatus(`Accept transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus("Job accepted. You can now submit your work.");
+      setStatus("Task accepted. You can now submit your work.");
       await loadJobData();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to accept job.");
+      setError(actionError instanceof Error ? actionError.message : "Failed to accept task.");
     } finally {
       setBusyAction("");
     }
@@ -240,13 +286,36 @@ export default function JobDetailsPage() {
   const handleApprove = async (agent: string) => {
     setError("");
     setStatus("");
-    setBusyAction(`approve-${agent.toLowerCase()}`);
+    const agentKey = agent.toLowerCase();
+    const draft = parseUsdcInput(rewardDraftByAgent[agentKey] ?? "");
+    if (!draft || draft <= 0n) {
+      setError("Enter a valid reward amount before approving.");
+      return;
+    }
+
+    const otherDraftTotal = Object.entries(rewardDraftByAgent).reduce((sum, [key, value]) => {
+      if (key === agentKey) return sum;
+      const parsed = parseUsdcInput(value);
+      return parsed ? sum + parsed : sum;
+    }, 0n);
+    const availableForThis = remainingBeforeDraft > otherDraftTotal ? remainingBeforeDraft - otherDraftTotal : 0n;
+    if (draft > availableForThis) {
+      setError(`Reward exceeds remaining pool. Available: ${formatUsdc(availableForThis)} USDC`);
+      return;
+    }
+
+    setBusyAction(`approve-${agentKey}`);
     try {
       const provider = await withProvider();
-      const tx = await txApproveSubmission(provider, jobId, agent);
+      const tx = await txApproveSubmission(provider, jobId, agent, draft);
       setStatus(`Approve transaction submitted: ${tx.hash}`);
       await tx.wait();
       setStatus(`Submission approved for ${toDisplayName(agent)}.`);
+      setRewardDraftByAgent((previous) => {
+        const next = { ...previous };
+        delete next[agentKey];
+        return next;
+      });
       await loadJobData();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to approve submission.");
@@ -258,10 +327,11 @@ export default function JobDetailsPage() {
   const handleReject = async (agent: string) => {
     setError("");
     setStatus("");
-    setBusyAction(`reject-${agent.toLowerCase()}`);
+    const agentKey = agent.toLowerCase();
+    setBusyAction(`reject-${agentKey}`);
     try {
       const provider = await withProvider();
-      const reason = (rejectNotes[agent.toLowerCase()] ?? "").trim() || "Submission rejected by reviewer.";
+      const reason = (rejectNotes[agentKey] ?? "").trim() || "Submission rejected by reviewer.";
       const tx = await txRejectSubmission(provider, jobId, agent, reason);
       setStatus(`Reject transaction submitted: ${tx.hash}`);
       await tx.wait();
@@ -295,26 +365,28 @@ export default function JobDetailsPage() {
   return (
     <section className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Job #{Number.isInteger(jobId) ? jobId : "?"}</h1>
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">
+          Task #{Number.isInteger(jobId) ? jobId : "?"}
+        </h1>
         <Link href="/" className="archon-button-secondary px-3 py-2 text-sm">
           Back to Home
         </Link>
       </div>
 
       {status ? (
-        <div className="archon-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div>
+        <div className="archon-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          {status}
+        </div>
       ) : null}
       {error ? (
-        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
+        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
       ) : null}
 
-      {loading ? (
-        <div className="archon-card px-4 py-6 text-sm text-[#9CA3AF]">Loading job details...</div>
-      ) : null}
+      {loading ? <div className="archon-card px-4 py-6 text-sm text-[#9CA3AF]">Loading task details...</div> : null}
 
-      {!loading && !job ? (
-        <div className="archon-card px-4 py-6 text-sm text-[#9CA3AF]">Job not found.</div>
-      ) : null}
+      {!loading && !job ? <div className="archon-card px-4 py-6 text-sm text-[#9CA3AF]">Task not found.</div> : null}
 
       {job ? (
         <>
@@ -332,7 +404,7 @@ export default function JobDetailsPage() {
                 <span className="font-medium text-[#EAEAF0]">Creator:</span> {shortAddress(job.client)}
               </div>
               <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Creator activity:</span> {creatorPostedCount} jobs posted
+                <span className="font-medium text-[#EAEAF0]">Creator activity:</span> {creatorPostedCount} tasks posted
               </div>
               <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
                 <span className="font-medium text-[#EAEAF0]">Deadline:</span> {formatTimestamp(job.deadline)}
@@ -344,30 +416,36 @@ export default function JobDetailsPage() {
                 <span className="font-medium text-[#EAEAF0]">Submissions:</span> {job.submissionCount}
               </div>
               <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Approvals:</span> {approvalsUsed}/{MAX_APPROVALS}
+                <span className="font-medium text-[#EAEAF0]">Approvals:</span> {approvalsUsed}/{maxApprovals}
               </div>
             </div>
 
             <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-xs text-[#C9D0DB]">
-              <span className="font-semibold text-[#EAEAF0]">Escrow info:</span> {formatUsdc(escrowLocked)} USDC locked · {formatUsdc(netPerApproval)} USDC per approval after {platformFeeBps / 100}% fee
+              <span className="font-semibold text-[#EAEAF0]">Escrow info:</span> {formatUsdc(escrowLocked)} USDC locked
+              {" | "}
+              {formatUsdc(remainingBeforeDraft)} USDC remaining before new approvals
             </div>
           </div>
 
           {!isConnected ? (
             <div className="archon-card px-4 py-5 text-sm text-[#9CA3AF]">
-              Connect your wallet to accept this job, submit work, or review submissions.
+              Connect your wallet to accept this task, submit work, or review submissions.
             </div>
           ) : null}
 
           {isConnected && isCreator ? (
-            <div className="archon-card p-5 space-y-4">
+            <div className="archon-card space-y-4 p-5">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-lg font-semibold text-[#EAEAF0]">Review Submissions</h3>
-                <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-[#9CA3AF]">{approvalsUsed}/{MAX_APPROVALS} approvals used</span>
+                <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-[#9CA3AF]">
+                  {approvalsUsed} of {maxApprovals} approvals used | {formatUsdc(remainingWithDraft)} USDC remaining
+                </span>
               </div>
 
               {submissions.length === 0 ? (
-                <p className="text-sm text-[#9CA3AF]">No submissions yet. Share this job link with agents to get started.</p>
+                <p className="text-sm text-[#9CA3AF]">
+                  No submissions yet. Share this task link with agents to get started.
+                </p>
               ) : (
                 <div className="space-y-3">
                   {submissions.map((submission) => {
@@ -376,6 +454,14 @@ export default function JobDetailsPage() {
                     const isPending = submission.status === 1;
                     const isBusyApprove = busyAction === `approve-${agentKey}`;
                     const isBusyReject = busyAction === `reject-${agentKey}`;
+                    const draft = parseUsdcInput(rewardDraftByAgent[agentKey] ?? "");
+
+                    const otherDraftTotal = Object.entries(rewardDraftByAgent).reduce((sum, [key, value]) => {
+                      if (key === agentKey) return sum;
+                      const parsed = parseUsdcInput(value);
+                      return parsed ? sum + parsed : sum;
+                    }, 0n);
+                    const availableForThis = remainingBeforeDraft > otherDraftTotal ? remainingBeforeDraft - otherDraftTotal : 0n;
 
                     return (
                       <article key={`${submission.agent}-${submission.submittedAt}`} className="rounded-xl border border-white/10 bg-[#111214] p-4">
@@ -391,7 +477,9 @@ export default function JobDetailsPage() {
                                 Copy
                               </button>
                             </div>
-                            <p className="text-xs text-[#9CA3AF]">{toDisplayName(submission.agent)} · Agent has completed {insight?.completedCount ?? 0} jobs total</p>
+                            <p className="text-xs text-[#9CA3AF]">
+                              {toDisplayName(submission.agent)} | Agent has completed {insight?.completedCount ?? 0} tasks total
+                            </p>
                           </div>
                           <span className={`rounded-full px-2 py-1 text-xs ${submissionClass(submission.status)}`}>
                             {submissionStatusLabel(submission.status)}
@@ -411,22 +499,45 @@ export default function JobDetailsPage() {
 
                         <p className={`mt-2 text-xs ${suspicionClass(insight?.suspicion.score ?? 0)}`}>
                           Suspicion score: {insight?.suspicion.score ?? 0}
-                          {insight?.suspicion.score && insight.suspicion.score > 40 ? " ?" : ""}
-                          {insight?.suspicion.reason ? ` · ${insight.suspicion.reason}` : ""}
+                          {insight?.suspicion.reason ? ` | ${insight.suspicion.reason}` : ""}
                         </p>
 
                         {submission.status === 2 && submission.credentialClaimed ? (
-                          <p className="mt-2 text-xs text-emerald-200">Approved — credential minted</p>
+                          <p className="mt-2 text-xs text-emerald-200">Approved - credential minted</p>
                         ) : null}
                         {submission.status === 2 && !submission.credentialClaimed ? (
-                          <p className="mt-2 text-xs text-emerald-200">Approved — awaiting credential claim</p>
+                          <p className="mt-2 text-xs text-emerald-200">
+                            Approved - awaiting credential claim | Allocated {formatUsdc(submission.allocatedReward)} USDC
+                          </p>
                         ) : null}
                         {submission.status === 3 ? (
-                          <p className="mt-2 text-xs text-rose-200">Rejected: {submission.reviewerNote || "No note provided."}</p>
+                          <p className="mt-2 text-xs text-rose-200">
+                            Rejected: {submission.reviewerNote || "No note provided."}
+                          </p>
                         ) : null}
 
                         {isPending ? (
                           <div className="mt-3 space-y-2">
+                            <label className="block text-xs text-[#EAEAF0]">
+                              Reward amount (USDC)
+                              <input
+                                className="archon-input mt-1"
+                                type="number"
+                                min={0}
+                                step="0.000001"
+                                placeholder="e.g. 150"
+                                value={rewardDraftByAgent[agentKey] ?? ""}
+                                onChange={(event) =>
+                                  setRewardDraftByAgent((previous) => ({
+                                    ...previous,
+                                    [agentKey]: event.target.value
+                                  }))
+                                }
+                              />
+                            </label>
+                            <p className="text-xs text-[#9CA3AF]">
+                              Remaining pool: {formatUsdc(availableForThis)} USDC | Draft: {formatDraftValue(draft)} USDC
+                            </p>
                             <textarea
                               className="archon-input min-h-20 text-xs"
                               placeholder="Optional rejection note"
@@ -441,7 +552,14 @@ export default function JobDetailsPage() {
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                disabled={isBusyApprove || isBusyReject || approvalsUsed >= MAX_APPROVALS}
+                                disabled={
+                                  isBusyApprove ||
+                                  isBusyReject ||
+                                  approvalsUsed >= maxApprovals ||
+                                  draft === null ||
+                                  draft <= 0n ||
+                                  draft > availableForThis
+                                }
                                 onClick={() => void handleApprove(submission.agent)}
                                 className="archon-button-primary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                               >
@@ -472,14 +590,14 @@ export default function JobDetailsPage() {
 
               {!isAccepted && mySubmission === null ? (
                 <div className="space-y-3">
-                  <p className="text-sm text-[#9CA3AF]">You have not accepted this job yet.</p>
+                  <p className="text-sm text-[#9CA3AF]">You have not accepted this task yet.</p>
                   <button
                     type="button"
                     onClick={() => void handleAccept()}
                     disabled={busyAction === "accept" || !isJobOpen(job)}
                     className="archon-button-primary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {busyAction === "accept" ? "Accepting..." : "Accept Job"}
+                    {busyAction === "accept" ? "Accepting..." : "Accept Task"}
                   </button>
                 </div>
               ) : null}
@@ -497,7 +615,9 @@ export default function JobDetailsPage() {
                       required
                     />
                   </label>
-                  <p className="text-xs text-[#9CA3AF]">GitHub PR, Notion doc, deployed app URL, IPFS link, etc.</p>
+                  <p className="text-xs text-[#9CA3AF]">
+                    GitHub PR, Notion doc, deployed app URL, IPFS link, or any verifiable output.
+                  </p>
                   <button
                     type="submit"
                     disabled={busyAction === "submit"}
@@ -525,7 +645,10 @@ export default function JobDetailsPage() {
               {canClaim ? (
                 <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
                   <p>Approved! Claim your reward and credential.</p>
-                  <p className="mt-1 text-xs">You will receive: {formatUsdc(netPerApproval)} USDC</p>
+                  <p className="mt-1 text-xs">
+                    Allocated: {formatUsdc(mySubmission?.allocatedReward || "0")} USDC | You receive:{" "}
+                    {formatUsdc(netForMyClaim)} USDC after fee
+                  </p>
                   <button
                     type="button"
                     onClick={() => void handleClaim()}
@@ -556,4 +679,3 @@ export default function JobDetailsPage() {
     </section>
   );
 }
-

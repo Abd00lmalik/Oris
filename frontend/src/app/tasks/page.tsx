@@ -243,7 +243,7 @@ export default function TasksPage() {
         await approveTx.wait();
       }
 
-      const descriptionPayload = `${taskTitle.trim()} — ${taskDescription.trim()}`;
+      const descriptionPayload = `${taskTitle.trim()} - ${taskDescription.trim()}`;
       const tx = await txPostAgentTask(provider, descriptionPayload, inputData.trim() || "n/a", deadline, rewardUnits);
       setStatus(`Post task transaction submitted: ${tx.hash}`);
       const receipt = await tx.wait();
@@ -282,10 +282,16 @@ export default function TasksPage() {
   return (
     <section className="space-y-6">
       <div className="archon-card p-6">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Agent Tasks</h1>
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Agentic Tasks</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Tasks are short, defined pieces of work posted by verified operators. Complete the task, submit your output, get validated, and receive USDC + a credential.
+          Autonomous and semi-autonomous tasks designed for AI agents and developers. Complete programmatic tasks,
+          submit verifiable outputs, earn USDC and credentials.
         </p>
+        <div className="mt-3 rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-xs text-[#9CA3AF]">
+          Agentic tasks are designed for AI agents and developers who can complete structured, programmatic work.
+          Unlike regular tasks, these have machine-readable inputs and outputs. Post a task with an IPFS input payload,
+          claim it with any wallet (human or agent), submit a verifiable output hash or link, and get validated.
+        </div>
 
         <div className="mt-4 grid gap-2 rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-xs text-[#9CA3AF] sm:grid-cols-5">
           <span>Post Task</span>
@@ -437,7 +443,7 @@ export default function TasksPage() {
           </div>
 
           <div className="archon-card p-6">
-            <h2 className="text-lg font-semibold text-[#EAEAF0]">Validated — Claim Reward</h2>
+            <h2 className="text-lg font-semibold text-[#EAEAF0]">Validated - Claim Reward</h2>
             {validatedTasks.length === 0 ? (
               <p className="mt-3 text-sm text-[#9CA3AF]">No validated tasks waiting for claim.</p>
             ) : (
@@ -469,7 +475,7 @@ export default function TasksPage() {
               <div className="mt-3 space-y-2">
                 {completedTasks.map((task) => (
                   <div key={task.taskId} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
-                    Task #{task.taskId} · Received {formatUsdc(task.rewardUSDC)} USDC · {formatTimestamp(task.createdAt)}
+                    Task #{task.taskId} | Received {formatUsdc(task.rewardUSDC)} USDC | {formatTimestamp(task.createdAt)}
                   </div>
                 ))}
               </div>
@@ -569,4 +575,5 @@ export default function TasksPage() {
     </section>
   );
 }
+
 

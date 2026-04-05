@@ -32,12 +32,12 @@ export function getScoreBreakdown(credentials: EnrichedCredential[]): Record<str
 }
 
 export function getReputationTier(score: number): string {
-  if (score >= 1500) return "Legend";
-  if (score >= 1000) return "Elite";
-  if (score >= 600) return "Expert";
-  if (score >= 300) return "Verified";
-  if (score >= 100) return "Contributor";
-  return "Newcomer";
+  if (score >= 1500) return "Arc Founder";
+  if (score >= 1000) return "Keystone";
+  if (score >= 600) return "Master Builder";
+  if (score >= 300) return "Architect";
+  if (score >= 100) return "Draftsman";
+  return "Surveyor";
 }
 
 export function getSourceColor(sourceType: string): string {
@@ -66,12 +66,12 @@ export function getSourceLabel(sourceType: string): string {
 
 export function getTierProgress(score: number) {
   const tiers = [
-    { name: "Newcomer", min: 0, max: 99 },
-    { name: "Contributor", min: 100, max: 299 },
-    { name: "Verified", min: 300, max: 599 },
-    { name: "Expert", min: 600, max: 999 },
-    { name: "Elite", min: 1000, max: 1499 },
-    { name: "Legend", min: 1500, max: 2000 }
+    { name: "Surveyor", min: 0, max: 99 },
+    { name: "Draftsman", min: 100, max: 299 },
+    { name: "Architect", min: 300, max: 599 },
+    { name: "Master Builder", min: 600, max: 999 },
+    { name: "Keystone", min: 1000, max: 1499 },
+    { name: "Arc Founder", min: 1500, max: 2000 }
   ] as const;
 
   for (let i = 0; i < tiers.length; i++) {
@@ -91,10 +91,10 @@ export function getTierProgress(score: number) {
   }
 
   return {
-    tier: "Legend",
+    tier: "Arc Founder",
     progress: 100,
     remaining: 0,
-    nextTier: "Legend"
+    nextTier: "Arc Founder"
   };
 }
 
