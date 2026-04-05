@@ -1,104 +1,123 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CommunityActivityRecord,
+  CommunityApplicationRecord,
   expectedChainId,
   fetchCommunityActivitiesByRecipient,
-  isApprovedSourceOperator,
+  fetchCommunityApplicationsByApplicant,
+  fetchCommunityModeratorProfile,
+  fetchCommunityModerators,
+  fetchPendingCommunityApplications,
+  formatTimestamp,
+  ModeratorProfileRecord,
   shortAddress,
-  txAwardCommunityActivity,
-  txClaimCommunityCredential
+  txApproveCommunityApplication,
+  txClaimCommunityCredential,
+  txRejectCommunityApplication,
+  txSubmitCommunityApplication
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 
 const COMMUNITY_TYPES = [
-  { id: 0, label: "Helped a user solve a problem (Discord/Telegram)" },
-  { id: 1, label: "Moderated community spaces" },
-  { id: 2, label: "Created a tutorial, guide or thread" },
-  { id: 3, label: "Organized a community event or workshop" },
-  { id: 4, label: "Submitted a verified bug report" }
+  {
+    id: 0,
+    title: "Helped a Community Member",
+    label: "Helped a user solve a problem (Discord/Telegram)",
+    description:
+      "You answered a question, solved a problem, or guided someone in our Discord, Telegram, or forum.",
+    evidence: "Screenshot or message link",
+    weight: 50
+  },
+  {
+    id: 2,
+    title: "Created Educational Content",
+    label: "Created a tutorial, guide or thread",
+    description:
+      "You wrote a tutorial, guide, thread, or video explaining CredentialHook or ARC ecosystem concepts.",
+    evidence: "Link to the content",
+    weight: 90
+  },
+  {
+    id: 1,
+    title: "Moderated Community Spaces",
+    label: "Moderated community spaces",
+    description: "You actively moderated our Discord or forum, enforced rules, and kept discussions healthy.",
+    evidence: "Description of your moderation work",
+    weight: 80
+  },
+  {
+    id: 3,
+    title: "Organized a Community Event",
+    label: "Organized a community event or workshop",
+    description: "You ran a workshop, AMA, hackathon team, or community call.",
+    evidence: "Link or description of the event",
+    weight: 120
+  },
+  {
+    id: 4,
+    title: "Reported a Verified Bug",
+    label: "Submitted a verified bug report",
+    description: "You discovered and reported a confirmed bug in the platform or smart contracts.",
+    evidence: "Link to your bug report",
+    weight: 100
+  }
 ] as const;
 
-type CommunityApplication = {
-  address: string;
-  summary: string;
-  evidenceLink: string;
-  submittedAt: number;
-};
+const PLATFORMS = ["discord", "telegram", "twitter", "forum", "github"] as const;
 
-const APPLICATION_KEY = "archon.community.applications";
-
-function readApplications(): CommunityApplication[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(APPLICATION_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as CommunityApplication[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed;
-  } catch {
-    return [];
-  }
-}
-
-function writeApplications(items: CommunityApplication[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(APPLICATION_KEY, JSON.stringify(items));
+function statusMeta(status: number) {
+  if (status === 1) return { label: "Approved", className: "bg-emerald-500/15 text-emerald-200" };
+  if (status === 2) return { label: "Rejected", className: "bg-rose-500/15 text-rose-200" };
+  return { label: "Pending", className: "bg-white/5 text-[#9CA3AF]" };
 }
 
 export default function CommunityPage() {
   const { account, browserProvider, connect } = useWallet();
-  const [isOperator, setIsOperator] = useState(false);
-  const [activities, setActivities] = useState<CommunityActivityRecord[]>([]);
+  const [moderators, setModerators] = useState<ModeratorProfileRecord[]>([]);
+  const [myModeratorProfile, setMyModeratorProfile] = useState<ModeratorProfileRecord | null>(null);
+  const [applications, setApplications] = useState<CommunityApplicationRecord[]>([]);
+  const [pendingApplications, setPendingApplications] = useState<CommunityApplicationRecord[]>([]);
+  const [awards, setAwards] = useState<CommunityActivityRecord[]>([]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [busyId, setBusyId] = useState<number | null>(null);
-  const [showApply, setShowApply] = useState(false);
+  const [busyApplicationId, setBusyApplicationId] = useState<number | null>(null);
+  const [busyAwardId, setBusyAwardId] = useState<number | null>(null);
 
-  const [applicationSummary, setApplicationSummary] = useState("");
-  const [applicationLink, setApplicationLink] = useState("");
-
-  const [recipient, setRecipient] = useState("");
-  const [activityType, setActivityType] = useState(0);
+  const [activityDescription, setActivityDescription] = useState("");
+  const [evidenceLink, setEvidenceLink] = useState("");
   const [platform, setPlatform] = useState("discord");
-  const [evidenceNote, setEvidenceNote] = useState("");
+  const [selectedType, setSelectedType] = useState(0);
 
-  const myApplication = account
-    ? readApplications().find((item) => item.address.toLowerCase() === account.toLowerCase()) ?? null
-    : null;
+  const [reviewTypeById, setReviewTypeById] = useState<Record<number, number>>({});
+  const [reviewNoteById, setReviewNoteById] = useState<Record<number, string>>({});
+  const [rejectNoteById, setRejectNoteById] = useState<Record<number, string>>({});
 
-  const pendingAwards = useMemo(
-    () => activities.filter((activity) => !activity.credentialClaimed),
-    [activities]
-  );
+  const activeModerator = myModeratorProfile?.active === true;
+  const hasModerators = moderators.length > 0;
 
-  const load = useCallback(async () => {
-    if (!account) {
-      setActivities([]);
-      setIsOperator(false);
-      return;
+  const pendingAwards = useMemo(() => awards.filter((award) => !award.credentialClaimed), [awards]);
+
+  const awardByApplication = useMemo(() => {
+    const pending = [...pendingAwards];
+    const map: Record<number, CommunityActivityRecord | undefined> = {};
+    for (const application of applications) {
+      if (application.status !== 1) continue;
+      const index = pending.findIndex(
+        (award) =>
+          award.platform.toLowerCase() === application.platform.toLowerCase() &&
+          award.evidenceNote === application.activityDescription &&
+          award.issuedBy.toLowerCase() === application.reviewedBy.toLowerCase()
+      );
+      if (index >= 0) {
+        map[application.applicationId] = pending[index];
+        pending.splice(index, 1);
+      }
     }
-    setLoading(true);
-    try {
-      const [list, approved] = await Promise.all([
-        fetchCommunityActivitiesByRecipient(account),
-        isApprovedSourceOperator("community", account)
-      ]);
-      setActivities(list);
-      setIsOperator(approved);
-    } catch {
-      setActivities([]);
-      setIsOperator(false);
-    } finally {
-      setLoading(false);
-    }
-  }, [account]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    return map;
+  }, [applications, pendingAwards]);
 
   const withProvider = async () => {
     const provider = browserProvider ?? (await connect());
@@ -110,75 +129,142 @@ export default function CommunityPage() {
     return provider;
   };
 
-  const handleAward = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const load = useCallback(async () => {
+    setLoading(true);
     setError("");
+    try {
+      const teamPromise = fetchCommunityModerators();
+      if (!account) {
+        const team = await teamPromise;
+        setModerators(team);
+        setApplications([]);
+        setPendingApplications([]);
+        setAwards([]);
+        setMyModeratorProfile(null);
+        return;
+      }
+
+      const [team, profile, myApplications, myAwards] = await Promise.all([
+        teamPromise,
+        fetchCommunityModeratorProfile(account),
+        fetchCommunityApplicationsByApplicant(account),
+        fetchCommunityActivitiesByRecipient(account)
+      ]);
+      setModerators(team);
+      setMyModeratorProfile(profile);
+      setApplications(myApplications);
+      setAwards(myAwards);
+
+      if (profile?.active) {
+        const pending = await fetchPendingCommunityApplications();
+        setPendingApplications(pending);
+      } else {
+        setPendingApplications([]);
+      }
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load community data.");
+    } finally {
+      setLoading(false);
+    }
+  }, [account]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const handleSubmitApplication = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setStatus("");
+    setError("");
+
+    if (activityDescription.trim().length < 50) {
+      setError("Describe your contribution in at least 50 characters.");
+      return;
+    }
+
     try {
       const provider = await withProvider();
-      const tx = await txAwardCommunityActivity(
+      const selected = COMMUNITY_TYPES.find((type) => type.id === selectedType);
+      const normalizedDescription = `[Requested Type: ${selected?.title ?? "General"}] ${activityDescription.trim()}`;
+      const tx = await txSubmitCommunityApplication(
         provider,
-        recipient.trim(),
-        activityType,
-        platform.trim(),
-        evidenceNote.trim()
+        normalizedDescription,
+        evidenceLink.trim(),
+        platform.trim().toLowerCase()
       );
-      setStatus(`Award transaction submitted: ${tx.hash}`);
+      setStatus(`Application submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus("Community activity awarded.");
-      setRecipient("");
-      setEvidenceNote("");
+      setStatus(
+        "Application submitted. A moderator will review within 48 hours. You can check the status in 'Your Applications' above."
+      );
+      setActivityDescription("");
+      setEvidenceLink("");
       await load();
-    } catch (awardError) {
-      setError(awardError instanceof Error ? awardError.message : "Failed to award community activity.");
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Failed to submit application.");
     }
   };
 
   const handleClaim = async (activityId: number) => {
-    setBusyId(activityId);
-    setError("");
+    setBusyAwardId(activityId);
     setStatus("");
+    setError("");
     try {
       const provider = await withProvider();
       const tx = await txClaimCommunityCredential(provider, activityId);
-      setStatus(`Claim transaction submitted: ${tx.hash}`);
+      setStatus(`Claim submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus(`Community credential claimed for activity #${activityId}.`);
+      setStatus("Community credential claimed.");
       await load();
     } catch (claimError) {
       setError(claimError instanceof Error ? claimError.message : "Failed to claim credential.");
     } finally {
-      setBusyId(null);
+      setBusyAwardId(null);
     }
   };
 
-  const handleApplication = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setError("");
+  const handleApprove = async (applicationId: number) => {
+    setBusyApplicationId(applicationId);
     setStatus("");
-    if (!account) {
-      setError("Connect your wallet before submitting an application.");
-      return;
+    setError("");
+    try {
+      const provider = await withProvider();
+      const activityType = reviewTypeById[applicationId] ?? 0;
+      const note = reviewNoteById[applicationId] ?? "";
+      const tx = await txApproveCommunityApplication(provider, applicationId, activityType, note);
+      setStatus(`Approval submitted: ${tx.hash}`);
+      await tx.wait();
+      setStatus(`Application #${applicationId} approved.`);
+      await load();
+    } catch (approveError) {
+      setError(approveError instanceof Error ? approveError.message : "Failed to approve application.");
+    } finally {
+      setBusyApplicationId(null);
     }
-    if (applicationSummary.trim().length < 20) {
-      setError("Please describe your contribution in more detail.");
-      return;
-    }
+  };
 
-    const list = readApplications().filter(
-      (item) => item.address.toLowerCase() !== account.toLowerCase()
-    );
-    list.push({
-      address: account,
-      summary: applicationSummary.trim(),
-      evidenceLink: applicationLink.trim(),
-      submittedAt: Date.now()
-    });
-    writeApplications(list);
-    setStatus("Application submitted. Review typically takes 24-48 hours.");
-    setApplicationSummary("");
-    setApplicationLink("");
-    setShowApply(false);
+  const handleReject = async (applicationId: number) => {
+    setBusyApplicationId(applicationId);
+    setStatus("");
+    setError("");
+    const note = rejectNoteById[applicationId]?.trim() ?? "";
+    if (!note) {
+      setError("Rejection note is required.");
+      setBusyApplicationId(null);
+      return;
+    }
+    try {
+      const provider = await withProvider();
+      const tx = await txRejectCommunityApplication(provider, applicationId, note);
+      setStatus(`Rejection submitted: ${tx.hash}`);
+      await tx.wait();
+      setStatus(`Application #${applicationId} rejected.`);
+      await load();
+    } catch (rejectError) {
+      setError(rejectError instanceof Error ? rejectError.message : "Failed to reject application.");
+    } finally {
+      setBusyApplicationId(null);
+    }
   };
 
   return (
@@ -186,13 +272,8 @@ export default function CommunityPage() {
       <div className="archon-card p-6">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Community Credentials</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Awarded by verified platform moderators for real contributions to the CredentialHook community.
+          Earn credentials for real contributions to the CredentialHook community - verified by our moderation team.
         </p>
-
-        <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-sm text-[#9CA3AF]">
-          Community credentials are awarded by platform-approved moderators. You cannot self-claim these. If you
-          believe you deserve one, apply below and a moderator will review.
-        </div>
       </div>
 
       {status ? (
@@ -201,140 +282,309 @@ export default function CommunityPage() {
         </div>
       ) : null}
       {error ? (
-        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {error}
-        </div>
+        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
       ) : null}
 
       <div className="archon-card p-6">
-        <h2 className="text-lg font-semibold text-[#EAEAF0]">Claim a Community Credential</h2>
-        {loading ? (
-          <p className="mt-3 text-sm text-[#9CA3AF]">Loading awards...</p>
-        ) : pendingAwards.length === 0 ? (
-          <p className="mt-3 text-sm text-[#9CA3AF]">You have no pending community awards.</p>
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">Who Reviews Your Application</h2>
+        <div className="mt-3 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-sm text-[#9CA3AF]">
+          <p className="font-medium text-[#EAEAF0]">Our Moderation Team</p>
+          <p className="mt-1">
+            These verified moderators review all community applications. When you submit, one of them will respond
+            within 48 hours.
+          </p>
+        </div>
+
+        {!hasModerators ? (
+          <div className="mt-4 rounded-xl border border-amber-300/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Moderation team is being assembled. Community credentials will open soon - check back shortly.
+          </div>
         ) : (
-          <div className="mt-3 space-y-3">
-            {pendingAwards.map((activity) => (
-              <article key={activity.activityId} className="rounded-xl border border-white/10 bg-[#111214] p-3 text-sm text-[#9CA3AF]">
-                <p className="font-medium text-[#EAEAF0]">Award #{activity.activityId}</p>
-                <p className="mt-1 text-xs">{COMMUNITY_TYPES[activity.activityType]?.label ?? `Type ${activity.activityType}`}</p>
-                <p className="mt-1 text-xs">Platform: {activity.platform}</p>
-                <p className="mt-1 text-xs">Evidence: {activity.evidenceNote}</p>
-                <button
-                  type="button"
-                  onClick={() => void handleClaim(activity.activityId)}
-                  disabled={busyId === activity.activityId}
-                  className="archon-button-secondary mt-3 px-3 py-2 text-xs"
-                >
-                  {busyId === activity.activityId ? "Claiming..." : "Claim Credential"}
-                </button>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {moderators.map((moderator) => (
+              <article key={moderator.wallet} className="rounded-xl border border-white/10 bg-[#111214] p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs text-[#EAEAF0]">
+                    {moderator.wallet.slice(2, 4).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1 text-sm text-[#9CA3AF]">
+                    <p className="font-semibold text-[#EAEAF0]">{moderator.name || "Community Moderator"}</p>
+                    <p className="mt-1">{moderator.role || "Moderator"}</p>
+                    <p className="mt-1">Wallet: {shortAddress(moderator.wallet)}</p>
+                    {moderator.profileURI ? (
+                      <a
+                        href={moderator.profileURI}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-block text-[#8FD9FF] underline underline-offset-4"
+                      >
+                        View Profile
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
               </article>
             ))}
           </div>
         )}
-
-        <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] px-4 py-3 text-xs text-[#9CA3AF]">
-          <p>This is a request, not a guarantee. A moderator will review within 48 hours.</p>
-          {myApplication ? (
-            <p className="mt-1">
-              Current status: Pending | Applied as {shortAddress(myApplication.address)} on{" "}
-              {new Date(myApplication.submittedAt).toLocaleString()}
-            </p>
-          ) : (
-            <p className="mt-1">Current status: Not Applied</p>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setShowApply((previous) => !previous)}
-          className="archon-button-primary mt-3 px-3 py-2 text-sm"
-        >
-          Apply for Community Recognition
-        </button>
-
-        {showApply ? (
-          <form onSubmit={handleApplication} className="mt-4 space-y-3">
-            <label className="block text-sm text-[#9CA3AF]">
-              Describe what you did
-              <textarea
-                className="archon-input mt-1 min-h-24"
-                value={applicationSummary}
-                onChange={(event) => setApplicationSummary(event.target.value)}
-                required
-              />
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Optional supporting link
-              <input
-                className="archon-input mt-1"
-                value={applicationLink}
-                onChange={(event) => setApplicationLink(event.target.value)}
-                placeholder="https://..."
-              />
-            </label>
-            <button type="submit" className="archon-button-secondary px-3 py-2 text-sm">
-              Submit Application
-            </button>
-          </form>
-        ) : null}
       </div>
 
-      {isOperator ? (
-        <div className="archon-card p-6">
-          <h2 className="text-lg font-semibold text-[#EAEAF0]">Award a Credential</h2>
-          <p className="mt-1 text-sm text-[#9CA3AF]">Visible because your wallet is approved for source type &quot;community&quot;.</p>
-          <form onSubmit={handleAward} className="mt-4 space-y-3">
+      <div className="archon-card p-6">
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">Activity Types You Can Apply For</h2>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {COMMUNITY_TYPES.map((item) => (
+            <article key={item.id} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+              <h3 className="font-semibold text-[#EAEAF0]">{item.title}</h3>
+              <p className="mt-2">{item.description}</p>
+              <p className="mt-2 text-xs">Evidence needed: {item.evidence}</p>
+              <p className="mt-2 inline-flex rounded-full bg-white/5 px-2 py-1 text-xs text-[#EAEAF0]">
+                Weight: +{item.weight} pts
+              </p>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <div className="archon-card p-6">
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">Your Applications</h2>
+        {!account ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">Connect wallet to view your application history.</p>
+        ) : loading ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">Loading applications...</p>
+        ) : applications.length === 0 ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">No applications submitted yet.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {applications.map((application) => {
+              const badge = statusMeta(application.status);
+              const matchedAward = awardByApplication[application.applicationId];
+              const reviewerName =
+                moderators.find((moderator) => moderator.wallet.toLowerCase() === application.reviewedBy.toLowerCase())?.name ??
+                shortAddress(application.reviewedBy);
+              return (
+                <article key={application.applicationId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-[#EAEAF0]">Application #{application.applicationId}</p>
+                    <span className={`rounded-full px-2 py-1 text-xs ${badge.className}`}>{badge.label}</span>
+                  </div>
+                  <p className="mt-2 break-words">{application.activityDescription}</p>
+                  <p className="mt-1 text-xs">Platform: {application.platform}</p>
+                  <p className="mt-1 text-xs">Submitted: {formatTimestamp(application.submittedAt)}</p>
+                  {application.evidenceLink ? (
+                    <a
+                      href={application.evidenceLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block break-all text-xs text-[#8FD9FF] underline underline-offset-4"
+                    >
+                      {application.evidenceLink}
+                    </a>
+                  ) : null}
+
+                  {application.status === 0 ? (
+                    <p className="mt-2 text-xs text-[#9CA3AF]">
+                      Under review - moderators typically respond within 48 hours.
+                    </p>
+                  ) : null}
+                  {application.status === 1 ? (
+                    <div className="mt-2 space-y-2">
+                      <p className="text-xs text-emerald-300">Approved by {reviewerName || "moderator"}.</p>
+                      {matchedAward ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleClaim(matchedAward.activityId)}
+                          disabled={busyAwardId === matchedAward.activityId}
+                          className="archon-button-primary px-3 py-2 text-xs"
+                        >
+                          {busyAwardId === matchedAward.activityId ? "Claiming..." : "Claim Credential"}
+                        </button>
+                      ) : (
+                        <p className="text-xs text-[#9CA3AF]">
+                          Your credential award is being indexed. Refresh in a moment.
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+                  {application.status === 2 ? (
+                    <div className="mt-2 space-y-2">
+                      <p className="text-xs text-rose-200">Rejection note: {application.reviewNote || "No note provided."}</p>
+                      <p className="text-xs text-[#9CA3AF]">Submit a new application with stronger evidence.</p>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="archon-card p-6">
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">Submit New Application</h2>
+        {!hasModerators ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">
+            Applications are disabled until at least one active moderator is registered.
+          </p>
+        ) : !account ? (
+          <p className="mt-3 text-sm text-[#9CA3AF]">Connect wallet to submit your application.</p>
+        ) : (
+          <form onSubmit={handleSubmitApplication} className="mt-4 space-y-3">
             <label className="block text-sm text-[#9CA3AF]">
-              Recipient address
-              <input
-                className="archon-input mt-1"
-                value={recipient}
-                onChange={(event) => setRecipient(event.target.value)}
+              What did you contribute?
+              <textarea
+                className="archon-input mt-1 min-h-28"
+                value={activityDescription}
+                onChange={(event) => setActivityDescription(event.target.value)}
+                placeholder="Describe specifically what you did, when you did it, and how it helped the community."
                 required
               />
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm text-[#9CA3AF]">
-                Activity type
-                <select
-                  className="archon-input mt-1"
-                  value={activityType}
-                  onChange={(event) => setActivityType(Number(event.target.value))}
-                >
-                  {COMMUNITY_TYPES.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label}
+                Platform
+                <select className="archon-input mt-1" value={platform} onChange={(event) => setPlatform(event.target.value)}>
+                  {PLATFORMS.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
                     </option>
                   ))}
                 </select>
               </label>
               <label className="block text-sm text-[#9CA3AF]">
-                Platform
-                <input
+                Activity type
+                <select
                   className="archon-input mt-1"
-                  value={platform}
-                  onChange={(event) => setPlatform(event.target.value)}
-                  required
-                />
+                  value={selectedType}
+                  onChange={(event) => setSelectedType(Number(event.target.value))}
+                >
+                  {COMMUNITY_TYPES.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.title}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
             <label className="block text-sm text-[#9CA3AF]">
-              Evidence note
-              <textarea
-                className="archon-input mt-1 min-h-20"
-                value={evidenceNote}
-                onChange={(event) => setEvidenceNote(event.target.value)}
-                required
+              Evidence link (optional but recommended)
+              <input
+                className="archon-input mt-1"
+                value={evidenceLink}
+                onChange={(event) => setEvidenceLink(event.target.value)}
+                placeholder="https://..."
               />
+              <span className="mt-1 block text-xs">A message link, post URL, or screenshot hosted on IPFS</span>
             </label>
-            <button type="submit" className="archon-button-primary w-full px-4 py-2.5 text-sm">
-              Award Activity
+            <button type="submit" className="archon-button-primary px-4 py-2.5 text-sm">
+              Submit Application
             </button>
+            <p className="text-xs text-[#9CA3AF]">
+              Application submitted. A moderator will review within 48 hours. You can check the status in
+              &nbsp;&quot;Your Applications&quot;&nbsp;above.
+            </p>
           </form>
+        )}
+      </div>
+
+      {activeModerator ? (
+        <div className="archon-card p-6">
+          <h2 className="text-lg font-semibold text-[#EAEAF0]">Moderator Panel</h2>
+          {pendingApplications.length === 0 ? (
+            <p className="mt-3 text-sm text-[#9CA3AF]">No pending applications.</p>
+          ) : (
+            <div className="mt-3 space-y-4">
+              {pendingApplications.map((application) => (
+                <article key={application.applicationId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                  <p className="font-semibold text-[#EAEAF0]">Application #{application.applicationId}</p>
+                  <p className="mt-1">Applicant: {shortAddress(application.applicant)}</p>
+                  <p className="mt-1">Platform: {application.platform}</p>
+                  <p className="mt-1">Submitted: {formatTimestamp(application.submittedAt)}</p>
+                  <p className="mt-2 whitespace-pre-wrap break-words">{application.activityDescription}</p>
+                  {application.evidenceLink ? (
+                    <a
+                      href={application.evidenceLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-block break-all text-[#8FD9FF] underline underline-offset-4"
+                    >
+                      {application.evidenceLink}
+                    </a>
+                  ) : null}
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="block text-xs text-[#9CA3AF]">
+                      Activity type
+                      <select
+                        className="archon-input mt-1"
+                        value={reviewTypeById[application.applicationId] ?? 0}
+                        onChange={(event) =>
+                          setReviewTypeById((previous) => ({
+                            ...previous,
+                            [application.applicationId]: Number(event.target.value)
+                          }))
+                        }
+                      >
+                        {COMMUNITY_TYPES.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block text-xs text-[#9CA3AF]">
+                      Approval note
+                      <input
+                        className="archon-input mt-1"
+                        value={reviewNoteById[application.applicationId] ?? ""}
+                        onChange={(event) =>
+                          setReviewNoteById((previous) => ({
+                            ...previous,
+                            [application.applicationId]: event.target.value
+                          }))
+                        }
+                        placeholder="Optional approval note"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="mt-3 block text-xs text-[#9CA3AF]">
+                    Rejection note (required for reject)
+                    <textarea
+                      className="archon-input mt-1 min-h-16"
+                      value={rejectNoteById[application.applicationId] ?? ""}
+                      onChange={(event) =>
+                        setRejectNoteById((previous) => ({
+                          ...previous,
+                          [application.applicationId]: event.target.value
+                        }))
+                      }
+                      placeholder="Explain why this application is rejected"
+                    />
+                  </label>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleApprove(application.applicationId)}
+                      disabled={busyApplicationId === application.applicationId}
+                      className="archon-button-primary px-3 py-2 text-xs"
+                    >
+                      {busyApplicationId === application.applicationId ? "Processing..." : "Approve"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleReject(application.applicationId)}
+                      disabled={busyApplicationId === application.applicationId}
+                      className="archon-button-secondary px-3 py-2 text-xs"
+                    >
+                      {busyApplicationId === application.applicationId ? "Processing..." : "Reject"}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
         </div>
       ) : null}
     </section>
   );
 }
-

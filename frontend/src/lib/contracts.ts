@@ -17,7 +17,6 @@ type DeploymentContracts = {
   usdc?: DeploymentContract;
   job?: DeploymentContract;
   jobContract?: DeploymentContract;
-  githubSource?: DeploymentContract;
   communitySource?: DeploymentContract;
   agentTaskSource?: DeploymentContract;
   peerAttestationSource?: DeploymentContract;
@@ -73,6 +72,25 @@ type RawSubmissionRecord = {
   reviewerNote: unknown;
   credentialClaimed: unknown;
   allocatedReward?: unknown;
+};
+
+type RawModeratorProfile = {
+  name: unknown;
+  role: unknown;
+  profileURI: unknown;
+  active: unknown;
+};
+
+type RawCommunityApplication = {
+  applicationId: unknown;
+  applicant: unknown;
+  activityDescription: unknown;
+  evidenceLink: unknown;
+  platform: unknown;
+  submittedAt: unknown;
+  status: unknown;
+  reviewedBy: unknown;
+  reviewNote: unknown;
 };
 
 export type JobRecord = {
@@ -132,19 +150,6 @@ export type AgentTaskRecord = {
   validatorNote: string;
 };
 
-export type GitHubActivityRecord = {
-  activityId: number;
-  agent: string;
-  activityType: number;
-  evidenceUrl: string;
-  repoName: string;
-  status: number;
-  submittedAt: number;
-  credentialClaimed: boolean;
-  verifiedBy: string;
-  rejectionReason: string;
-};
-
 export type CommunityActivityRecord = {
   activityId: number;
   recipient: string;
@@ -154,6 +159,26 @@ export type CommunityActivityRecord = {
   issuedAt: number;
   issuedBy: string;
   credentialClaimed: boolean;
+};
+
+export type ModeratorProfileRecord = {
+  wallet: string;
+  name: string;
+  role: string;
+  profileURI: string;
+  active: boolean;
+};
+
+export type CommunityApplicationRecord = {
+  applicationId: number;
+  applicant: string;
+  activityDescription: string;
+  evidenceLink: string;
+  platform: string;
+  submittedAt: number;
+  status: number;
+  reviewedBy: string;
+  reviewNote: string;
 };
 
 export type AttestationRecord = {
@@ -189,6 +214,20 @@ const ERC20_MIN_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)"
 ] as const;
+const COMMUNITY_SOURCE_ABI = [
+  "function getActivitiesByRecipient(address recipient) view returns (uint256[])",
+  "function getActivity(uint256 activityId) view returns (uint256,address,uint8,string,string,uint256,address,bool)",
+  "function moderatorProfiles(address moderator) view returns (string,string,string,bool)",
+  "function getModerators() view returns (address[])",
+  "function getApplicationsByApplicant(address applicant) view returns (uint256[])",
+  "function getApplication(uint256 applicationId) view returns (uint256,address,string,string,string,uint256,uint8,address,string)",
+  "function getPendingApplications() view returns (uint256[])",
+  "function awardActivity(address recipient,uint8 activityType,string platform,string evidenceNote)",
+  "function claimCredential(uint256 activityId)",
+  "function submitApplication(string activityDescription,string evidenceLink,string platform)",
+  "function approveApplication(uint256 applicationId,uint8 activityType,string reviewNote)",
+  "function rejectApplication(uint256 applicationId,string reviewNote)"
+] as const;
 const JOB_OPTIONAL_ABI = [
   "function getJobsByClient(address client) view returns (uint256[])",
   "function getJobsByAgent(address agent) view returns (uint256[])",
@@ -209,7 +248,6 @@ export const contractAddresses = {
   credentialHook: deployment.contracts.credentialHook.address,
   usdc: resolvedUsdcAddress,
   job: resolvedJobContract?.address ?? ZERO_ADDRESS,
-  githubSource: deployment.contracts.githubSource?.address ?? ZERO_ADDRESS,
   communitySource: deployment.contracts.communitySource?.address ?? ZERO_ADDRESS,
   agentTaskSource: deployment.contracts.agentTaskSource?.address ?? ZERO_ADDRESS,
   peerAttestationSource: deployment.contracts.peerAttestationSource?.address ?? ZERO_ADDRESS,
@@ -262,7 +300,6 @@ function sourceTypeKey(value: string) {
 export function getSourceLabelForDisplay(sourceType: string) {
   const normalized = sourceTypeKey(sourceType);
   if (normalized === "job") return "Job";
-  if (normalized === "github") return "GitHub";
   if (normalized === "agent_task") return "Agent Task";
   if (normalized === "community") return "Community";
   if (normalized === "peer_attestation") return "Peer";
@@ -273,7 +310,6 @@ export function getSourceLabelForDisplay(sourceType: string) {
 function contractForSourceType(sourceType: string) {
   const normalized = sourceTypeKey(sourceType);
   if (normalized === "job") return resolvedJobContract;
-  if (normalized === "github") return deployment.contracts.githubSource;
   if (normalized === "community") return deployment.contracts.communitySource;
   if (normalized === "agent_task") return deployment.contracts.agentTaskSource;
   if (normalized === "peer_attestation") return deployment.contracts.peerAttestationSource;
@@ -389,33 +425,43 @@ export function parseAgentTask(rawTask: unknown): AgentTaskRecord {
   };
 }
 
-export function parseGitHubActivity(rawActivity: unknown): GitHubActivityRecord {
-  const activity = rawActivity as Record<string, unknown>;
+export function parseCommunityActivity(rawActivity: unknown): CommunityActivityRecord {
+  const activity = rawActivity as Record<string, unknown> & unknown[];
   return {
-    activityId: toNumber(activity.activityId),
-    agent: toString(activity.agent),
-    activityType: toNumber(activity.activityType),
-    evidenceUrl: toString(activity.evidenceUrl),
-    repoName: toString(activity.repoName),
-    status: toNumber(activity.status),
-    submittedAt: toNumber(activity.submittedAt),
-    credentialClaimed: toBoolean(activity.credentialClaimed),
-    verifiedBy: toString(activity.verifiedBy),
-    rejectionReason: toString(activity.rejectionReason)
+    activityId: toNumber(activity.activityId ?? activity[0]),
+    recipient: toString(activity.recipient ?? activity[1]),
+    activityType: toNumber(activity.activityType ?? activity[2]),
+    platform: toString(activity.platform ?? activity[3]),
+    evidenceNote: toString(activity.evidenceNote ?? activity[4]),
+    issuedAt: toNumber(activity.issuedAt ?? activity[5]),
+    issuedBy: toString(activity.issuedBy ?? activity[6]),
+    credentialClaimed: toBoolean(activity.credentialClaimed ?? activity[7])
   };
 }
 
-export function parseCommunityActivity(rawActivity: unknown): CommunityActivityRecord {
-  const activity = rawActivity as Record<string, unknown>;
+export function parseModeratorProfile(rawProfile: unknown, wallet: string): ModeratorProfileRecord {
+  const profile = rawProfile as Partial<RawModeratorProfile> & unknown[];
   return {
-    activityId: toNumber(activity.activityId),
-    recipient: toString(activity.recipient),
-    activityType: toNumber(activity.activityType),
-    platform: toString(activity.platform),
-    evidenceNote: toString(activity.evidenceNote),
-    issuedAt: toNumber(activity.issuedAt),
-    issuedBy: toString(activity.issuedBy),
-    credentialClaimed: toBoolean(activity.credentialClaimed)
+    wallet,
+    name: toString(profile.name ?? profile[0]),
+    role: toString(profile.role ?? profile[1]),
+    profileURI: toString(profile.profileURI ?? profile[2]),
+    active: toBoolean(profile.active ?? profile[3])
+  };
+}
+
+export function parseCommunityApplication(rawApplication: unknown): CommunityApplicationRecord {
+  const application = rawApplication as Partial<RawCommunityApplication> & unknown[];
+  return {
+    applicationId: toNumber(application.applicationId ?? application[0]),
+    applicant: toString(application.applicant ?? application[1]),
+    activityDescription: toString(application.activityDescription ?? application[2]),
+    evidenceLink: toString(application.evidenceLink ?? application[3]),
+    platform: toString(application.platform ?? application[4]),
+    submittedAt: toNumber(application.submittedAt ?? application[5]),
+    status: toNumber(application.status ?? application[6]),
+    reviewedBy: toString(application.reviewedBy ?? application[7]),
+    reviewNote: toString(application.reviewNote ?? application[8])
   };
 }
 
@@ -462,6 +508,13 @@ function getContractFromConfig(
     contractConfig.abi as ethers.InterfaceAbi,
     providerOrSigner
   );
+}
+
+function getCommunityContract(providerOrSigner: ethers.Provider | ethers.Signer) {
+  if (!contractAddresses.communitySource || contractAddresses.communitySource === ZERO_ADDRESS) {
+    throw new Error("Community source contract is not configured.");
+  }
+  return new ethers.Contract(contractAddresses.communitySource, COMMUNITY_SOURCE_ABI, providerOrSigner);
 }
 
 export function getJobReadContract() {
@@ -791,23 +844,11 @@ export async function fetchPosterTasksByAddress(posterAddress: string): Promise<
   return tasks.sort((a, b) => b.taskId - a.taskId);
 }
 
-export async function fetchGitHubActivitiesByAgent(agentAddress: string): Promise<GitHubActivityRecord[]> {
-  if (!agentAddress || !deployment.contracts.githubSource) return [];
-  const contract = getSourceReadContract("github");
-  const activityIds = (await contract.getActivitiesByAgent(agentAddress)) as unknown[];
-  const activities: GitHubActivityRecord[] = [];
-  for (const activityId of activityIds) {
-    const raw = await contract.getActivity(activityId);
-    activities.push(parseGitHubActivity(raw));
-  }
-  return activities.sort((a, b) => b.activityId - a.activityId);
-}
-
 export async function fetchCommunityActivitiesByRecipient(
   recipientAddress: string
 ): Promise<CommunityActivityRecord[]> {
   if (!recipientAddress || !deployment.contracts.communitySource) return [];
-  const contract = getSourceReadContract("community");
+  const contract = getCommunityContract(getReadProvider());
   const activityIds = (await contract.getActivitiesByRecipient(recipientAddress)) as unknown[];
   const activities: CommunityActivityRecord[] = [];
   for (const activityId of activityIds) {
@@ -815,6 +856,57 @@ export async function fetchCommunityActivitiesByRecipient(
     activities.push(parseCommunityActivity(raw));
   }
   return activities.sort((a, b) => b.activityId - a.activityId);
+}
+
+export async function fetchCommunityModerators(): Promise<ModeratorProfileRecord[]> {
+  if (!deployment.contracts.communitySource) return [];
+  const contract = getCommunityContract(getReadProvider());
+  const moderatorAddresses = (await contract.getModerators()) as string[];
+  const profiles = await Promise.all(
+    moderatorAddresses.map(async (wallet) => parseModeratorProfile(await contract.moderatorProfiles(wallet), wallet))
+  );
+  return profiles.filter((profile) => profile.active);
+}
+
+export async function fetchCommunityModeratorProfile(
+  walletAddress: string
+): Promise<ModeratorProfileRecord | null> {
+  if (!walletAddress || !deployment.contracts.communitySource) return null;
+  const contract = getCommunityContract(getReadProvider());
+  try {
+    const raw = await contract.moderatorProfiles(walletAddress);
+    const parsed = parseModeratorProfile(raw, walletAddress);
+    if (!parsed.wallet || parsed.wallet === ZERO_ADDRESS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchCommunityApplicationsByApplicant(
+  applicantAddress: string
+): Promise<CommunityApplicationRecord[]> {
+  if (!applicantAddress || !deployment.contracts.communitySource) return [];
+  const contract = getCommunityContract(getReadProvider());
+  const ids = (await contract.getApplicationsByApplicant(applicantAddress)) as unknown[];
+  const applications: CommunityApplicationRecord[] = [];
+  for (const id of ids) {
+    const raw = await contract.getApplication(id);
+    applications.push(parseCommunityApplication(raw));
+  }
+  return applications.sort((a, b) => b.applicationId - a.applicationId);
+}
+
+export async function fetchPendingCommunityApplications(): Promise<CommunityApplicationRecord[]> {
+  if (!deployment.contracts.communitySource) return [];
+  const contract = getCommunityContract(getReadProvider());
+  const ids = (await contract.getPendingApplications()) as unknown[];
+  const applications: CommunityApplicationRecord[] = [];
+  for (const id of ids) {
+    const raw = await contract.getApplication(id);
+    applications.push(parseCommunityApplication(raw));
+  }
+  return applications.sort((a, b) => b.applicationId - a.applicationId);
 }
 
 export async function fetchPeerAttestationsForRecipient(recipientAddress: string): Promise<AttestationRecord[]> {
@@ -885,16 +977,6 @@ export async function fetchCredentialMetadata(
         client: shortAddress(job.client),
         rewardUSDC: formatUsdc(job.rewardUSDC),
         deadline: formatTimestamp(job.deadline)
-      };
-    }
-    if (normalizedSourceType === "github") {
-      const contract = getSourceReadContract("github");
-      const activity = parseGitHubActivity(await contract.getActivity(credential.activityId));
-      return {
-        repoName: activity.repoName,
-        evidenceUrl: activity.evidenceUrl,
-        activityType: String(activity.activityType),
-        status: String(activity.status)
       };
     }
     if (normalizedSourceType === "community") {
@@ -1013,41 +1095,6 @@ export async function txClaimJobCredential(browserProvider: ethers.BrowserProvid
   return (await contract.claimCredential(jobId)) as ethers.TransactionResponse;
 }
 
-export async function txSubmitGitHubActivity(
-  browserProvider: ethers.BrowserProvider,
-  activityType: number,
-  evidenceUrl: string,
-  repoName: string
-) {
-  const contract = await getSourceWriteContract(browserProvider, "github");
-  return (await contract.submitActivity(activityType, evidenceUrl, repoName)) as ethers.TransactionResponse;
-}
-
-export async function txApproveGitHubActivity(
-  browserProvider: ethers.BrowserProvider,
-  activityId: number
-) {
-  const contract = await getSourceWriteContract(browserProvider, "github");
-  return (await contract.approveActivity(activityId)) as ethers.TransactionResponse;
-}
-
-export async function txRejectGitHubActivity(
-  browserProvider: ethers.BrowserProvider,
-  activityId: number,
-  reason: string
-) {
-  const contract = await getSourceWriteContract(browserProvider, "github");
-  return (await contract.rejectActivity(activityId, reason)) as ethers.TransactionResponse;
-}
-
-export async function txClaimGitHubCredential(
-  browserProvider: ethers.BrowserProvider,
-  activityId: number
-) {
-  const contract = await getSourceWriteContract(browserProvider, "github");
-  return (await contract.claimCredential(activityId)) as ethers.TransactionResponse;
-}
-
 export async function txAwardCommunityActivity(
   browserProvider: ethers.BrowserProvider,
   recipient: string,
@@ -1055,7 +1102,8 @@ export async function txAwardCommunityActivity(
   platform: string,
   evidenceNote: string
 ) {
-  const contract = await getSourceWriteContract(browserProvider, "community");
+  const signer = await browserProvider.getSigner();
+  const contract = getCommunityContract(signer);
   return (await contract.awardActivity(
     recipient,
     activityType,
@@ -1068,8 +1116,49 @@ export async function txClaimCommunityCredential(
   browserProvider: ethers.BrowserProvider,
   activityId: number
 ) {
-  const contract = await getSourceWriteContract(browserProvider, "community");
+  const signer = await browserProvider.getSigner();
+  const contract = getCommunityContract(signer);
   return (await contract.claimCredential(activityId)) as ethers.TransactionResponse;
+}
+
+export async function txSubmitCommunityApplication(
+  browserProvider: ethers.BrowserProvider,
+  activityDescription: string,
+  evidenceLink: string,
+  platform: string
+) {
+  const signer = await browserProvider.getSigner();
+  const contract = getCommunityContract(signer);
+  return (await contract.submitApplication(
+    activityDescription,
+    evidenceLink,
+    platform
+  )) as ethers.TransactionResponse;
+}
+
+export async function txApproveCommunityApplication(
+  browserProvider: ethers.BrowserProvider,
+  applicationId: number,
+  activityType: number,
+  reviewNote: string
+) {
+  const signer = await browserProvider.getSigner();
+  const contract = getCommunityContract(signer);
+  return (await contract.approveApplication(
+    applicationId,
+    activityType,
+    reviewNote
+  )) as ethers.TransactionResponse;
+}
+
+export async function txRejectCommunityApplication(
+  browserProvider: ethers.BrowserProvider,
+  applicationId: number,
+  reviewNote: string
+) {
+  const signer = await browserProvider.getSigner();
+  const contract = getCommunityContract(signer);
+  return (await contract.rejectApplication(applicationId, reviewNote)) as ethers.TransactionResponse;
 }
 
 export async function txPostAgentTask(

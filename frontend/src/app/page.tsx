@@ -213,8 +213,8 @@ export default function HomePage() {
             <Link href="/" className="archon-button-secondary px-3 py-2 text-xs">
               Browse Tasks
             </Link>
-            <Link href="/github" className="archon-button-secondary px-3 py-2 text-xs">
-              Submit GitHub Work
+            <Link href="/my-work" className="archon-button-secondary px-3 py-2 text-xs">
+              Submit Task Deliverables
             </Link>
             <Link href="/attest" className="archon-button-secondary px-3 py-2 text-xs">
               Get Vouched By Peers

@@ -75,6 +75,9 @@ describe("MultiSource Integration", function () {
     await sourceRegistry.connect(owner).approveOperator("community", verifier.address);
     await sourceRegistry.connect(owner).approveOperator("agent_task", poster.address);
     await sourceRegistry.connect(owner).approveOperator("agent_task", verifier.address);
+    await community
+      .connect(owner)
+      .registerModerator(verifier.address, "ARC Community Team", "Discord Moderator", "https://x.com/abd00lmalik");
 
     await usdc.connect(client).approve(await job.getAddress(), seed);
     await usdc.connect(poster).approve(await agentTasks.getAddress(), seed);
@@ -146,7 +149,7 @@ describe("MultiSource Integration", function () {
     await agentTasks.connect(agent).claimRewardAndCredential(0);
 
     // Source 5: Peer attestation (attester must already have a credential).
-    await registry.connect(owner).issue(verifier.address, 4000, "job", 300);
+    await registry.connect(owner).issue(verifier.address, 4000, "job", 1000);
     await peer
       .connect(verifier)
       .attest(

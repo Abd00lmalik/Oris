@@ -4,12 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   fetchAgentTasksByAddress,
-  fetchGitHubActivitiesByAgent,
   fetchJobsByAgent,
   fetchJobsByClient,
   fetchSubmissionForAgent,
-  formatTimestamp,
-  GitHubActivityRecord,
   JobRecord,
   statusLabel,
   SubmissionRecord
@@ -30,19 +27,11 @@ function submissionActionLabel(submission: SubmissionRecord | null) {
   return "Open Job";
 }
 
-function githubStatusLabel(status: number) {
-  if (status === 0) return "Pending";
-  if (status === 1) return "Approved";
-  if (status === 2) return "Rejected";
-  return "Unknown";
-}
-
 export default function MyWorkPage() {
   const { account } = useWallet();
   const [jobsPosted, setJobsPosted] = useState<JobRecord[]>([]);
   const [jobsWorking, setJobsWorking] = useState<JobWithSubmission[]>([]);
   const [agentTasks, setAgentTasks] = useState<Awaited<ReturnType<typeof fetchAgentTasksByAddress>>>([]);
-  const [githubSubmissions, setGithubSubmissions] = useState<GitHubActivityRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -54,18 +43,16 @@ export default function MyWorkPage() {
         setJobsPosted([]);
         setJobsWorking([]);
         setAgentTasks([]);
-        setGithubSubmissions([]);
         return;
       }
 
       setLoading(true);
       setError("");
       try {
-        const [posted, working, tasks, github] = await Promise.all([
+        const [posted, working, tasks] = await Promise.all([
           fetchJobsByClient(account),
           fetchJobsByAgent(account),
-          fetchAgentTasksByAddress(account),
-          fetchGitHubActivitiesByAgent(account)
+          fetchAgentTasksByAddress(account)
         ]);
 
         const workingWithSubmission = await Promise.all(
@@ -79,7 +66,6 @@ export default function MyWorkPage() {
         setJobsPosted(posted);
         setJobsWorking(workingWithSubmission);
         setAgentTasks(tasks);
-        setGithubSubmissions(github);
       } catch (loadError) {
         if (!active) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load your work dashboard.");
@@ -171,31 +157,6 @@ export default function MyWorkPage() {
                     <Link href="/tasks" className="mt-2 inline-flex text-[#8FD9FF] underline underline-offset-4">
                       Open in Tasks Hub
                     </Link>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="archon-card p-6">
-            <h2 className="text-lg font-semibold text-[#EAEAF0]">GitHub Submissions</h2>
-            {githubSubmissions.length === 0 ? (
-              <p className="mt-3 text-sm text-[#9CA3AF]">No GitHub submissions yet.</p>
-            ) : (
-              <div className="mt-3 space-y-2">
-                {githubSubmissions.map((activity) => (
-                  <article key={activity.activityId} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
-                    <p className="text-[#EAEAF0]">Activity #{activity.activityId} | {activity.repoName}</p>
-                    <p>Status: {githubStatusLabel(activity.status)}</p>
-                    <p>Submitted: {formatTimestamp(activity.submittedAt)}</p>
-                    <a href={activity.evidenceUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex text-[#8FD9FF] underline underline-offset-4">
-                      Open evidence
-                    </a>
-                    {activity.status === 1 && !activity.credentialClaimed ? (
-                      <Link href="/github" className="ml-3 inline-flex text-emerald-300 underline underline-offset-4">
-                        Claim Credential
-                      </Link>
-                    ) : null}
                   </article>
                 ))}
               </div>
