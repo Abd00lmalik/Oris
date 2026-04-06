@@ -6,13 +6,17 @@ import {
   AgentTaskRecord,
   contractAddresses,
   expectedChainId,
+  fetchAgentTaskCredentialCooldownSeconds,
   fetchAgentTasksByAddress,
+  fetchLastAgentTaskCredentialClaim,
   fetchOpenAgentTasks,
   fetchPosterTasksByAddress,
+  fetchUsdcAllowance,
+  fetchUsdcBalance,
   formatTimestamp,
   formatUsdc,
   isApprovedSourceOperator,
-  txApproveUsdcIfNeeded,
+  txApproveUsdc,
   txClaimAgentTask,
   txClaimTaskRewardAndCredential,
   txPostAgentTask,
@@ -50,6 +54,14 @@ function validationCountdown(submittedAt: number) {
   return `Estimated validation unlock in ~${minutes} min`;
 }
 
+function formatRemainingDuration(seconds: number) {
+  if (seconds <= 0) return "0m";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${minutes}m`;
+}
+
 export default function TasksPage() {
   const { account, browserProvider, connect } = useWallet();
 
@@ -71,8 +83,13 @@ export default function TasksPage() {
   const [postReward, setPostReward] = useState("10");
   const [postDeadline, setPostDeadline] = useState("");
   const [posting, setPosting] = useState(false);
+  const [approvingUsdc, setApprovingUsdc] = useState(false);
+  const [usdcBalance, setUsdcBalance] = useState<bigint>(0n);
+  const [usdcAllowance, setUsdcAllowance] = useState<bigint>(0n);
   const [isApprovedPoster, setIsApprovedPoster] = useState(false);
   const [checkingPosterGate, setCheckingPosterGate] = useState(false);
+  const [claimReadyAt, setClaimReadyAt] = useState<number | null>(null);
+  const [claimCountdown, setClaimCountdown] = useState(0);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -128,6 +145,73 @@ export default function TasksPage() {
     };
   }, [account]);
 
+  useEffect(() => {
+    let active = true;
+    const loadUsdcState = async () => {
+      if (!account) {
+        setUsdcBalance(0n);
+        setUsdcAllowance(0n);
+        return;
+      }
+      try {
+        const [balance, allowance] = await Promise.all([
+          fetchUsdcBalance(account),
+          fetchUsdcAllowance(account, contractAddresses.agentTaskSource)
+        ]);
+        if (!active) return;
+        setUsdcBalance(balance);
+        setUsdcAllowance(allowance);
+      } catch {
+        if (!active) return;
+        setUsdcBalance(0n);
+        setUsdcAllowance(0n);
+      }
+    };
+    void loadUsdcState();
+    return () => {
+      active = false;
+    };
+  }, [account, postReward, status]);
+
+  useEffect(() => {
+    let active = true;
+    const loadCooldown = async () => {
+      if (!account) {
+        setClaimReadyAt(null);
+        return;
+      }
+      try {
+        const [lastClaim, cooldown] = await Promise.all([
+          fetchLastAgentTaskCredentialClaim(account),
+          fetchAgentTaskCredentialCooldownSeconds()
+        ]);
+        if (!active) return;
+        setClaimReadyAt(Number(lastClaim) + cooldown);
+      } catch {
+        if (!active) return;
+        setClaimReadyAt(null);
+      }
+    };
+    void loadCooldown();
+    return () => {
+      active = false;
+    };
+  }, [account, status]);
+
+  useEffect(() => {
+    if (!claimReadyAt) {
+      setClaimCountdown(0);
+      return () => undefined;
+    }
+    const update = () => {
+      const now = Math.floor(Date.now() / 1000);
+      setClaimCountdown(Math.max(0, claimReadyAt - now));
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [claimReadyAt]);
+
   const filteredOpenTasks = useMemo(() => {
     const min = Number.parseFloat(rewardMin || "0");
     const max = rewardMax.trim() ? Number.parseFloat(rewardMax) : Number.POSITIVE_INFINITY;
@@ -136,6 +220,16 @@ export default function TasksPage() {
       return reward >= (Number.isNaN(min) ? 0 : min) && reward <= (Number.isNaN(max) ? Number.POSITIVE_INFINITY : max);
     });
   }, [openTasks, rewardMax, rewardMin]);
+
+  const postRewardUnits = useMemo(() => {
+    try {
+      return ethers.parseUnits(postReward || "0", 6);
+    } catch {
+      return 0n;
+    }
+  }, [postReward]);
+
+  const needsUsdcApproval = postRewardUnits > 0n && usdcAllowance < postRewardUnits;
 
   const inProgressTasks = useMemo(() => myTasks.filter((task) => task.status === 1 || task.status === 4), [myTasks]);
   const awaitingTasks = useMemo(() => myTasks.filter((task) => task.status === 2), [myTasks]);
@@ -202,6 +296,9 @@ export default function TasksPage() {
     setStatus("");
     setBusyTaskId(taskId);
     try {
+      if (claimCountdown > 0) {
+        throw new Error(`Claim available in: ${formatRemainingDuration(claimCountdown)}`);
+      }
       const provider = await withConnectedProvider();
       const tx = await txClaimTaskRewardAndCredential(provider, taskId);
       setStatus(`Claim reward transaction submitted: ${tx.hash}`);
@@ -235,13 +332,10 @@ export default function TasksPage() {
       const rewardUnits = ethers.parseUnits(postReward || "0", 6);
       const minReward = ethers.parseUnits(MIN_TASK_REWARD, 6);
       if (rewardUnits < minReward) throw new Error("Minimum reward is 5 USDC.");
+      if (usdcBalance < rewardUnits) throw new Error("Insufficient USDC balance for this reward.");
+      if (usdcAllowance < rewardUnits) throw new Error("Approve USDC first before posting.");
 
       const provider = await withConnectedProvider();
-      const approveTx = await txApproveUsdcIfNeeded(provider, contractAddresses.agentTaskSource, rewardUnits);
-      if (approveTx) {
-        setStatus(`USDC approve transaction submitted: ${approveTx.hash}`);
-        await approveTx.wait();
-      }
 
       const descriptionPayload = `${taskTitle.trim()} - ${taskDescription.trim()}`;
       const tx = await txPostAgentTask(provider, descriptionPayload, inputData.trim() || "n/a", deadline, rewardUnits);
@@ -276,6 +370,30 @@ export default function TasksPage() {
       setError(postError instanceof Error ? postError.message : "Failed to post task.");
     } finally {
       setPosting(false);
+    }
+  };
+
+  const handleApprovePostingReward = async () => {
+    setError("");
+    setStatus("");
+    setApprovingUsdc(true);
+    try {
+      const provider = await withConnectedProvider();
+      if (postRewardUnits <= 0n) {
+        throw new Error("Enter a valid reward amount first.");
+      }
+      const tx = await txApproveUsdc(provider, contractAddresses.agentTaskSource, postRewardUnits);
+      setStatus(`USDC approve transaction submitted: ${tx.hash}`);
+      await tx.wait();
+      setStatus("USDC allowance updated. You can now post the task.");
+      if (account) {
+        const allowance = await fetchUsdcAllowance(account, contractAddresses.agentTaskSource);
+        setUsdcAllowance(allowance);
+      }
+    } catch (approveError) {
+      setError(approveError instanceof Error ? approveError.message : "Failed to approve USDC.");
+    } finally {
+      setApprovingUsdc(false);
     }
   };
 
@@ -453,10 +571,15 @@ export default function TasksPage() {
                     <p className="font-semibold">Task #{task.taskId}</p>
                     <p className="mt-1 text-xs">You will receive: {formatUsdc(task.rewardUSDC)} USDC</p>
                     <p className="text-xs">Credential weight: +130 pts</p>
+                    {claimCountdown > 0 ? (
+                      <p className="mt-1 text-xs text-amber-200">
+                        Claim available in: {formatRemainingDuration(claimCountdown)}
+                      </p>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => void handleClaimReward(task.taskId)}
-                      disabled={busyTaskId === task.taskId}
+                      disabled={busyTaskId === task.taskId || claimCountdown > 0}
                       className="archon-button-primary mt-3 px-3 py-2 text-xs"
                     >
                       {busyTaskId === task.taskId ? "Claiming..." : "Claim USDC + Credential"}
@@ -555,12 +678,34 @@ export default function TasksPage() {
                 </label>
               </div>
 
+              <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-xs text-[#9CA3AF]">
+                <p>USDC balance: {formatUsdc(usdcBalance)} USDC</p>
+                <p>Allowance for AgentTaskSource: {formatUsdc(usdcAllowance)} USDC</p>
+                <p>Required for this post: {formatUsdc(postRewardUnits)} USDC</p>
+                {needsUsdcApproval ? (
+                  <p className="mt-1 text-amber-300">Allowance is below required reward. Approve USDC first.</p>
+                ) : (
+                  <p className="mt-1 text-emerald-300">Allowance is sufficient for posting.</p>
+                )}
+              </div>
+
+              {needsUsdcApproval ? (
+                <button
+                  type="button"
+                  onClick={() => void handleApprovePostingReward()}
+                  disabled={approvingUsdc || posting}
+                  className="archon-button-secondary w-full px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {approvingUsdc ? "Approving..." : `Approve ${postReward || "0"} USDC`}
+                </button>
+              ) : null}
+
               <button
                 type="submit"
-                disabled={posting}
+                disabled={posting || needsUsdcApproval}
                 className="archon-button-primary w-full px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {posting ? "Posting..." : "Approve USDC & Post Task"}
+                {posting ? "Posting..." : "Post Task"}
               </button>
             </form>
           )}

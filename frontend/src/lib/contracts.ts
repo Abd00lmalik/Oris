@@ -204,6 +204,14 @@ export type SuspicionResult = {
   reason: string;
 };
 
+export type SourceOperatorApplicationRecord = {
+  sourceType: string;
+  operator: string;
+  profileURI: string;
+  appliedAt: number;
+  approved: boolean;
+};
+
 const deployment = deploymentRaw as DeploymentConfig;
 const overrideRpcUrl = process.env.NEXT_PUBLIC_RPC_URL ?? process.env.NEXT_PUBLIC_ARC_RPC_URL;
 const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.NEXT_PUBLIC_ARC_CHAIN_ID;
@@ -211,17 +219,32 @@ const fallbackRpcUrl = process.env.NEXT_PUBLIC_ARC_RPC_URL ?? "https://rpc.testn
 const resolvedJobContract = deployment.contracts.jobContract ?? deployment.contracts.job;
 const resolvedUsdcAddress = deployment.usdcAddress ?? deployment.contracts.usdc?.address ?? ZERO_ADDRESS;
 const ERC20_MIN_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
   "function allowance(address owner, address spender) view returns (uint256)",
-  "function approve(address spender, uint256 amount) returns (bool)"
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function decimals() view returns (uint8)"
+] as const;
+const SOURCE_REGISTRY_ABI = [
+  "function owner() view returns (address)",
+  "function totalApproved() view returns (uint256)",
+  "function approvedOperators(string sourceType,address operator) view returns (bool)",
+  "function operatorApplications(string sourceType,address operator) view returns (string profileURI,uint256 appliedAt)",
+  "function getPendingApplicants(string sourceType) view returns (address[])",
+  "function getApprovedOperators(string sourceType) view returns (address[])",
+  "function approveOperator(string sourceType,address operator)",
+  "function revokeOperator(string sourceType,address operator)"
 ] as const;
 const COMMUNITY_SOURCE_ABI = [
   "function getActivitiesByRecipient(address recipient) view returns (uint256[])",
   "function getActivity(uint256 activityId) view returns (uint256,address,uint8,string,string,uint256,address,bool)",
   "function moderatorProfiles(address moderator) view returns (string,string,string,bool)",
   "function getModerators() view returns (address[])",
+  "function activeModeratorCount() view returns (uint256)",
   "function getApplicationsByApplicant(address applicant) view returns (uint256[])",
   "function getApplication(uint256 applicationId) view returns (uint256,address,string,string,string,uint256,uint8,address,string)",
   "function getPendingApplications() view returns (uint256[])",
+  "function registerModerator(address moderator,string name,string role,string profileURI)",
+  "function deactivateModerator(address moderator)",
   "function awardActivity(address recipient,uint8 activityType,string platform,string evidenceNote)",
   "function claimCredential(uint256 activityId)",
   "function submitApplication(string activityDescription,string evidenceLink,string platform)",
@@ -236,7 +259,36 @@ const JOB_OPTIONAL_ABI = [
   "function maxApprovalsForJob(uint256 jobId) view returns (uint256)",
   "function getSuspicionScore(address agent, uint256 jobId) view returns (uint256,string)",
   "function jobsCreatedByWallet(address wallet) view returns (uint256)",
-  "function jobsCompletedByWallet(address wallet) view returns (uint256)"
+  "function jobsCompletedByWallet(address wallet) view returns (uint256)",
+  "function minJobStake() view returns (uint256)",
+  "function platformFeeBps() view returns (uint256)",
+  "function platformTreasury() view returns (address)",
+  "function requireCredentialToPost() view returns (bool)",
+  "function CREDENTIAL_COOLDOWN() view returns (uint256)",
+  "function nextJobId() view returns (uint256)",
+  "function lastCredentialClaim(address wallet) view returns (uint256)",
+  "function setMinJobStake(uint256 amount)",
+  "function setRequireCredentialToPost(bool required)",
+  "function setPlatformConfig(address treasuryAddress,uint256 feeBps)"
+] as const;
+const AGENT_TASK_OPTIONAL_ABI = [
+  "function CREDENTIAL_COOLDOWN() view returns (uint256)",
+  "function lastCredentialClaim(address wallet) view returns (uint256)"
+] as const;
+const DAO_GOVERNANCE_ABI = [
+  "function owner() view returns (address)",
+  "function getGovernors() view returns (address[])",
+  "function approvedGovernors(address governorContract) view returns (bool)",
+  "function addGovernor(address governorContract)",
+  "function removeGovernor(address governorContract)"
+] as const;
+const ARC_IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e";
+const ARC_IDENTITY_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function tokenOfOwnerByIndex(address owner,uint256 index) view returns (uint256)",
+  "function ownerOf(uint256 tokenId) view returns (address)",
+  "function tokenURI(uint256 tokenId) view returns (string)",
+  "function totalSupply() view returns (uint256)"
 ] as const;
 
 export const expectedChainId = overrideChainId ? Number(overrideChainId) : deployment.chainId;
@@ -517,6 +569,20 @@ function getCommunityContract(providerOrSigner: ethers.Provider | ethers.Signer)
   return new ethers.Contract(contractAddresses.communitySource, COMMUNITY_SOURCE_ABI, providerOrSigner);
 }
 
+function getSourceRegistryContract(providerOrSigner: ethers.Provider | ethers.Signer) {
+  if (!contractAddresses.sourceRegistry || contractAddresses.sourceRegistry === ZERO_ADDRESS) {
+    throw new Error("Source registry contract is not configured.");
+  }
+  return new ethers.Contract(contractAddresses.sourceRegistry, SOURCE_REGISTRY_ABI, providerOrSigner);
+}
+
+function getDaoGovernanceContract(providerOrSigner: ethers.Provider | ethers.Signer) {
+  if (!contractAddresses.daoGovernanceSource || contractAddresses.daoGovernanceSource === ZERO_ADDRESS) {
+    throw new Error("DAO governance source contract is not configured.");
+  }
+  return new ethers.Contract(contractAddresses.daoGovernanceSource, DAO_GOVERNANCE_ABI, providerOrSigner);
+}
+
 export function getJobReadContract() {
   ensureContractsConfigured();
   return getContractFromConfig(resolvedJobContract, getReadProvider());
@@ -567,6 +633,235 @@ export async function getSourceRegistryWriteContract(browserProvider: ethers.Bro
   return getContractFromConfig(deployment.contracts.sourceRegistry, signer);
 }
 
+export async function fetchSourceRegistryOwner(): Promise<string> {
+  const contract = getSourceRegistryContract(getReadProvider());
+  return toString(await contract.owner());
+}
+
+export async function fetchTotalApprovedOperators(): Promise<number> {
+  try {
+    const contract = getSourceRegistryContract(getReadProvider());
+    const count = (await contract.totalApproved()) as bigint;
+    return Number(count);
+  } catch {
+    return 0;
+  }
+}
+
+export async function fetchPendingSourceApplications(
+  sourceType: string
+): Promise<SourceOperatorApplicationRecord[]> {
+  try {
+    const contract = getSourceRegistryContract(getReadProvider());
+    const pendingAddresses = (await contract.getPendingApplicants(sourceType)) as string[];
+    const applications = await Promise.all(
+      pendingAddresses.map(async (operator) => {
+        const [profileURI, appliedAt] = (await contract.operatorApplications(
+          sourceType,
+          operator
+        )) as [string, bigint];
+        const approved = (await contract.approvedOperators(sourceType, operator)) as boolean;
+        return {
+          sourceType,
+          operator,
+          profileURI: toString(profileURI),
+          appliedAt: Number(appliedAt),
+          approved
+        } satisfies SourceOperatorApplicationRecord;
+      })
+    );
+    return applications.filter((item) => !item.approved).sort((a, b) => b.appliedAt - a.appliedAt);
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchApprovedOperatorsForSource(sourceType: string): Promise<string[]> {
+  try {
+    const contract = getSourceRegistryContract(getReadProvider());
+    return ((await contract.getApprovedOperators(sourceType)) as string[]).filter(
+      (address) => address && address !== ZERO_ADDRESS
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function txApproveSourceOperator(
+  browserProvider: ethers.BrowserProvider,
+  sourceType: string,
+  operator: string
+) {
+  const contract = getSourceRegistryContract(await browserProvider.getSigner());
+  return (await contract.approveOperator(sourceType, operator)) as ethers.TransactionResponse;
+}
+
+export async function txRevokeSourceOperator(
+  browserProvider: ethers.BrowserProvider,
+  sourceType: string,
+  operator: string
+) {
+  const contract = getSourceRegistryContract(await browserProvider.getSigner());
+  return (await contract.revokeOperator(sourceType, operator)) as ethers.TransactionResponse;
+}
+
+export async function fetchCommunityActiveModeratorCount(): Promise<number> {
+  try {
+    const contract = getCommunityContract(getReadProvider());
+    return Number(await contract.activeModeratorCount());
+  } catch {
+    const moderators = await fetchCommunityModerators();
+    return moderators.filter((profile) => profile.active).length;
+  }
+}
+
+export async function txRegisterCommunityModerator(
+  browserProvider: ethers.BrowserProvider,
+  moderator: string,
+  name: string,
+  role: string,
+  profileURI: string
+) {
+  const contract = getCommunityContract(await browserProvider.getSigner());
+  return (await contract.registerModerator(moderator, name, role, profileURI)) as ethers.TransactionResponse;
+}
+
+export async function txDeactivateCommunityModerator(
+  browserProvider: ethers.BrowserProvider,
+  moderator: string
+) {
+  const contract = getCommunityContract(await browserProvider.getSigner());
+  return (await contract.deactivateModerator(moderator)) as ethers.TransactionResponse;
+}
+
+export async function fetchDaoGovernors(): Promise<string[]> {
+  try {
+    const contract = getDaoGovernanceContract(getReadProvider());
+    const known = (await contract.getGovernors()) as string[];
+    if (known.length === 0) return [];
+    const statuses = await Promise.all(
+      known.map(async (address) => {
+        const approved = (await contract.approvedGovernors(address)) as boolean;
+        return approved ? address : null;
+      })
+    );
+    return statuses.filter((value): value is string => Boolean(value));
+  } catch {
+    return [];
+  }
+}
+
+export async function txAddDaoGovernor(browserProvider: ethers.BrowserProvider, governorAddress: string) {
+  const contract = getDaoGovernanceContract(await browserProvider.getSigner());
+  return (await contract.addGovernor(governorAddress)) as ethers.TransactionResponse;
+}
+
+export async function txRemoveDaoGovernor(browserProvider: ethers.BrowserProvider, governorAddress: string) {
+  const contract = getDaoGovernanceContract(await browserProvider.getSigner());
+  return (await contract.removeGovernor(governorAddress)) as ethers.TransactionResponse;
+}
+
+export async function fetchJobPlatformSettings() {
+  const contract = getOptionalJobReadContract();
+  const [minJobStake, platformFeeBps, platformTreasury, requireCredentialToPost, cooldown] =
+    (await Promise.all([
+      contract.minJobStake(),
+      contract.platformFeeBps(),
+      contract.platformTreasury(),
+      contract.requireCredentialToPost(),
+      contract.CREDENTIAL_COOLDOWN()
+    ])) as [bigint, bigint, string, boolean, bigint];
+
+  return {
+    minJobStake,
+    platformFeeBps: Number(platformFeeBps),
+    platformTreasury,
+    requireCredentialToPost,
+    cooldownSeconds: Number(cooldown)
+  };
+}
+
+export async function txSetMinJobStake(browserProvider: ethers.BrowserProvider, amount: bigint) {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, await browserProvider.getSigner());
+  return (await contract.setMinJobStake(amount)) as ethers.TransactionResponse;
+}
+
+export async function txSetPlatformFeeBps(browserProvider: ethers.BrowserProvider, feeBps: number) {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, await browserProvider.getSigner());
+  const treasury = toString(await contract.platformTreasury());
+  return (await contract.setPlatformConfig(treasury, feeBps)) as ethers.TransactionResponse;
+}
+
+export async function txSetRequireCredentialToPost(
+  browserProvider: ethers.BrowserProvider,
+  required: boolean
+) {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, await browserProvider.getSigner());
+  return (await contract.setRequireCredentialToPost(required)) as ethers.TransactionResponse;
+}
+
+export async function fetchLastJobCredentialClaim(walletAddress: string): Promise<bigint> {
+  try {
+    const contract = getOptionalJobReadContract();
+    return (await contract.lastCredentialClaim(walletAddress)) as bigint;
+  } catch {
+    return 0n;
+  }
+}
+
+export async function fetchLastAgentTaskCredentialClaim(walletAddress: string): Promise<bigint> {
+  try {
+    const contract = new ethers.Contract(
+      contractAddresses.agentTaskSource,
+      AGENT_TASK_OPTIONAL_ABI,
+      getReadProvider()
+    );
+    return (await contract.lastCredentialClaim(walletAddress)) as bigint;
+  } catch {
+    return 0n;
+  }
+}
+
+export async function fetchJobCredentialCooldownSeconds(): Promise<number> {
+  try {
+    const contract = getOptionalJobReadContract();
+    return Number(await contract.CREDENTIAL_COOLDOWN());
+  } catch {
+    return 6 * 60 * 60;
+  }
+}
+
+export async function fetchAgentTaskCredentialCooldownSeconds(): Promise<number> {
+  try {
+    const contract = new ethers.Contract(
+      contractAddresses.agentTaskSource,
+      AGENT_TASK_OPTIONAL_ABI,
+      getReadProvider()
+    );
+    return Number(await contract.CREDENTIAL_COOLDOWN());
+  } catch {
+    return 6 * 60 * 60;
+  }
+}
+
+export async function fetchUsdcBalance(walletAddress: string): Promise<bigint> {
+  try {
+    const usdc = new ethers.Contract(contractAddresses.usdc, ERC20_MIN_ABI, getReadProvider());
+    return (await usdc.balanceOf(walletAddress)) as bigint;
+  } catch {
+    return 0n;
+  }
+}
+
+export async function fetchUsdcAllowance(ownerAddress: string, spenderAddress: string): Promise<bigint> {
+  try {
+    const usdc = new ethers.Contract(contractAddresses.usdc, ERC20_MIN_ABI, getReadProvider());
+    return (await usdc.allowance(ownerAddress, spenderAddress)) as bigint;
+  } catch {
+    return 0n;
+  }
+}
+
 export async function fetchAllJobs(): Promise<JobRecord[]> {
   const contract = getJobReadContract();
   try {
@@ -584,6 +879,16 @@ export async function fetchAllJobs(): Promise<JobRecord[]> {
       }
     }
     return jobs.sort((a, b) => b.jobId - a.jobId);
+  }
+}
+
+export async function fetchTotalJobsCreated(): Promise<number> {
+  try {
+    const contract = getOptionalJobReadContract();
+    return Number(await contract.nextJobId());
+  } catch {
+    const jobs = await fetchAllJobs();
+    return jobs.length;
   }
 }
 
@@ -964,6 +1269,73 @@ export async function fetchCredentialsForAgent(agentAddress: string): Promise<Cr
   return credentials.sort((a, b) => b.issuedAt - a.issuedAt);
 }
 
+export async function fetchRegistryCredentialStatsApprox(sampleSize = 500): Promise<{
+  totalCredentials: number;
+  uniqueWalletsApprox: number;
+}> {
+  const registry = getRegistryReadContract();
+  const totalCredentials = Number(await registry.totalCredentials());
+  if (totalCredentials <= 0) {
+    return { totalCredentials: 0, uniqueWalletsApprox: 0 };
+  }
+
+  const wallets = new Set<string>();
+  const start = Math.max(1, totalCredentials - sampleSize + 1);
+  for (let credentialId = totalCredentials; credentialId >= start; credentialId--) {
+    try {
+      const credential = parseCredential(await registry.getCredential(credentialId));
+      if (credential.agent && credential.agent !== ZERO_ADDRESS) {
+        wallets.add(credential.agent.toLowerCase());
+      }
+    } catch {
+      // Skip sparse credential IDs.
+    }
+  }
+
+  return {
+    totalCredentials,
+    uniqueWalletsApprox: wallets.size
+  };
+}
+
+export async function fetchArcIdentityForWallet(walletAddress: string): Promise<{
+  tokenId: number;
+  tokenURI: string;
+} | null> {
+  if (!walletAddress || walletAddress === ZERO_ADDRESS) return null;
+  const identity = new ethers.Contract(ARC_IDENTITY_REGISTRY, ARC_IDENTITY_ABI, getReadProvider());
+  try {
+    const balance = Number(await identity.balanceOf(walletAddress));
+    if (balance <= 0) return null;
+    try {
+      const tokenId = Number(await identity.tokenOfOwnerByIndex(walletAddress, 0));
+      const tokenURI = toString(await identity.tokenURI(tokenId));
+      return { tokenId, tokenURI };
+    } catch {
+      try {
+        const totalSupply = Number(await identity.totalSupply());
+        const maxChecks = Math.min(totalSupply, 5000);
+        for (let tokenId = 1; tokenId <= maxChecks; tokenId++) {
+          try {
+            const owner = toString(await identity.ownerOf(tokenId));
+            if (owner.toLowerCase() === walletAddress.toLowerCase()) {
+              const tokenURI = toString(await identity.tokenURI(tokenId));
+              return { tokenId, tokenURI };
+            }
+          } catch {
+            // Skip invalid token IDs.
+          }
+        }
+      } catch {
+        return null;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export async function fetchCredentialMetadata(
   credential: CredentialRecord
 ): Promise<Record<string, string | number> | undefined> {
@@ -1250,6 +1622,21 @@ export async function txApproveUsdcIfNeeded(
   }
   const tx = (await usdc.approve(spender, amount)) as ethers.TransactionResponse;
   return tx;
+}
+
+export async function txApproveUsdc(
+  browserProvider: ethers.BrowserProvider,
+  spender: string,
+  amount: bigint
+) {
+  if (!resolvedUsdcAddress || resolvedUsdcAddress === ZERO_ADDRESS) {
+    throw new Error("USDC contract is not configured.");
+  }
+  const signer = await browserProvider.getSigner();
+  const usdc = deployment.contracts.usdc
+    ? getContractFromConfig(deployment.contracts.usdc, signer)
+    : new ethers.Contract(resolvedUsdcAddress, ERC20_MIN_ABI, signer);
+  return (await usdc.approve(spender, amount)) as ethers.TransactionResponse;
 }
 
 export async function isApprovedSourceOperator(sourceType: string, operator: string): Promise<boolean> {

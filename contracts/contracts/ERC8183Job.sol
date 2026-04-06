@@ -202,7 +202,8 @@ contract ERC8183Job is ICredentialSource {
         uint256 maxApprovals
     ) external returns (uint256 createdJobId) {
         require(
-            ISourceRegistry(sourceRegistry).isApprovedFor("job", msg.sender),
+            ISourceRegistry(sourceRegistry).isApprovedFor("job", msg.sender) ||
+                ISourceRegistry(sourceRegistry).isApprovedFor("task", msg.sender),
             "source operator not approved"
         );
         require(bytes(title).length > 0, "title required");

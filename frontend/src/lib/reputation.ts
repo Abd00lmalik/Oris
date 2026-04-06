@@ -1,4 +1,4 @@
-import { EnrichedCredential } from "@/lib/contracts";
+﻿import { EnrichedCredential } from "@/lib/contracts";
 
 export const SOURCE_WEIGHTS = {
   job: 100,
@@ -16,6 +16,15 @@ export const SOURCE_WEIGHTS = {
   peer_attestation: 60,
   dao_governance: 90
 } as const;
+
+const TIER_TABLE = [
+  { name: "Surveyor", min: 0, max: 99 },
+  { name: "Draftsman", min: 100, max: 299 },
+  { name: "Architect", min: 300, max: 599 },
+  { name: "Master Builder", min: 600, max: 999 },
+  { name: "Keystone", min: 1000, max: 1499 },
+  { name: "Arc Founder", min: 1500, max: 2000 }
+] as const;
 
 export function calculateWeightedScore(credentials: EnrichedCredential[]): number {
   const total = credentials.reduce((sum, credential) => sum + (credential.weight ?? 100), 0);
@@ -40,44 +49,34 @@ export function getReputationTier(score: number): string {
   return "Surveyor";
 }
 
-export function getSourceColor(sourceType: string): string {
-  const colors: Record<string, string> = {
-    job: "#00FFC8",
-    github: "#8B5CF6",
-    agent_task: "#3B82F6",
-    community: "#F59E0B",
-    peer_attestation: "#EC4899",
-    dao_governance: "#6366F1"
-  };
-  return colors[normalizeSourceBucket(sourceType)] ?? "#4A7FA5";
+export function getNextTier(score: number): string {
+  for (let i = 0; i < TIER_TABLE.length; i++) {
+    const current = TIER_TABLE[i];
+    if (score <= current.max || i === TIER_TABLE.length - 1) {
+      const next = TIER_TABLE[Math.min(i + 1, TIER_TABLE.length - 1)];
+      return next.name;
+    }
+  }
+  return "Arc Founder";
 }
 
-export function getSourceLabel(sourceType: string): string {
-  const labels: Record<string, string> = {
-    job: "Job",
-    github: "GitHub",
-    agent_task: "Agent Task",
-    community: "Community",
-    peer_attestation: "Peer Attestation",
-    dao_governance: "DAO Governance"
-  };
-  return labels[normalizeSourceBucket(sourceType)] ?? sourceType;
+export function getPointsToNextTier(score: number): number {
+  for (let i = 0; i < TIER_TABLE.length; i++) {
+    const current = TIER_TABLE[i];
+    if (score <= current.max || i === TIER_TABLE.length - 1) {
+      const next = TIER_TABLE[Math.min(i + 1, TIER_TABLE.length - 1)];
+      if (next.name === current.name) return 0;
+      return Math.max(0, next.min - score);
+    }
+  }
+  return 0;
 }
 
 export function getTierProgress(score: number) {
-  const tiers = [
-    { name: "Surveyor", min: 0, max: 99 },
-    { name: "Draftsman", min: 100, max: 299 },
-    { name: "Architect", min: 300, max: 599 },
-    { name: "Master Builder", min: 600, max: 999 },
-    { name: "Keystone", min: 1000, max: 1499 },
-    { name: "Arc Founder", min: 1500, max: 2000 }
-  ] as const;
-
-  for (let i = 0; i < tiers.length; i++) {
-    const tier = tiers[i];
-    if (score <= tier.max || i === tiers.length - 1) {
-      const nextTier = tiers[Math.min(i + 1, tiers.length - 1)];
+  for (let i = 0; i < TIER_TABLE.length; i++) {
+    const tier = TIER_TABLE[i];
+    if (score <= tier.max || i === TIER_TABLE.length - 1) {
+      const nextTier = TIER_TABLE[Math.min(i + 1, TIER_TABLE.length - 1)];
       const range = Math.max(1, tier.max - tier.min + 1);
       const progress = Math.min(100, Math.max(0, ((score - tier.min) / range) * 100));
       const remaining = nextTier.name === tier.name ? 0 : Math.max(0, nextTier.min - score);
@@ -96,6 +95,30 @@ export function getTierProgress(score: number) {
     remaining: 0,
     nextTier: "Arc Founder"
   };
+}
+
+export function getSourceColor(sourceType: string): string {
+  const colors: Record<string, string> = {
+    job: "#00FFC8",
+    github: "#8B5CF6",
+    agent_task: "#3B82F6",
+    community: "#F59E0B",
+    peer_attestation: "#EC4899",
+    dao_governance: "#6366F1"
+  };
+  return colors[normalizeSourceBucket(sourceType)] ?? "#4A7FA5";
+}
+
+export function getSourceLabel(sourceType: string): string {
+  const labels: Record<string, string> = {
+    job: "Tasks",
+    github: "GitHub",
+    agent_task: "Agent Task",
+    community: "Community",
+    peer_attestation: "Peer Attestation",
+    dao_governance: "DAO Governance"
+  };
+  return labels[normalizeSourceBucket(sourceType)] ?? sourceType;
 }
 
 function normalizeSourceBucket(sourceType: string) {

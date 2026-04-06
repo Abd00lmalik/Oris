@@ -1,14 +1,17 @@
 {
-  "network": "arcTestnet",
+  "network": "arc-testnet",
   "chainId": 5042002,
   "rpcUrl": "https://rpc.testnet.arc.network",
+  "usdcAddress": "0x3600000000000000000000000000000000000000",
+  "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
+  "platformFeeBps": 1000,
   "platform": {
     "treasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
     "feeBps": 1000
   },
   "contracts": {
     "sourceRegistry": {
-      "address": "0x06d27bF057caA9e18658969c8d2c12ce4171700D",
+      "address": "0xa9EB89c8CedD3181c8da64517910A7e810bE7e30",
       "abi": [
         {
           "inputs": [],
@@ -150,6 +153,63 @@
               "internalType": "string",
               "name": "sourceType",
               "type": "string"
+            }
+          ],
+          "name": "getApplicants",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "",
+              "type": "address[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "sourceType",
+              "type": "string"
+            }
+          ],
+          "name": "getApprovedOperators",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "approvedList",
+              "type": "address[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "sourceType",
+              "type": "string"
+            }
+          ],
+          "name": "getPendingApplicants",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "pendingApplicants",
+              "type": "address[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "sourceType",
+              "type": "string"
             },
             {
               "internalType": "address",
@@ -229,6 +289,38 @@
           "type": "function"
         },
         {
+          "inputs": [],
+          "name": "totalApproved",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "count",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "sourceType",
+              "type": "string"
+            }
+          ],
+          "name": "totalApprovedForSource",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
           "inputs": [
             {
               "internalType": "address",
@@ -244,7 +336,7 @@
       ]
     },
     "validationRegistry": {
-      "address": "0x94c93F66f596c4e2a4318CC7997AE086F8FB960E",
+      "address": "0x225137986461614180BCcf726A7a833bE4ebb2b6",
       "abi": [
         {
           "inputs": [],
@@ -509,6 +601,25 @@
               "internalType": "address",
               "name": "agent",
               "type": "address"
+            }
+          ],
+          "name": "getWeightedScore",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
             },
             {
               "internalType": "uint256",
@@ -619,7 +730,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0xcB0501250D0eacB3777AaFD3a2Af7230f98DF65b",
+      "address": "0xD3E0c351a5e0dC7B0C22e9Ec4286634e12DFF361",
       "abi": [
         {
           "inputs": [
@@ -1113,7 +1224,7 @@
       ]
     },
     "job": {
-      "address": "0x7745FdB11B007588A7C758360ED6B05910a2BF94",
+      "address": "0x2A017Eff99681C14BBAF17237A1C071C5E655c55",
       "abi": [
         {
           "inputs": [
@@ -1268,6 +1379,25 @@
           "anonymous": false,
           "inputs": [
             {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "minJobStake",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "bool",
+              "name": "requireCredentialToPost",
+              "type": "bool"
+            }
+          ],
+          "name": "JobPostingRulesUpdated",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
               "indexed": true,
               "internalType": "uint256",
               "name": "jobId",
@@ -1378,6 +1508,12 @@
               "internalType": "address",
               "name": "agent",
               "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "allocatedReward",
+              "type": "uint256"
             }
           ],
           "name": "SubmissionApproved",
@@ -1409,6 +1545,19 @@
           "type": "event"
         },
         {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "validationRegistry",
+              "type": "address"
+            }
+          ],
+          "name": "ValidationRegistryUpdated",
+          "type": "event"
+        },
+        {
           "inputs": [],
           "name": "BASIS_POINTS",
           "outputs": [
@@ -1424,19 +1573,6 @@
         {
           "inputs": [],
           "name": "CREDENTIAL_COOLDOWN",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "MAX_APPROVALS_PER_JOB",
           "outputs": [
             {
               "internalType": "uint256",
@@ -1497,11 +1633,35 @@
               "internalType": "address",
               "name": "agent",
               "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "rewardAmount",
+              "type": "uint256"
             }
           ],
           "name": "approveSubmission",
           "outputs": [],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "approvedAgentCount",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -1543,6 +1703,11 @@
             {
               "internalType": "uint256",
               "name": "rewardUSDC",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxApprovals",
               "type": "uint256"
             }
           ],
@@ -1758,6 +1923,44 @@
         {
           "inputs": [
             {
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            }
+          ],
+          "name": "getJobsByAgent",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "client",
+              "type": "address"
+            }
+          ],
+          "name": "getJobsByClient",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
               "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
@@ -1820,6 +2023,11 @@
                   "internalType": "bool",
                   "name": "credentialClaimed",
                   "type": "bool"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "allocatedReward",
+                  "type": "uint256"
                 }
               ],
               "internalType": "struct ERC8183Job.Submission",
@@ -1871,11 +2079,45 @@
                   "internalType": "bool",
                   "name": "credentialClaimed",
                   "type": "bool"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "allocatedReward",
+                  "type": "uint256"
                 }
               ],
               "internalType": "struct ERC8183Job.SubmissionView[]",
               "name": "allSubmissions",
               "type": "tuple[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getSuspicionScore",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "score",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "reason",
+              "type": "string"
             }
           ],
           "stateMutability": "view",
@@ -1934,12 +2176,101 @@
         {
           "inputs": [
             {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "jobEscrow",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "jobsCompletedByWallet",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "jobsCreatedByWallet",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
               "internalType": "address",
               "name": "",
               "type": "address"
             }
           ],
           "name": "lastCredentialClaim",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "maxApprovalsForJob",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "minJobStake",
           "outputs": [
             {
               "internalType": "uint256",
@@ -2039,6 +2370,32 @@
           "type": "function"
         },
         {
+          "inputs": [],
+          "name": "requireCredentialToPost",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "setMinJobStake",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
           "inputs": [
             {
               "internalType": "address",
@@ -2052,6 +2409,32 @@
             }
           ],
           "name": "setPlatformConfig",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "bool",
+              "name": "required",
+              "type": "bool"
+            }
+          ],
+          "name": "setRequireCredentialToPost",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "validationRegistryAddress",
+              "type": "address"
+            }
+          ],
+          "name": "setValidationRegistry",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -2138,11 +2521,24 @@
           ],
           "stateMutability": "view",
           "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "validationRegistry",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
         }
       ]
     },
     "githubSource": {
-      "address": "0x54032197b0574dc2cb1a3495ED35C81B0702B4c1",
+      "address": "0xf3DFD321390dd14AabC83E8Eb7996AE09e5DF74F",
       "abi": [
         {
           "inputs": [
@@ -2693,7 +3089,7 @@
       ]
     },
     "communitySource": {
-      "address": "0x7c51f2FdF5Af06580531c5539B4D5D95ee993Ec0",
+      "address": "0xdF057F832581Ae4e736669a5998ac33b6b590C2E",
       "abi": [
         {
           "inputs": [
@@ -2710,6 +3106,75 @@
           ],
           "stateMutability": "nonpayable",
           "type": "constructor"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "reviewer",
+              "type": "address"
+            }
+          ],
+          "name": "ApplicationApproved",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "reviewer",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "note",
+              "type": "string"
+            }
+          ],
+          "name": "ApplicationRejected",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "id",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "applicant",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "platform",
+              "type": "string"
+            }
+          ],
+          "name": "ApplicationSubmitted",
+          "type": "event"
         },
         {
           "anonymous": false,
@@ -2786,8 +3251,78 @@
           "type": "event"
         },
         {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "moderator",
+              "type": "address"
+            }
+          ],
+          "name": "ModeratorDeactivated",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "moderator",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "role",
+              "type": "string"
+            }
+          ],
+          "name": "ModeratorRegistered",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "previousOwner",
+              "type": "address"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "newOwner",
+              "type": "address"
+            }
+          ],
+          "name": "OwnershipTransferred",
+          "type": "event"
+        },
+        {
           "inputs": [],
           "name": "CREDENTIAL_COOLDOWN",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "activeModeratorCount",
           "outputs": [
             {
               "internalType": "uint256",
@@ -2879,6 +3414,118 @@
         {
           "inputs": [
             {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "applications",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "applicationId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "applicant",
+              "type": "address"
+            },
+            {
+              "internalType": "string",
+              "name": "activityDescription",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "evidenceLink",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "platform",
+              "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "submittedAt",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum CommunitySource.ApplicationStatus",
+              "name": "status",
+              "type": "uint8"
+            },
+            {
+              "internalType": "address",
+              "name": "reviewedBy",
+              "type": "address"
+            },
+            {
+              "internalType": "string",
+              "name": "reviewNote",
+              "type": "string"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "applicationsByApplicant",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "applicationId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum CommunitySource.CommunityActivityType",
+              "name": "activityTypeValue",
+              "type": "uint8"
+            },
+            {
+              "internalType": "string",
+              "name": "reviewNote",
+              "type": "string"
+            }
+          ],
+          "name": "approveApplication",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "activityId",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
               "internalType": "address",
               "name": "recipient",
               "type": "address"
@@ -2940,6 +3587,19 @@
             }
           ],
           "stateMutability": "pure",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "moderator",
+              "type": "address"
+            }
+          ],
+          "name": "deactivateModerator",
+          "outputs": [],
+          "stateMutability": "nonpayable",
           "type": "function"
         },
         {
@@ -3025,6 +3685,117 @@
         {
           "inputs": [
             {
+              "internalType": "uint256",
+              "name": "applicationId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getApplication",
+          "outputs": [
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "applicationId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "applicant",
+                  "type": "address"
+                },
+                {
+                  "internalType": "string",
+                  "name": "activityDescription",
+                  "type": "string"
+                },
+                {
+                  "internalType": "string",
+                  "name": "evidenceLink",
+                  "type": "string"
+                },
+                {
+                  "internalType": "string",
+                  "name": "platform",
+                  "type": "string"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "submittedAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "enum CommunitySource.ApplicationStatus",
+                  "name": "status",
+                  "type": "uint8"
+                },
+                {
+                  "internalType": "address",
+                  "name": "reviewedBy",
+                  "type": "address"
+                },
+                {
+                  "internalType": "string",
+                  "name": "reviewNote",
+                  "type": "string"
+                }
+              ],
+              "internalType": "struct CommunitySource.CommunityApplication",
+              "name": "",
+              "type": "tuple"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "applicant",
+              "type": "address"
+            }
+          ],
+          "name": "getApplicationsByApplicant",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "getModerators",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "",
+              "type": "address[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "getPendingApplications",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
               "internalType": "enum CommunitySource.CommunityActivityType",
               "name": "activityTypeValue",
               "type": "uint8"
@@ -3071,6 +3842,25 @@
           "inputs": [
             {
               "internalType": "address",
+              "name": "moderator",
+              "type": "address"
+            }
+          ],
+          "name": "isActiveModerator",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
               "name": "",
               "type": "address"
             }
@@ -3087,6 +3877,40 @@
           "type": "function"
         },
         {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "moderatorProfiles",
+          "outputs": [
+            {
+              "internalType": "string",
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "role",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "profileURI",
+              "type": "string"
+            },
+            {
+              "internalType": "bool",
+              "name": "active",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
           "inputs": [],
           "name": "nextActivityId",
           "outputs": [
@@ -3097,6 +3921,78 @@
             }
           ],
           "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "nextApplicationId",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "owner",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "moderator",
+              "type": "address"
+            },
+            {
+              "internalType": "string",
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "role",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "profileURI",
+              "type": "string"
+            }
+          ],
+          "name": "registerModerator",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "applicationId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "reviewNote",
+              "type": "string"
+            }
+          ],
+          "name": "rejectApplication",
+          "outputs": [],
+          "stateMutability": "nonpayable",
           "type": "function"
         },
         {
@@ -3137,11 +4033,53 @@
           ],
           "stateMutability": "pure",
           "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "activityDescription",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "evidenceLink",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "platform",
+              "type": "string"
+            }
+          ],
+          "name": "submitApplication",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "applicationId",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "newOwner",
+              "type": "address"
+            }
+          ],
+          "name": "transferOwnership",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
         }
       ]
     },
     "agentTaskSource": {
-      "address": "0x3442cb98De01Eb96cc45cAeAF43e939D58c0d1D7",
+      "address": "0xC0285fB69b9ED3a48c641096C6D90B82C8E7Da9d",
       "abi": [
         {
           "inputs": [
@@ -3474,6 +4412,44 @@
             }
           ],
           "stateMutability": "pure",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "agent",
+              "type": "address"
+            }
+          ],
+          "name": "getTasksByAgent",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "poster",
+              "type": "address"
+            }
+          ],
+          "name": "getTasksByPoster",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -3848,7 +4824,7 @@
       ]
     },
     "peerAttestationSource": {
-      "address": "0xb2B97771519fD7dA591536e559a87CD754Bc9E30",
+      "address": "0x1c3D11Caf8fB635d334CF59162C58053C432c8a9",
       "abi": [
         {
           "inputs": [
@@ -4126,6 +5102,30 @@
           "type": "function"
         },
         {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "hasAttestedBefore",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
           "inputs": [],
           "name": "hasEscrow",
           "outputs": [
@@ -4244,7 +5244,7 @@
       ]
     },
     "daoGovernanceSource": {
-      "address": "0x4E0C9d4E0B22c33D509973C806c7ae11c0519B64",
+      "address": "0xB9be8650F008266AecDBc828E44b04D8994eaf2D",
       "abi": [
         {
           "inputs": [
@@ -4520,6 +5520,19 @@
             }
           ],
           "stateMutability": "pure",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "getGovernors",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "",
+              "type": "address[]"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {

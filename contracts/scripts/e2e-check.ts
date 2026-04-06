@@ -4,6 +4,10 @@ import contracts from "../../frontend/src/lib/generated/contracts.json";
 async function main() {
   console.log("\n=== Arc Testnet E2E Verification ===\n");
   const c = contracts.contracts;
+  const jobAddress = c.jobContract?.address ?? c.job?.address;
+  if (!jobAddress) {
+    throw new Error("Missing job contract address in generated contracts.json");
+  }
 
   const registry = await ethers.getContractAt(
     ["function totalCredentials() view returns (uint256)"],
@@ -17,7 +21,7 @@ async function main() {
     ["function usdc() view returns (address)",
      "function platformTreasury() view returns (address)",
      "function platformFeeBps() view returns (uint256)"],
-    c.jobContract.address
+    jobAddress
   );
   const hook = await ethers.getContractAt(
     ["function registeredSourceContracts(address) view returns (bool)"],
@@ -45,14 +49,14 @@ async function main() {
       (await agentTask.usdc()).toLowerCase() === 
       "0x3600000000000000000000000000000000000000"],
     ["7. Job registered in hook", 
-      await hook.registeredSourceContracts(c.jobContract.address)],
+      await hook.registeredSourceContracts(jobAddress)],
     ["8. AgentTask registered in hook", 
       await hook.registeredSourceContracts(c.agentTaskSource.address)],
   ];
 
   let passed = 0;
   for (const [label, result] of checks) {
-    console.log(`${result ? "?" : "?"} ${label}`);
+    console.log(`${result ? "[PASS]" : "[FAIL]"} ${label}`);
     if (result) passed++;
   }
 

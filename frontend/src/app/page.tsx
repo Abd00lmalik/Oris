@@ -9,9 +9,11 @@ import {
   CredentialRecord,
   fetchAllJobs,
   fetchCredentialsForAgent,
+  fetchMaxApprovalsForJob,
   fetchJobsByAgent,
   fetchJobsCreatedCount,
   fetchOpenAgentTasks,
+  fetchRegistryCredentialStatsApprox,
   fetchSubmissionForAgent,
   formatTimestamp,
   formatUsdc,
@@ -26,6 +28,7 @@ import {
   SubmissionRecord
 } from "@/lib/contracts";
 import { subscribeToNewJobs, subscribeToOpenTasks } from "@/lib/events";
+import { calculateWeightedScore, getReputationTier } from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
 
 type JobViewerState = {
@@ -54,13 +57,18 @@ export default function HomePage() {
   const [recentCredentials, setRecentCredentials] = useState<CredentialRecord[]>([]);
   const [viewerStateByJob, setViewerStateByJob] = useState<Record<number, JobViewerState>>({});
   const [creatorJobCount, setCreatorJobCount] = useState<Record<string, number>>({});
+  const [maxApprovalsByJob, setMaxApprovalsByJob] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showWelcomeBanner, setShowWelcomeBanner] = useState(false);
+  const [myCredentialCount, setMyCredentialCount] = useState(0);
+  const [myScore, setMyScore] = useState(0);
+  const [myTier, setMyTier] = useState("Surveyor");
   const [stats, setStats] = useState({
-    totalCredentials: 0,
-    totalUsdcPaidOut: "0",
-    totalWalletsVerified: 0
+    totalCredentials: "—",
+    openTasks: "—",
+    totalEscrowUsdc: "—",
+    verifiedWallets: "—"
   });
 
   const configured = useMemo(() => isContractsConfigured(), []);
@@ -75,6 +83,11 @@ export default function HomePage() {
       const visibleJobs = jobRows.slice(0, 12);
       setJobs(visibleJobs);
       setTasks(taskRows.filter((task) => task.status === 0).slice(0, 8));
+
+      const approvalEntries = await Promise.all(
+        visibleJobs.map(async (job) => [job.jobId, await fetchMaxApprovalsForJob(job.jobId)] as const)
+      );
+      setMaxApprovalsByJob(Object.fromEntries(approvalEntries));
 
       const uniqueCreators = Array.from(new Set(visibleJobs.map((job) => job.client.toLowerCase())));
       const creatorCounts = await Promise.all(
@@ -102,28 +115,51 @@ export default function HomePage() {
         setViewerStateByJob(Object.fromEntries(viewerEntries));
       } else {
         setViewerStateByJob({});
+        setMyCredentialCount(0);
+        setMyScore(0);
+        setMyTier("Surveyor");
+      }
+
+      if (account) {
+        try {
+          const myCredentials = await fetchCredentialsForAgent(account);
+          const weighted = calculateWeightedScore(myCredentials);
+          setMyCredentialCount(myCredentials.length);
+          setMyScore(weighted);
+          setMyTier(getReputationTier(weighted));
+        } catch {
+          setMyCredentialCount(0);
+          setMyScore(0);
+          setMyTier("Surveyor");
+        }
       }
 
       const registry = getRegistryReadContract();
       const totalCredentials = Number(await registry.totalCredentials());
       const credentials: CredentialRecord[] = [];
-      const wallets = new Set<string>();
       const start = Math.max(1, totalCredentials - 9);
       for (let credentialId = totalCredentials; credentialId >= start; credentialId--) {
         const credential = parseCredential(await registry.getCredential(credentialId));
         if (credential.agent !== ethers.ZeroAddress) {
           credentials.push(credential);
-          wallets.add(credential.agent.toLowerCase());
         }
       }
       setRecentCredentials(credentials);
 
-      const jobPayout = jobRows.reduce((sum, job) => sum + BigInt(job.paidOutUSDC || "0"), 0n);
-      const taskPayout = taskRows.reduce((sum, task) => sum + BigInt(task.rewardClaimed ? task.rewardUSDC : "0"), 0n);
+      const escrowTotal = jobRows.reduce((sum, job) => {
+        const pool = BigInt(job.rewardUSDC || "0");
+        const paid = BigInt(job.paidOutUSDC || "0");
+        if (pool <= paid) return sum;
+        return sum + (pool - paid);
+      }, 0n);
+
+      const registryStats = await fetchRegistryCredentialStatsApprox(500);
+      const openTaskCount = jobRows.filter((job) => job.status === 0).length;
       setStats({
-        totalCredentials,
-        totalUsdcPaidOut: formatUsdc(jobPayout + taskPayout),
-        totalWalletsVerified: wallets.size
+        totalCredentials: String(registryStats.totalCredentials),
+        openTasks: String(openTaskCount),
+        totalEscrowUsdc: formatUsdc(escrowTotal),
+        verifiedWallets: String(registryStats.uniqueWalletsApprox)
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load activity feed.");
@@ -208,38 +244,45 @@ export default function HomePage() {
 
       {showWelcomeBanner ? (
         <div className="archon-card border border-[#00D1B2]/30 bg-[#00D1B2]/10 p-4">
-          <p className="text-sm font-semibold text-[#EAEAF0]">Welcome to Archon - Start Building Your Reputation</p>
+          <p className="text-sm font-semibold text-[#EAEAF0]">Welcome to CredentialHook</p>
+          <p className="mt-1 text-xs text-[#C9D0DB]">
+            Build verifiable on-chain reputation. Every credential you earn is permanent and publicly verifiable.
+          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link href="/" className="archon-button-secondary px-3 py-2 text-xs">
               Browse Tasks
             </Link>
-            <Link href="/my-work" className="archon-button-secondary px-3 py-2 text-xs">
-              Submit Task Deliverables
-            </Link>
-            <Link href="/attest" className="archon-button-secondary px-3 py-2 text-xs">
-              Get Vouched By Peers
+            <Link href="/earn" className="archon-button-secondary px-3 py-2 text-xs">
+              Learn How It Works
             </Link>
             <button type="button" onClick={dismissWelcome} className="archon-button-primary px-3 py-2 text-xs">
-              Dismiss - do not show again
+              Dismiss
             </button>
           </div>
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="archon-card p-4">
-          <p className="text-xs uppercase tracking-wide text-[#9CA3AF]">Credentials Minted</p>
-          <p className="mt-2 text-2xl font-semibold text-[#EAEAF0]">{stats.totalCredentials}</p>
-        </div>
-        <div className="archon-card p-4">
-          <p className="text-xs uppercase tracking-wide text-[#9CA3AF]">USDC Paid Out</p>
-          <p className="mt-2 text-2xl font-semibold text-[#EAEAF0]">{stats.totalUsdcPaidOut}</p>
-        </div>
-        <div className="archon-card p-4">
-          <p className="text-xs uppercase tracking-wide text-[#9CA3AF]">Wallets Verified</p>
-          <p className="mt-2 text-2xl font-semibold text-[#EAEAF0]">{stats.totalWalletsVerified}</p>
-        </div>
+      <div className="archon-card p-4 text-sm text-[#9CA3AF]">
+        <span className="text-[#EAEAF0]">{stats.totalCredentials}</span> Credentials Minted ·{" "}
+        <span className="text-[#EAEAF0]">{stats.openTasks}</span> Open Tasks ·{" "}
+        <span className="text-[#EAEAF0]">{stats.totalEscrowUsdc}</span> USDC in Escrow ·{" "}
+        <span className="text-[#EAEAF0]">{stats.verifiedWallets}</span> Verified Agents
       </div>
+
+      {account ? (
+        <div className="archon-card p-4 text-sm text-[#9CA3AF]">
+          Your score: <span className="font-semibold text-[#EAEAF0]">{myScore} pts</span>{" "}
+          <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-[#EAEAF0]">{myTier}</span> ·{" "}
+          <span className="font-semibold text-[#EAEAF0]">{myCredentialCount}</span> credentials ·{" "}
+          <Link href="/profile" className="text-[#8FD9FF] underline underline-offset-4">
+            View Profile
+          </Link>{" "}
+          ·{" "}
+          <Link href="/my-work" className="text-[#8FD9FF] underline underline-offset-4">
+            My Work
+          </Link>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>
@@ -325,7 +368,13 @@ export default function HomePage() {
                 <p className="mt-3 line-clamp-3 text-sm text-[#9CA3AF]">{job.description}</p>
 
                 <div className="mt-4 space-y-1 text-xs text-[#9CA3AF]">
-                  <p>Reward Pool: {formatUsdc(job.rewardUSDC)} USDC</p>
+                  <p className="text-sm font-semibold text-[#EAEAF0]">
+                    {BigInt(job.rewardUSDC || "0") > 0n
+                      ? `${formatUsdc(job.rewardUSDC)} USDC pool · up to ${
+                          maxApprovalsByJob[job.jobId] ?? 1
+                        } winners`
+                      : "Credential only"}
+                  </p>
                   <p>Paid Out: {formatUsdc(job.paidOutUSDC)} USDC</p>
                   <p>Deadline: {formatTimestamp(job.deadline)}</p>
                   <p>Creator: {creatorCount} jobs posted</p>
