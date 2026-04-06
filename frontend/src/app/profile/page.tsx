@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CredentialCard } from "@/components/credential-card";
 import { generateDID } from "@/lib/did";
@@ -7,6 +8,7 @@ import { subscribeToCredentials } from "@/lib/events";
 import {
   CredentialRecord,
   expectedChainId,
+  fetchArcIdentityForWallet,
   fetchCredentialsForAgent,
   getReadProvider,
   getSourceLabelForDisplay,
@@ -14,17 +16,18 @@ import {
 } from "@/lib/contracts";
 import {
   calculateWeightedScore,
+  getNextTier,
+  getPointsToNextTier,
   getReputationTier,
   getScoreBreakdown,
   getSourceColor,
-  getSourceLabel,
-  getTierProgress
+  getSourceLabel
 } from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
 
 const FILTERS = [
   { key: "all", label: "All" },
-  { key: "job", label: "Jobs" },
+  { key: "job", label: "Tasks" },
   { key: "github", label: "GitHub" },
   { key: "agent_task", label: "Agent Tasks" },
   { key: "community", label: "Community" },
@@ -46,6 +49,7 @@ export default function ProfilePage() {
   const [error, setError] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [activeFilter, setActiveFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
+  const [arcIdentity, setArcIdentity] = useState<{ tokenId: number; tokenURI: string } | null>(null);
 
   const loadCredentials = useCallback(async () => {
     if (!account) {
@@ -90,13 +94,46 @@ export default function ProfilePage() {
   const did = account ? generateDID(account, profileChainId) : "";
   const score = useMemo(() => calculateWeightedScore(credentials), [credentials]);
   const tier = useMemo(() => getReputationTier(score), [score]);
-  const tierProgress = useMemo(() => getTierProgress(score), [score]);
+  const nextTier = useMemo(() => getNextTier(score), [score]);
+  const pointsToNextTier = useMemo(() => getPointsToNextTier(score), [score]);
   const scoreBreakdown = useMemo(() => getScoreBreakdown(credentials), [credentials]);
+  const tierProgressPercent = useMemo(() => {
+    if (pointsToNextTier <= 0) return 100;
+    const progress = (1 - pointsToNextTier / Math.max(score + pointsToNextTier, 1)) * 100;
+    return Math.min(100, Math.max(0, progress));
+  }, [pointsToNextTier, score]);
+  const scoreBreakdownText = useMemo(() => {
+    const entries = Object.entries(scoreBreakdown);
+    if (entries.length === 0) return "No source breakdown yet.";
+    return entries.map(([sourceType, value]) => `${getSourceLabel(sourceType)}: ${value} pts`).join(" · ");
+  }, [scoreBreakdown]);
 
   const filteredCredentials = useMemo(() => {
     if (activeFilter === "all") return credentials;
     return credentials.filter((credential) => normalizeSource(credential.sourceType) === activeFilter);
   }, [activeFilter, credentials]);
+
+  useEffect(() => {
+    let active = true;
+    const loadIdentity = async () => {
+      if (!account) {
+        setArcIdentity(null);
+        return;
+      }
+      try {
+        const identity = await fetchArcIdentityForWallet(account);
+        if (!active) return;
+        setArcIdentity(identity);
+      } catch {
+        if (!active) return;
+        setArcIdentity(null);
+      }
+    };
+    void loadIdentity();
+    return () => {
+      active = false;
+    };
+  }, [account]);
 
   const copyToClipboard = async (value: string, label: string) => {
     try {
@@ -155,6 +192,24 @@ export default function ProfilePage() {
                 Your DID is a portable identifier that will follow your credentials across wallet rotations in future versions.
               </p>
             </div>
+            <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
+              <span className="font-medium text-[#EAEAF0]">Arc Agent ID:</span>{" "}
+              {arcIdentity ? (
+                <a
+                  href={`https://testnet.arcscan.app/token/0x8004A818BFB912233c491871b3d84c89A494BD9e?a=${arcIdentity.tokenId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#8FD9FF] underline underline-offset-4"
+                >
+                  #{arcIdentity.tokenId}
+                </a>
+              ) : (
+                <span className="text-[#9CA3AF]">Not registered - register when you launch your agent</span>
+              )}
+              {arcIdentity?.tokenURI ? (
+                <p className="mt-1 break-all text-xs text-[#9CA3AF]">Metadata: {arcIdentity.tokenURI}</p>
+              ) : null}
+            </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -187,17 +242,24 @@ export default function ProfilePage() {
           </div>
           <div className="min-w-[220px] flex-1">
             <div className="mb-1 flex justify-between text-xs text-[#9CA3AF]">
-              <span>Progress to {tierProgress.nextTier}</span>
-              <span>{tierProgress.remaining} points left</span>
+              <span>
+                Current tier: <span className="text-[#EAEAF0]">{tier}</span>
+              </span>
+              <span className="text-[#808894]">Next: {nextTier}</span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-white/10">
               <div
                 className="h-full bg-[#00D1B2] transition-all duration-700"
-                style={{ width: `${Math.min(100, Math.max(0, tierProgress.progress))}%` }}
+                style={{ width: `${tierProgressPercent}%` }}
               />
             </div>
+            <p className="mt-1 text-xs text-[#9CA3AF]">
+              {pointsToNextTier > 0 ? `${pointsToNextTier} points to ${nextTier}` : "Top tier reached"}
+            </p>
           </div>
         </div>
+
+        <p className="mt-4 text-sm text-[#9CA3AF]">{scoreBreakdownText}</p>
 
         <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {Object.entries(scoreBreakdown).map(([sourceType, value]) => (
@@ -241,6 +303,21 @@ export default function ProfilePage() {
           <p className="mt-4 text-sm text-[#9CA3AF]">Connect your wallet to view credentials.</p>
         ) : loading ? (
           <p className="mt-4 text-sm text-[#9CA3AF]">Loading credentials...</p>
+        ) : credentials.length === 0 ? (
+          <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] p-4">
+            <p className="text-sm font-semibold text-[#EAEAF0]">Your reputation trail is empty. Here is how to start:</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <Link href="/" className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-[#9CA3AF] hover:border-[#00D1B2]/40">
+                Complete a Task {"->"} earn 100 pts
+              </Link>
+              <Link href="/governance" className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-[#9CA3AF] hover:border-[#00D1B2]/40">
+                Vote in a DAO {"->"} earn 90 pts
+              </Link>
+              <Link href="/community" className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-[#9CA3AF] hover:border-[#00D1B2]/40">
+                Contribute to community {"->"} earn 50-120 pts
+              </Link>
+            </div>
+          </div>
         ) : filteredCredentials.length === 0 ? (
           <p className="mt-4 text-sm text-[#9CA3AF]">No credentials for this filter yet.</p>
         ) : (

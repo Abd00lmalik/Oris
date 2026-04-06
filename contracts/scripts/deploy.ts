@@ -11,6 +11,9 @@ type DeploymentConfig = {
   network: string;
   chainId: number;
   rpcUrl: string;
+  usdcAddress: string;
+  platformTreasury: string;
+  platformFeeBps: number;
   platform: {
     treasury: string;
     feeBps: number;
@@ -29,7 +32,7 @@ type DeploymentConfig = {
   };
 };
 
-const SOURCE_TYPES = ["job", "github", "community", "agent_task"] as const;
+const SOURCE_TYPES = ["task", "job", "github", "community", "agent_task"] as const;
 
 function writeJson(filePath: string, payload: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -53,6 +56,8 @@ async function main() {
     network.name === "arcTestnet"
       ? process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"
       : "http://127.0.0.1:8545";
+  const seedOperator =
+    (process.env.SEED_OPERATOR ?? "false").toLowerCase() === "true";
 
   const platformFeeBps = Number(process.env.PLATFORM_FEE_BPS ?? "1000");
   if (Number.isNaN(platformFeeBps) || platformFeeBps < 0 || platformFeeBps > 2000) {
@@ -96,10 +101,14 @@ async function main() {
   const sourceRegistryAddress = await sourceRegistry.getAddress();
   console.log(`SourceRegistry: ${sourceRegistryAddress}`);
 
-  for (const sourceType of SOURCE_TYPES) {
-    await (await sourceRegistry.approveOperator(sourceType, deployer.address)).wait();
+  if (seedOperator) {
+    for (const sourceType of SOURCE_TYPES) {
+      await (await sourceRegistry.approveOperator(sourceType, deployer.address)).wait();
+    }
+    console.log("Approved deployer as source operator for task/job/github/community/agent_task.");
+  } else {
+    console.log("SEED_OPERATOR=false: skipped deployer source-operator approvals.");
   }
-  console.log("Approved deployer as source operator for job/github/community/agent_task.");
 
   const registry = await ethers.deployContract("ERC8004ValidationRegistry");
   await registry.waitForDeployment();
@@ -172,13 +181,28 @@ async function main() {
   }
   console.log("Registered all source contracts in CredentialHook.");
 
+  if (seedOperator) {
+    await (
+      await communitySource.registerModerator(
+        deployer.address,
+        "Platform Admin",
+        "CredentialHook Founder",
+        ""
+      )
+    ).wait();
+    console.log("Registered deployer as first community moderator.");
+  }
+
   await (await registry.authorizeIssuer(deployer.address, false)).wait();
   console.log("Revoked owner direct issuance in ValidationRegistry.");
 
   const deploymentConfig: DeploymentConfig = {
-    network: network.name,
+    network: network.name === "arcTestnet" ? "arc-testnet" : network.name,
     chainId,
     rpcUrl,
+    usdcAddress,
+    platformTreasury,
+    platformFeeBps,
     platform: {
       treasury: platformTreasury,
       feeBps: platformFeeBps

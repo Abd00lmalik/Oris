@@ -55,6 +55,7 @@ contract CommunitySource is ICredentialSource {
     address public owner;
     uint256 public nextActivityId;
     uint256 public nextApplicationId;
+    uint256 public activeModeratorCount;
     address public immutable hook;
     address public immutable sourceRegistry;
     mapping(uint256 => CommunityActivity) public activities;
@@ -137,6 +138,7 @@ contract CommunitySource is ICredentialSource {
         require(moderator != address(0), "invalid moderator");
         require(bytes(name).length > 0, "name required");
         require(bytes(role).length > 0, "role required");
+        bool existingActive = moderatorProfiles[moderator].active;
         require(
             ISourceRegistry(sourceRegistry).isApprovedFor("community", moderator),
             "moderator not approved in source registry"
@@ -148,6 +150,9 @@ contract CommunitySource is ICredentialSource {
             profileURI: profileURI,
             active: true
         });
+        if (existingActive == false) {
+            activeModeratorCount += 1;
+        }
 
         if (!moderatorKnown[moderator]) {
             moderatorKnown[moderator] = true;
@@ -159,7 +164,12 @@ contract CommunitySource is ICredentialSource {
 
     function deactivateModerator(address moderator) external onlyOwner {
         require(moderator != address(0), "invalid moderator");
-        moderatorProfiles[moderator].active = false;
+        if (moderatorProfiles[moderator].active) {
+            moderatorProfiles[moderator].active = false;
+            if (activeModeratorCount > 0) {
+                activeModeratorCount -= 1;
+            }
+        }
         emit ModeratorDeactivated(moderator);
     }
 

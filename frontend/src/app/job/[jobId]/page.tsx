@@ -6,8 +6,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   expectedChainId,
   fetchApprovedAgentCount,
+  fetchJobCredentialCooldownSeconds,
   fetchJob,
   fetchJobEscrow,
+  fetchLastJobCredentialClaim,
   fetchJobsCompletedCount,
   fetchJobsCreatedCount,
   fetchMaxApprovalsForJob,
@@ -79,6 +81,14 @@ function formatDraftValue(units: bigint | null) {
   return formatUsdc(units);
 }
 
+function formatRemainingDuration(seconds: number) {
+  if (seconds <= 0) return "0m";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${minutes}m`;
+}
+
 export default function JobDetailsPage() {
   const params = useParams<{ jobId: string }>();
   const { account, browserProvider, connect } = useWallet();
@@ -102,6 +112,8 @@ export default function JobDetailsPage() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [claimReadyAt, setClaimReadyAt] = useState<number | null>(null);
+  const [claimCountdown, setClaimCountdown] = useState(0);
 
   const jobId = useMemo(() => Number(params.jobId), [params.jobId]);
   const isConnected = Boolean(account);
@@ -138,6 +150,7 @@ export default function JobDetailsPage() {
   const myStatus = mySubmission?.status ?? 0;
   const canSubmit = isConnected && !isCreator && isAccepted && (mySubmission === null || myStatus === 3);
   const canClaim = isConnected && !isCreator && mySubmission?.status === 2 && !mySubmission.credentialClaimed;
+  const claimBlockedByCooldown = canClaim && claimCountdown > 0;
 
   const netForMyClaim = useMemo(() => {
     if (!mySubmission?.allocatedReward) return 0n;
@@ -185,7 +198,7 @@ export default function JobDetailsPage() {
       }
 
       if (account) {
-        const [accepted, submission] = await Promise.all([
+        const [accepted, submission, lastClaim, cooldownSeconds] = await Promise.all([
           (async () => {
             try {
               const readContract = getJobReadContract();
@@ -194,13 +207,18 @@ export default function JobDetailsPage() {
               return false;
             }
           })(),
-          fetchSubmissionForAgent(jobId, account)
+          fetchSubmissionForAgent(jobId, account),
+          fetchLastJobCredentialClaim(account),
+          fetchJobCredentialCooldownSeconds()
         ]);
         setIsAccepted(accepted);
         setMySubmission(submission);
+        const readyAt = Number(lastClaim) + cooldownSeconds;
+        setClaimReadyAt(readyAt > 0 ? readyAt : null);
       } else {
         setIsAccepted(false);
         setMySubmission(null);
+        setClaimReadyAt(null);
       }
 
       if (submissionRows.length > 0) {
@@ -227,6 +245,22 @@ export default function JobDetailsPage() {
   useEffect(() => {
     void loadJobData();
   }, [loadJobData]);
+
+  useEffect(() => {
+    if (!claimReadyAt) {
+      setClaimCountdown(0);
+      return () => undefined;
+    }
+
+    const update = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = Math.max(0, claimReadyAt - now);
+      setClaimCountdown(remaining);
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [claimReadyAt]);
 
   const withProvider = async () => {
     const provider = browserProvider ?? (await connect());
@@ -328,10 +362,14 @@ export default function JobDetailsPage() {
     setError("");
     setStatus("");
     const agentKey = agent.toLowerCase();
+    const reason = (rejectNotes[agentKey] ?? "").trim();
+    if (!reason) {
+      setError("Rejection note is required.");
+      return;
+    }
     setBusyAction(`reject-${agentKey}`);
     try {
       const provider = await withProvider();
-      const reason = (rejectNotes[agentKey] ?? "").trim() || "Submission rejected by reviewer.";
       const tx = await txRejectSubmission(provider, jobId, agent, reason);
       setStatus(`Reject transaction submitted: ${tx.hash}`);
       await tx.wait();
@@ -356,7 +394,19 @@ export default function JobDetailsPage() {
       setStatus("Reward and credential claimed successfully.");
       await loadJobData();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to claim reward and credential.");
+      const message = actionError instanceof Error ? actionError.message : "Failed to claim reward and credential.";
+      if (account && message.toLowerCase().includes("cooldown")) {
+        try {
+          const [lastClaim, cooldownSeconds] = await Promise.all([
+            fetchLastJobCredentialClaim(account),
+            fetchJobCredentialCooldownSeconds()
+          ]);
+          setClaimReadyAt(Number(lastClaim) + cooldownSeconds);
+        } catch {
+          // ignore cooldown lookup failures
+        }
+      }
+      setError(message);
     } finally {
       setBusyAction("");
     }
@@ -538,9 +588,18 @@ export default function JobDetailsPage() {
                             <p className="text-xs text-[#9CA3AF]">
                               Remaining pool: {formatUsdc(availableForThis)} USDC | Draft: {formatDraftValue(draft)} USDC
                             </p>
+                            <p className="text-xs text-[#9CA3AF]">
+                              Agent receives:{" "}
+                              {draft ? formatUsdc(draft - (draft * BigInt(platformFeeBps)) / 10_000n) : "0"} USDC after platform fee
+                              {" | "}
+                              Platform fee: {draft ? formatUsdc((draft * BigInt(platformFeeBps)) / 10_000n) : "0"} USDC
+                            </p>
+                            <p className="text-xs text-[#9CA3AF]">
+                              Allocated: {formatUsdc(allocatedReserved + (draft ?? 0n))} of {formatUsdc(job.rewardUSDC)} USDC total pool
+                            </p>
                             <textarea
                               className="archon-input min-h-20 text-xs"
-                              placeholder="Optional rejection note"
+                              placeholder="Explain why this submission was rejected..."
                               value={rejectNotes[agentKey] ?? ""}
                               onChange={(event) =>
                                 setRejectNotes((previous) => ({
@@ -567,7 +626,7 @@ export default function JobDetailsPage() {
                               </button>
                               <button
                                 type="button"
-                                disabled={isBusyApprove || isBusyReject}
+                                disabled={isBusyApprove || isBusyReject || !(rejectNotes[agentKey] ?? "").trim()}
                                 onClick={() => void handleReject(submission.agent)}
                                 className="archon-button-secondary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                               >
@@ -649,10 +708,15 @@ export default function JobDetailsPage() {
                     Allocated: {formatUsdc(mySubmission?.allocatedReward || "0")} USDC | You receive:{" "}
                     {formatUsdc(netForMyClaim)} USDC after fee
                   </p>
+                  {claimBlockedByCooldown ? (
+                    <p className="mt-1 text-xs text-amber-200">
+                      Claim available in: {formatRemainingDuration(claimCountdown)}
+                    </p>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => void handleClaim()}
-                    disabled={busyAction === "claim"}
+                    disabled={busyAction === "claim" || claimBlockedByCooldown}
                     className="archon-button-primary mt-3 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {busyAction === "claim" ? "Claiming..." : "Claim USDC + Credential"}

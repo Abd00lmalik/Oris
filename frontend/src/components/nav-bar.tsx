@@ -4,39 +4,50 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { expectedChainId, fetchCredentialsForAgent, shortAddress } from "@/lib/contracts";
+import { expectedChainId, fetchCredentialsForAgent, fetchSourceRegistryOwner, shortAddress } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { RouteAnnouncer } from "@/components/route-announcer";
 import { WrongNetworkBanner } from "@/components/wrong-network-banner";
 
-const disconnectedNavLinks = [
-  { href: "/", label: "Home" },
-  { href: "/apply", label: "Get Started" },
-  { href: "/earn", label: "Earn" },
-  { href: "/tasks", label: "Agentic Tasks" }
-];
-
-const connectedNavLinks = [
-  { href: "/", label: "Home" },
+const desktopLinks = [
+  { href: "/", label: "Tasks" },
   { href: "/earn", label: "Earn" },
   { href: "/tasks", label: "Agentic Tasks" },
   { href: "/my-work", label: "My Work" },
   { href: "/profile", label: "Profile" }
-];
+] as const;
 
 export function NavBar() {
   const pathname = usePathname();
   const { account, chainId, connect, disconnect } = useWallet();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [credentialCount, setCredentialCount] = useState<number | null>(null);
-  const adminWallet = process.env.NEXT_PUBLIC_ADMIN_WALLET?.toLowerCase() ?? "";
+  const [ownerAddress, setOwnerAddress] = useState("");
 
   const isWrongNetwork = chainId !== null && chainId !== expectedChainId;
-  const isAdmin = useMemo(
-    () => Boolean(account && adminWallet && account.toLowerCase() === adminWallet),
-    [account, adminWallet]
-  );
   const showGetStarted = !account || credentialCount === 0;
+  const isAdmin = useMemo(() => {
+    if (!account || !ownerAddress) return false;
+    return account.toLowerCase() === ownerAddress.toLowerCase();
+  }, [account, ownerAddress]);
+
+  useEffect(() => {
+    let active = true;
+    const loadOwner = async () => {
+      try {
+        const owner = await fetchSourceRegistryOwner();
+        if (!active) return;
+        setOwnerAddress(owner);
+      } catch {
+        if (!active) return;
+        setOwnerAddress("");
+      }
+    };
+    void loadOwner();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -60,15 +71,6 @@ export function NavBar() {
     };
   }, [account]);
 
-  const navLinks = useMemo(
-    () => {
-      if (!account) return disconnectedNavLinks;
-      const links = showGetStarted ? [{ href: "/apply", label: "Get Started" }, ...connectedNavLinks] : connectedNavLinks;
-      return isAdmin ? [...links, { href: "/admin", label: "Admin" }] : links;
-    },
-    [account, isAdmin, showGetStarted]
-  );
-
   return (
     <>
       <header className="border-b border-white/10 bg-[#0a0a0b]/95 backdrop-blur">
@@ -88,12 +90,11 @@ export function NavBar() {
             </button>
           </div>
 
-          <nav className={`${mobileOpen ? "flex" : "hidden"} flex-wrap items-center gap-2 md:flex`}>
-            {navLinks.map((link) => (
+          <nav className="hidden flex-wrap items-center gap-2 md:flex">
+            {desktopLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                onClick={() => setMobileOpen(false)}
                 className={`rounded-xl px-3 py-2 text-sm transition-all duration-200 ${
                   pathname === link.href
                     ? "bg-[#6C5CE7]/25 text-[#EAEAF0]"
@@ -106,6 +107,11 @@ export function NavBar() {
           </nav>
 
           <div className="flex items-center gap-2">
+            {isAdmin ? (
+              <Link href="/admin" className={`hidden rounded-xl px-3 py-2 text-sm md:inline-flex ${pathname === "/admin" ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF] hover:bg-white/5 hover:text-[#EAEAF0]"}`}>
+                Admin
+              </Link>
+            ) : null}
             {account ? (
               <>
                 <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#9CA3AF]">
@@ -130,6 +136,45 @@ export function NavBar() {
               </button>
             )}
           </div>
+
+          {mobileOpen ? (
+            <nav className="grid gap-2 rounded-xl border border-white/10 bg-[#111214] p-3 md:hidden">
+              {desktopLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    pathname === link.href ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              ))}
+              {showGetStarted ? (
+                <Link
+                  href="/apply"
+                  onClick={() => setMobileOpen(false)}
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    pathname === "/apply" ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
+                  }`}
+                >
+                  Get Started
+                </Link>
+              ) : null}
+              {isAdmin ? (
+                <Link
+                  href="/admin"
+                  onClick={() => setMobileOpen(false)}
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    pathname === "/admin" ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"
+                  }`}
+                >
+                  Admin
+                </Link>
+              ) : null}
+            </nav>
+          ) : null}
         </div>
       </header>
       <WrongNetworkBanner isWrongNetwork={isWrongNetwork} />

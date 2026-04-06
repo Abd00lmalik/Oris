@@ -21,6 +21,8 @@ contract DAOGovernanceSource is ICredentialSource {
     address public immutable hook;
     uint256 public nextActivityId;
     mapping(address => bool) public approvedGovernors;
+    mapping(address => bool) private governorKnown;
+    address[] private governors;
     mapping(address => mapping(address => mapping(uint256 => bool))) public claimed;
     mapping(address => uint256) public lastCredentialClaim;
     mapping(uint256 => GovernanceActivity) public activities;
@@ -74,6 +76,10 @@ contract DAOGovernanceSource is ICredentialSource {
     function addGovernor(address governorContract) external onlyOwner {
         require(governorContract != address(0), "invalid governor");
         approvedGovernors[governorContract] = true;
+        if (!governorKnown[governorContract]) {
+            governorKnown[governorContract] = true;
+            governors.push(governorContract);
+        }
         emit GovernorApprovalUpdated(governorContract, true);
     }
 
@@ -81,6 +87,10 @@ contract DAOGovernanceSource is ICredentialSource {
         require(governorContract != address(0), "invalid governor");
         approvedGovernors[governorContract] = false;
         emit GovernorApprovalUpdated(governorContract, false);
+    }
+
+    function getGovernors() external view returns (address[] memory) {
+        return governors;
     }
 
     function claimGovernanceCredential(
