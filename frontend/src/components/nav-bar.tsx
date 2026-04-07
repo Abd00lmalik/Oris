@@ -14,7 +14,7 @@ const desktopLinks = [
   { href: "/earn", label: "Earn" },
   { href: "/tasks", label: "Agentic Tasks" },
   { href: "/my-work", label: "My Work" },
-  { href: "/milestones", label: "Milestones" },
+  { href: "/milestones", label: "Contracts" },
   { href: "/profile", label: "Profile" }
 ] as const;
 
@@ -96,6 +96,11 @@ export function NavBar() {
               <Link
                 key={link.href}
                 href={link.href}
+                title={
+                  link.href === "/milestones"
+                    ? "Milestone-based smart contracts with USDC escrow and dispute arbitration"
+                    : undefined
+                }
                 className={`rounded-xl px-3 py-2 text-sm transition-all duration-200 ${
                   pathname === link.href
                     ? "bg-[#6C5CE7]/25 text-[#EAEAF0]"
@@ -144,6 +149,11 @@ export function NavBar() {
                 <Link
                   key={link.href}
                   href={link.href}
+                  title={
+                    link.href === "/milestones"
+                      ? "Milestone-based smart contracts with USDC escrow and dispute arbitration"
+                      : undefined
+                  }
                   onClick={() => setMobileOpen(false)}
                   className={`rounded-lg px-3 py-2 text-sm ${
                     pathname === link.href ? "bg-[#6C5CE7]/25 text-[#EAEAF0]" : "text-[#9CA3AF]"

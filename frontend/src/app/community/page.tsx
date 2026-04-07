@@ -35,7 +35,7 @@ const COMMUNITY_TYPES = [
     title: "Created Educational Content",
     label: "Created a tutorial, guide or thread",
     description:
-      "You wrote a tutorial, guide, thread, or video explaining CredentialHook or ARC ecosystem concepts.",
+      "You wrote a tutorial, guide, thread, or video explaining Archon or ARC ecosystem concepts.",
     evidence: "Link to the content",
     weight: 90
   },
@@ -288,7 +288,7 @@ export default function CommunityPage() {
       <div className="archon-card p-6">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Community Credentials</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Earn credentials for real contributions to the CredentialHook community - verified by our moderation team.
+          Earn credentials for real contributions to the Archon community - verified by our moderation team.
         </p>
       </div>
 

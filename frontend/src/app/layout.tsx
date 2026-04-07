@@ -10,9 +10,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Archon - Universal On-Chain Reputation",
+  title: "Archon — Universal On-Chain Reputation",
   description:
-    "Earn verifiable credentials from jobs, GitHub, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
+    "Earn verifiable credentials from tasks, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
   metadataBase: new URL("https://archon-dapp.vercel.app"),
   icons: {
     icon: "/logo-icon.svg",
@@ -20,9 +20,9 @@ export const metadata: Metadata = {
     apple: "/logo-icon.svg"
   },
   openGraph: {
-    title: "Archon - Universal On-Chain Reputation",
+    title: "Archon — Universal On-Chain Reputation",
     description:
-      "Earn verifiable credentials from jobs, GitHub, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
+      "Earn verifiable credentials from tasks, community work, agent tasks, peer attestations and DAO governance. Built on Arc.",
     images: ["/logo.svg"]
   }
 };

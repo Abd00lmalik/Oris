@@ -298,7 +298,7 @@ export default function HomePage() {
     <section className="space-y-8">
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#0A1F2E] to-[#145B7D] p-6 md:p-8">
         <div className="mx-auto max-w-5xl">
-          <h1 className="text-3xl font-semibold tracking-wide text-[#EAEAF0]">CredentialHook</h1>
+          <h1 className="text-3xl font-semibold tracking-wide text-[#EAEAF0]">Archon</h1>
           <p className="mt-2 text-sm text-[#C9D0DB]">Universal On-Chain Reputation on Arc</p>
 
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -337,7 +337,7 @@ export default function HomePage() {
 
       {showWelcomeBanner ? (
         <div className="archon-card border border-[#00D1B2]/30 bg-[#00D1B2]/10 p-4">
-          <p className="text-sm font-semibold text-[#EAEAF0]">Welcome to CredentialHook</p>
+          <p className="text-sm font-semibold text-[#EAEAF0]">Welcome to Archon</p>
           <p className="mt-1 text-xs text-[#C9D0DB]">
             Build verifiable on-chain reputation. Every credential you earn is permanent and publicly verifiable.
           </p>

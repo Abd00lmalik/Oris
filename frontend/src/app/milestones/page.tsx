@@ -261,14 +261,62 @@ export default function MilestonesPage() {
   return (
     <section className="space-y-6">
       <div className="archon-card p-6">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Milestone Escrow</h1>
-        <p className="mt-2 text-sm text-[#9CA3AF]">Three tabs: My Projects, Propose Project, Active Disputes.</p>
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Smart Contracts</h1>
+        <p className="mt-2 text-sm text-[#9CA3AF]">
+          Agree on milestones with a client or freelancer before work begins. USDC is locked in escrow for each
+          milestone. Funds release automatically on approval - no trust required.
+        </p>
+      </div>
+
+      <div className="archon-card p-6">
+        <h2 className="text-lg font-semibold text-[#EAEAF0]">How It Works</h2>
+        <div className="mt-4 grid gap-3 lg:grid-cols-5">
+          <article className="rounded-xl border border-white/10 bg-[#111214] p-3">
+            <p className="text-xs uppercase tracking-wide text-[#8FD9FF]">Step 1</p>
+            <p className="mt-1 text-sm font-semibold text-[#EAEAF0]">Agree on Milestones</p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">
+              Client proposes project with defined milestones, deadlines, and USDC amounts.
+            </p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-[#111214] p-3">
+            <p className="text-xs uppercase tracking-wide text-[#8FD9FF]">Step 2</p>
+            <p className="mt-1 text-sm font-semibold text-[#EAEAF0]">Client Funds Escrow</p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">
+              Client deposits USDC for each milestone into the smart contract. Funds are locked - not transferable.
+            </p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-[#111214] p-3">
+            <p className="text-xs uppercase tracking-wide text-[#8FD9FF]">Step 3</p>
+            <p className="mt-1 text-sm font-semibold text-[#EAEAF0]">Freelancer Delivers</p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">
+              Freelancer submits a link or hash proving the milestone was completed.
+            </p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-[#111214] p-3">
+            <p className="text-xs uppercase tracking-wide text-[#8FD9FF]">Step 4</p>
+            <p className="mt-1 text-sm font-semibold text-[#EAEAF0]">Client Approves or Disputes</p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">
+              Client approves and funds release instantly. Or raises a dispute within 48 hours.
+            </p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-[#111214] p-3">
+            <p className="text-xs uppercase tracking-wide text-[#8FD9FF]">Step 5</p>
+            <p className="mt-1 text-sm font-semibold text-[#EAEAF0]">Arbitration (if disputed)</p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">
+              3 approved arbitrators vote. Majority wins. Funds go to freelancer or back to client.
+            </p>
+          </article>
+        </div>
+        <div className="mt-4 rounded-xl border border-[#00D1B2]/30 bg-[#00D1B2]/10 p-3 text-xs text-[#A7F8E8]">
+          Auto-Release: If the client neither approves nor disputes within 48 hours of delivery, the freelancer can
+          claim funds automatically. This prevents clients from ghosting.
+        </div>
       </div>
       <div className="archon-card p-4">
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={`rounded-full px-4 py-2 text-sm ${tab === "projects" ? "bg-[#6C5CE7]/35 text-[#EAEAF0]" : "bg-white/5 text-[#9CA3AF]"}`} onClick={() => setTab("projects")}>My Projects</button>
-          <button type="button" className={`rounded-full px-4 py-2 text-sm ${tab === "propose" ? "bg-[#6C5CE7]/35 text-[#EAEAF0]" : "bg-white/5 text-[#9CA3AF]"}`} onClick={() => setTab("propose")}>Propose Project</button>
-          <button type="button" className={`rounded-full px-4 py-2 text-sm ${tab === "disputes" ? "bg-[#6C5CE7]/35 text-[#EAEAF0]" : "bg-white/5 text-[#9CA3AF]"}`} onClick={() => setTab("disputes")}>Active Disputes</button>
+          <button type="button" className={`rounded-full px-4 py-2 text-sm ${tab === "projects" ? "bg-[#6C5CE7]/35 text-[#EAEAF0]" : "bg-white/5 text-[#9CA3AF]"}`} onClick={() => setTab("projects")}>My Contracts</button>
+          <button type="button" className={`rounded-full px-4 py-2 text-sm ${tab === "propose" ? "bg-[#6C5CE7]/35 text-[#EAEAF0]" : "bg-white/5 text-[#9CA3AF]"}`} onClick={() => setTab("propose")}>New Contract</button>
+          <button type="button" className={`rounded-full px-4 py-2 text-sm ${tab === "disputes" ? "bg-[#6C5CE7]/35 text-[#EAEAF0]" : "bg-white/5 text-[#9CA3AF]"}`} onClick={() => setTab("disputes")}>Disputes</button>
         </div>
       </div>
       {status ? <div className="archon-card border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{status}</div> : null}

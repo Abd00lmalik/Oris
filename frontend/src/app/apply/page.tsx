@@ -150,7 +150,7 @@ export default function ApplyPage() {
   return (
     <section className="mx-auto max-w-4xl space-y-6">
       <div className="archon-card p-6">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Get Started on CredentialHook</h1>
+        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">Get Started on Archon</h1>
 
         <div className="mt-4 space-y-3">
           <div className="rounded-xl border border-white/10 bg-[#111214] p-4">

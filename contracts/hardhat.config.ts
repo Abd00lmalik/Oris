@@ -44,6 +44,11 @@ const config: HardhatUserConfig = {
       url: ARC_TESTNET_RPC_URL,
       chainId: ARC_CHAIN_ID,
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
+    },
+    arc_testnet: {
+      url: ARC_TESTNET_RPC_URL,
+      chainId: ARC_CHAIN_ID,
+      accounts: PRIVATE_KEY ? [PRIVATE_KEY] : []
     }
   }
 };

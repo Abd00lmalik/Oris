@@ -23,6 +23,7 @@ type DeploymentConfig = {
     validationRegistry: ContractConfig;
     credentialHook: ContractConfig;
     usdc: ContractConfig;
+    jobContract: ContractConfig;
     job: ContractConfig;
     githubSource: ContractConfig;
     communitySource: ContractConfig;
@@ -57,10 +58,11 @@ async function main() {
     throw new Error("No deployer signer available.");
   }
   const chainId = Number((await deployer.provider.getNetwork()).chainId);
-  const rpcUrl =
-    network.name === "arcTestnet"
-      ? process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.testnet.arc.network"
-      : "http://127.0.0.1:8545";
+  const isLocalNetwork = network.name === "localhost" || network.name === "hardhat";
+  const isArcTestnet = network.name === "arcTestnet" || network.name === "arc_testnet";
+  const rpcUrl = isArcTestnet
+    ? process.env.ARC_TESTNET_RPC_URL ?? "https://rpc.arc.network"
+    : "http://127.0.0.1:8545";
   const seedOperator =
     (process.env.SEED_OPERATOR ?? "false").toLowerCase() === "true";
 
@@ -78,9 +80,9 @@ async function main() {
   console.log(`Platform treasury: ${platformTreasury}`);
   console.log(`Platform fee (bps): ${platformFeeBps}`);
 
-  let usdcAddress = configuredUsdcAddress;
-  if (network.name === "arcTestnet" && !usdcAddress) {
-    throw new Error("Missing ARC_USDC_ADDRESS (or USDC_ADDRESS) for arcTestnet deployment.");
+  let usdcAddress = isLocalNetwork ? "" : configuredUsdcAddress;
+  if (isArcTestnet && !usdcAddress) {
+    throw new Error("Missing ARC_USDC_ADDRESS (or USDC_ADDRESS) for arc_testnet deployment.");
   }
 
   let usdcContractName = "IERC20Minimal";
@@ -93,9 +95,9 @@ async function main() {
 
     const seedAmount = ethers.parseUnits("1000000", 6);
     await (await mockUsdc.mint(deployer.address, seedAmount)).wait();
-    await (await mockUsdc.mint(signer1.address, seedAmount)).wait();
-    await (await mockUsdc.mint(signer2.address, seedAmount)).wait();
-    await (await mockUsdc.mint(signer3.address, seedAmount)).wait();
+    for (const signer of signers.slice(1, 4)) {
+      await (await mockUsdc.mint(signer.address, seedAmount)).wait();
+    }
     console.log("Minted test USDC to first four accounts.");
   } else {
     console.log(`Using configured USDC token: ${usdcAddress}`);
@@ -123,7 +125,7 @@ async function main() {
   const hook = await ethers.deployContract("CredentialHook", [registryAddress]);
   await hook.waitForDeployment();
   const hookAddress = await hook.getAddress();
-  console.log(`CredentialHook: ${hookAddress}`);
+  console.log(`Archon hook: ${hookAddress}`);
 
   await (await registry.authorizeIssuer(hookAddress, true)).wait();
   console.log("Authorized hook as registry issuer.");
@@ -204,14 +206,14 @@ async function main() {
   for (const sourceAddress of sourceContracts) {
     await (await hook.registerSourceContract(sourceAddress, true)).wait();
   }
-  console.log("Registered all source contracts in CredentialHook.");
+  console.log("Registered all source contracts in Archon hook.");
 
   if (seedOperator) {
     await (
       await communitySource.registerModerator(
         deployer.address,
         "Platform Admin",
-        "CredentialHook Founder",
+        "Archon Founder",
         ""
       )
     ).wait();
@@ -222,7 +224,7 @@ async function main() {
   console.log("Revoked owner direct issuance in ValidationRegistry.");
 
   const deploymentConfig: DeploymentConfig = {
-    network: network.name === "arcTestnet" ? "arc-testnet" : network.name,
+    network: isArcTestnet ? "arc-testnet" : network.name,
     chainId,
     rpcUrl,
     usdcAddress,
@@ -248,6 +250,10 @@ async function main() {
       usdc: {
         address: usdcAddress,
         abi: usdcContractName === "MockUSDC" ? await getAbi("MockUSDC") : await getAbi("MockUSDC")
+      },
+      jobContract: {
+        address: jobAddress,
+        abi: await getAbi("ERC8183Job")
       },
       job: {
         address: jobAddress,

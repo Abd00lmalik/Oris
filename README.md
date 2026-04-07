@@ -1,20 +1,22 @@
-# Archon
+# Archon — Universal On-Chain Reputation
 
 Live: https://archon-dapp.vercel.app  
+Live on Arc Testnet  
 Network: Arc Testnet (Chain ID: 5042002)
 
 ## Deployed Contracts (Arc Testnet)
 | Contract | Address |
 |---|---|
-| SourceRegistry | `0xa9EB89c8CedD3181c8da64517910A7e810bE7e30` |
-| ValidationRegistry | `0x225137986461614180BCcf726A7a833bE4ebb2b6` |
-| CredentialHook | `0xD3E0c351a5e0dC7B0C22e9Ec4286634e12DFF361` |
-| ERC8183Job | `0x2A017Eff99681C14BBAF17237A1C071C5E655c55` |
-| GitHubSource | `0xf3DFD321390dd14AabC83E8Eb7996AE09e5DF74F` |
-| CommunitySource | `0xdF057F832581Ae4e736669a5998ac33b6b590C2E` |
-| AgentTaskSource | `0xC0285fB69b9ED3a48c641096C6D90B82C8E7Da9d` |
-| PeerAttestationSource | `0x1c3D11Caf8fB635d334CF59162C58053C432c8a9` |
-| DAOGovernanceSource | `0xB9be8650F008266AecDBc828E44b04D8994eaf2D` |
+| SourceRegistry | `0xa25C501C62e60EF1F03c37400b4FBDf2775d18Bf` |
+| ValidationRegistry | `0xCC2813327a5e2ce43a7bf78ed59d2D21BBB66b1B` |
+| ArchonHook | `0x23d66b8eb42Cc1f51F37b879A3dbC15252684Db2` |
+| ERC8183Job | `0xE57DE7e8dA52e76f8Ab9b88697306Ef49Fa633b9` |
+| GitHubSource | `0xa67851a3DaFF1a3082e30ab1E5bd0B3fDBE21b55` |
+| CommunitySource | `0x0a7c1B0dB4Cc6bE3A95e5BC1B99065b91b725353` |
+| AgentTaskSource | `0xbE7e13b78DA31b1249B52083C4B4eF02FE9a6A21` |
+| PeerAttestationSource | `0x6A42a8bFeBE96E94d06C5bcBfA303E984f85Ae27` |
+| DAOGovernanceSource | `0xe42Bf6A67899a82E2AA7DE9DE74f8a30a338f457` |
+| MilestoneEscrow | `0xb958a8CC159D8E2d079E7f26B9D3E6E8340D5d78` |
 | USDC (Arc ERC-20) | `0x3600000000000000000000000000000000000000` |
 | Platform Treasury | `0x25265b9dBEb6c653b0CA281110Bb0697a9685107` |
 
@@ -83,7 +85,7 @@ Each job stores:
   - moves to `Approved`
   - triggers hook call to mint credential
 
-### 2) `CredentialHook.sol` (Completion Hook)
+### 2) Archon Hook (Completion Hook)
 
 This contract is the trust bridge between job completion and credential minting.
 
