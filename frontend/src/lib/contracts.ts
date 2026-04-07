@@ -464,6 +464,12 @@ export function formatUsdc(units: string | number | bigint) {
   }
 }
 
+export function parseUSDC(amount: string): bigint {
+  const trimmed = amount.trim();
+  if (!trimmed) return 0n;
+  return ethers.parseUnits(trimmed, 6);
+}
+
 export function formatTimestamp(ts: number) {
   if (!ts) return "-";
   return new Date(ts * 1000).toLocaleString();

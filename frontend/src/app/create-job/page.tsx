@@ -6,10 +6,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   contractAddresses,
   expectedChainId,
+  fetchUsdcAllowance,
+  fetchUsdcBalance,
   formatTimestamp,
+  formatUsdc,
   getJobReadContract,
   getJobWriteContract,
-  txApproveUsdcIfNeeded
+  parseUSDC,
+  txApproveUsdc
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 import { ARC_TOKEN_CONFIG } from "../../../config";
@@ -25,7 +29,13 @@ function parseDeadline(deadlineInput: string) {
 function parseRewardToUnits(reward: string) {
   const trimmed = reward.trim();
   if (!trimmed) return 0n;
-  return ethers.parseUnits(trimmed, 6);
+  return parseUSDC(trimmed);
+}
+
+function formatUsdcTwoDecimals(units: bigint) {
+  const formatted = formatUsdc(units);
+  const [whole, fraction = ""] = formatted.split(".");
+  return `${whole}.${fraction.padEnd(2, "0").slice(0, 2)}`;
 }
 
 function clampApprovals(value: string) {
@@ -53,15 +63,29 @@ export default function CreateJobPage() {
   const [arcGateAllowed, setArcGateAllowed] = useState(true);
   const [checkingArc, setCheckingArc] = useState(false);
   const [minRewardUsdc, setMinRewardUsdc] = useState("5");
+  const [checkingUsdcBalance, setCheckingUsdcBalance] = useState(false);
+  const [checkingUsdcAllowance, setCheckingUsdcAllowance] = useState(false);
+  const [walletUsdcBalance, setWalletUsdcBalance] = useState<bigint>(0n);
+  const [currentUsdcAllowance, setCurrentUsdcAllowance] = useState<bigint>(0n);
+  const [insufficientUsdcBalance, setInsufficientUsdcBalance] = useState(false);
+  const [approvingUsdc, setApprovingUsdc] = useState(false);
 
   const gateEnabled = ARC_TOKEN_CONFIG.tokenAddress !== "0x0000000000000000000000000000000000000000";
-  const submitDisabled = submitting || (gateEnabled && !arcGateAllowed);
   const costSymbol = expectedChainId === 5042002 ? "USDC" : "ETH";
   const trimmedTitle = title.trim();
   const trimmedDescription = description.trim();
   const deadline = parseDeadline(deadlineInput);
   const deadlineDisplay = deadline ? formatTimestamp(deadline) : "";
   const maxApprovals = clampApprovals(maxApprovalsInput);
+  const rewardUnits = useMemo(() => {
+    try {
+      return parseRewardToUnits(rewardInput);
+    } catch {
+      return null;
+    }
+  }, [rewardInput]);
+  const rewardDisplay = rewardUnits !== null ? formatUsdcTwoDecimals(rewardUnits) : "0.00";
+  const walletBalanceDisplay = formatUsdcTwoDecimals(walletUsdcBalance);
 
   const minRewardUnits = useMemo(() => parseRewardToUnits(minRewardUsdc), [minRewardUsdc]);
   const minPoolUnits = useMemo(
@@ -69,6 +93,24 @@ export default function CreateJobPage() {
     [maxApprovals, minRewardUnits]
   );
   const minPoolDisplay = useMemo(() => ethers.formatUnits(minPoolUnits, 6), [minPoolUnits]);
+  const needsApproval = Boolean(
+    account && rewardUnits !== null && rewardUnits > 0n && currentUsdcAllowance < rewardUnits
+  );
+  const postTaskDisabled =
+    submitting ||
+    checkingUsdcBalance ||
+    checkingUsdcAllowance ||
+    approvingUsdc ||
+    (gateEnabled && !arcGateAllowed) ||
+    insufficientUsdcBalance;
+  const approveUsdcDisabled =
+    checkingUsdcBalance ||
+    checkingUsdcAllowance ||
+    approvingUsdc ||
+    (gateEnabled && !arcGateAllowed) ||
+    insufficientUsdcBalance ||
+    rewardUnits === null ||
+    rewardUnits <= 0n;
 
   useEffect(() => {
     let active = true;
@@ -120,6 +162,46 @@ export default function CreateJobPage() {
       active = false;
     };
   }, [account, browserProvider, gateEnabled]);
+
+  useEffect(() => {
+    let active = true;
+
+    const checkUsdcState = async () => {
+      if (!account || rewardUnits === null) {
+        if (!active) return;
+        setCheckingUsdcBalance(false);
+        setCheckingUsdcAllowance(false);
+        setInsufficientUsdcBalance(false);
+        return;
+      }
+
+      setCheckingUsdcBalance(true);
+      setCheckingUsdcAllowance(true);
+      try {
+        const [balance, allowance] = await Promise.all([
+          fetchUsdcBalance(account),
+          fetchUsdcAllowance(account, contractAddresses.job)
+        ]);
+        if (!active) return;
+        setWalletUsdcBalance(balance);
+        setCurrentUsdcAllowance(allowance);
+        setInsufficientUsdcBalance(balance < rewardUnits);
+      } catch {
+        if (!active) return;
+        setInsufficientUsdcBalance(false);
+      } finally {
+        if (active) {
+          setCheckingUsdcBalance(false);
+          setCheckingUsdcAllowance(false);
+        }
+      }
+    };
+
+    void checkUsdcState();
+    return () => {
+      active = false;
+    };
+  }, [account, rewardUnits]);
 
   useEffect(() => {
     let active = true;
@@ -212,15 +294,25 @@ export default function CreateJobPage() {
       return;
     }
 
-    let rewardUnits: bigint;
+    let rewardUnitsValue: bigint;
     try {
-      rewardUnits = parseRewardToUnits(rewardInput);
+      rewardUnitsValue = parseRewardToUnits(rewardInput);
     } catch {
       setError("Enter a valid USDC reward amount.");
       return;
     }
-    if (rewardUnits < minPoolUnits) {
+    if (rewardUnitsValue < minPoolUnits) {
       setError(`Reward pool must be at least ${minPoolDisplay} USDC for ${maxApprovals} approvals.`);
+      return;
+    }
+    if (insufficientUsdcBalance) {
+      setError(
+        `Insufficient USDC balance. You have ${walletBalanceDisplay} USDC, this task requires ${formatUsdcTwoDecimals(rewardUnitsValue)} USDC.`
+      );
+      return;
+    }
+    if (needsApproval) {
+      setError("Step 1 required: approve USDC before posting this task.");
       return;
     }
 
@@ -233,21 +325,31 @@ export default function CreateJobPage() {
       if (Number(network.chainId) !== expectedChainId) {
         throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
       }
+      const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      const [freshBalance, freshAllowance] = await Promise.all([
+        fetchUsdcBalance(signerAddress),
+        fetchUsdcAllowance(signerAddress, contractAddresses.job)
+      ]);
+      setWalletUsdcBalance(freshBalance);
+      setCurrentUsdcAllowance(freshAllowance);
+      if (freshBalance < rewardUnitsValue) {
+        throw new Error(
+          `Insufficient USDC balance. You have ${formatUsdcTwoDecimals(freshBalance)} USDC, this task requires ${formatUsdcTwoDecimals(rewardUnitsValue)} USDC.`
+        );
+      }
+      if (freshAllowance < rewardUnitsValue) {
+        throw new Error("Step 1 required: approve USDC before posting this task.");
+      }
 
       const taskContract = await getJobWriteContract(provider);
       const predictedJobId = Number(await taskContract.nextJobId());
-
-      const approvalTx = await txApproveUsdcIfNeeded(provider, contractAddresses.job, rewardUnits);
-      if (approvalTx) {
-        setStatus(`USDC approve transaction submitted: ${approvalTx.hash}`);
-        await approvalTx.wait();
-      }
 
       const tx = (await taskContract.createJob(
         trimmedTitle,
         trimmedDescription,
         deadline,
-        rewardUnits,
+        rewardUnitsValue,
         maxApprovals
       )) as ethers.TransactionResponse;
       setStatus(`Create transaction submitted: ${tx.hash}`);
@@ -283,6 +385,54 @@ export default function CreateJobPage() {
       setError(err instanceof Error ? err.message : "Failed to create task.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleApproveUsdc = async () => {
+    setError("");
+    setStatus("");
+    if (rewardUnits === null || rewardUnits <= 0n) {
+      setError("Enter a valid USDC reward amount first.");
+      return;
+    }
+    if (insufficientUsdcBalance) {
+      setError(
+        `Insufficient USDC balance. You have ${walletBalanceDisplay} USDC, this task requires ${rewardDisplay} USDC.`
+      );
+      return;
+    }
+
+    setApprovingUsdc(true);
+    try {
+      const provider = browserProvider ?? (await connect());
+      if (!provider) throw new Error("Wallet connection was not established.");
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== expectedChainId) {
+        throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
+      }
+
+      const tx = await txApproveUsdc(provider, contractAddresses.job, rewardUnits);
+      setStatus(`USDC approve transaction submitted: ${tx.hash}`);
+      await tx.wait();
+
+      const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      try {
+        const [balance, allowance] = await Promise.all([
+          fetchUsdcBalance(signerAddress),
+          fetchUsdcAllowance(signerAddress, contractAddresses.job)
+        ]);
+        setWalletUsdcBalance(balance);
+        setCurrentUsdcAllowance(allowance);
+        setInsufficientUsdcBalance(balance < rewardUnits);
+      } catch {
+        // Fails silently by design.
+      }
+      setStatus("✓ USDC approved. Step 2 unlocked.");
+    } catch (approvalError) {
+      setError(approvalError instanceof Error ? approvalError.message : "USDC approval failed.");
+    } finally {
+      setApprovingUsdc(false);
     }
   };
 
@@ -365,6 +515,14 @@ export default function CreateJobPage() {
               required
             />
             <p className="mt-1 text-xs text-[#9CA3AF]">Total USDC pool locked in escrow upfront.</p>
+            {checkingUsdcBalance && account ? (
+              <p className="mt-1 text-xs text-[#9CA3AF]">Checking balance...</p>
+            ) : null}
+            {account && insufficientUsdcBalance && rewardUnits !== null ? (
+              <p className="mt-1 text-xs text-rose-300">
+                Insufficient USDC balance. You have {walletBalanceDisplay} USDC, this task requires {rewardDisplay} USDC.
+              </p>
+            ) : null}
           </label>
 
           <label className="block">
@@ -411,13 +569,39 @@ export default function CreateJobPage() {
             )}
           </div>
 
-          <button
-            type="submit"
-            disabled={submitDisabled}
-            className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {submitting ? "Posting..." : "Post Task"}
-          </button>
+          {account && rewardUnits !== null && rewardUnits > 0n && needsApproval ? (
+            <div className="space-y-2 rounded-xl border border-white/10 bg-[#111214] px-3 py-3">
+              <p className="text-xs font-semibold text-[#EAEAF0]">Step 1 of 2: Approve USDC</p>
+              <p className="text-xs text-[#9CA3AF]">
+                Before creating this task, you need to approve {rewardDisplay} USDC for the contract to hold in escrow.
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleApproveUsdc()}
+                disabled={approveUsdcDisabled}
+                className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {approvingUsdc ? "Approving..." : `Approve ${rewardDisplay} USDC`}
+              </button>
+              <p className="text-xs text-[#6B7280]">Step 2: Create Task (unlocks after approval)</p>
+            </div>
+          ) : null}
+
+          {account && rewardUnits !== null && rewardUnits > 0n && !needsApproval ? (
+            <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+              ✓ USDC Approved
+            </div>
+          ) : null}
+
+          {!needsApproval ? (
+            <button
+              type="submit"
+              disabled={postTaskDisabled}
+              className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitting ? "Posting..." : "Post Task"}
+            </button>
+          ) : null}
         </form>
       </div>
     </section>
