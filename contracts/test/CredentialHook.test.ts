@@ -3,7 +3,7 @@ import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 
-describe("CredentialHook + ERC8183Job", function () {
+describe("Archon Hook + ERC8183Job", function () {
   async function deployFixture() {
     const [owner, client, agentA, agentB, treasury, other] = await ethers.getSigners();
 

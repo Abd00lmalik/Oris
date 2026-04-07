@@ -31,6 +31,17 @@ async function main() {
     ["function usdc() view returns (address)"],
     c.agentTaskSource.address
   );
+  const milestoneEscrow = await ethers.getContractAt(
+    [
+      "function usdc() view returns (address)",
+      "function platformFeeBps() view returns (uint256)"
+    ],
+    c.milestoneEscrow.address
+  );
+  const communitySource = await ethers.getContractAt(
+    ["function activeModeratorCount() view returns (uint256)"],
+    c.communitySource.address
+  );
 
   const checks: Array<[string, boolean]> = [
     ["1. Registry deployed", 
@@ -52,6 +63,11 @@ async function main() {
       await hook.registeredSourceContracts(jobAddress)],
     ["8. AgentTask registered in hook", 
       await hook.registeredSourceContracts(c.agentTaskSource.address)],
+    ["9. MilestoneEscrow USDC = Arc USDC",
+      (await milestoneEscrow.usdc()).toLowerCase() ===
+      "0x3600000000000000000000000000000000000000"],
+    ["10. Community moderator seeded",
+      Number(await communitySource.activeModeratorCount()) >= 1],
   ];
 
   let passed = 0;
@@ -60,8 +76,8 @@ async function main() {
     if (result) passed++;
   }
 
-  console.log(`\n${passed}/8 checks passed`);
-  if (passed < 8) process.exit(1);
+  console.log(`\n${passed}/10 checks passed`);
+  if (passed < 10) process.exit(1);
 }
 
 main().catch(console.error);
