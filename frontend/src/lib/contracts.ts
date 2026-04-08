@@ -315,7 +315,7 @@ const DAO_GOVERNANCE_ABI = [
   "function addGovernor(address governorContract)",
   "function removeGovernor(address governorContract)"
 ] as const;
-const MILESTONE_ESCROW_ABI = [
+export const MILESTONE_ESCROW_ABI = [
   "function nextMilestoneId() view returns (uint256)",
   "function nextProjectId() view returns (uint256)",
   "function totalEscrowed() view returns (uint256)",
@@ -340,6 +340,7 @@ const MILESTONE_ESCROW_ABI = [
   "function voteOnDispute(uint256 milestoneId,uint8 vote)",
   "function addArbitrator(address arbitrator)"
 ] as const;
+export const MILESTONE_ABI = MILESTONE_ESCROW_ABI;
 const ARC_IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e";
 const ARC_IDENTITY_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
