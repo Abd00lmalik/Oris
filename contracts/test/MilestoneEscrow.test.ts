@@ -57,6 +57,28 @@ describe("MilestoneEscrow", function () {
     expect(milestone.status).to.equal(0);
   });
 
+  it("client can propose a project with multiple milestones", async function () {
+    const { client, freelancer, escrow } = await deployFixture();
+    const now = await time.latest();
+    await escrow
+      .connect(client)
+      .proposeProject(
+        freelancer.address,
+        ["Design", "Development"],
+        ["Create system design", "Ship implementation"],
+        [ethers.parseUnits("50", 6), ethers.parseUnits("150", 6)],
+        [now + 3 * 60 * 60, now + 6 * 60 * 60]
+      );
+
+    const projectMilestones = await escrow.getMilestonesByProject(0);
+    expect(projectMilestones.length).to.equal(2);
+
+    const first = await escrow.getMilestone(projectMilestones[0]);
+    const second = await escrow.getMilestone(projectMilestones[1]);
+    expect(first.title).to.equal("Design");
+    expect(second.title).to.equal("Development");
+  });
+
   it("fundMilestone transfers USDC to contract", async function () {
     const { client, freelancer, escrow, usdc } = await deployFixture();
     const { milestoneId, amount } = await createSingleMilestoneProject(escrow, client, freelancer);
@@ -119,6 +141,17 @@ describe("MilestoneEscrow", function () {
     expect(await usdc.balanceOf(freelancer.address)).to.equal(freelancerBefore + payout);
   });
 
+  it("autoRelease reverts before 48h window", async function () {
+    const { client, freelancer, escrow } = await deployFixture();
+    const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);
+    await escrow.connect(client).fundMilestone(milestoneId);
+    await escrow.connect(freelancer).submitDeliverable(milestoneId, "https://example.com/work");
+
+    await expect(escrow.connect(freelancer).autoRelease(milestoneId)).to.be.revertedWith(
+      "dispute window not elapsed"
+    );
+  });
+
   it("raiseDispute assigns 3 arbitrators", async function () {
     const { client, freelancer, escrow } = await deployFixture();
     const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);
@@ -134,6 +167,18 @@ describe("MilestoneEscrow", function () {
     expect(dispute.arbitrators[0]).to.not.equal(dispute.arbitrators[1]);
     expect(dispute.arbitrators[0]).to.not.equal(dispute.arbitrators[2]);
     expect(dispute.arbitrators[1]).to.not.equal(dispute.arbitrators[2]);
+  });
+
+  it("requires minimum 3 arbitrators before dispute can be raised", async function () {
+    const { owner, client, freelancer, escrow, arb3 } = await deployFixture();
+    const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);
+    await escrow.connect(owner).removeArbitrator(arb3.address);
+    await escrow.connect(client).fundMilestone(milestoneId);
+    await escrow.connect(freelancer).submitDeliverable(milestoneId, "https://example.com/work");
+
+    await expect(
+      escrow.connect(client).raiseDispute(milestoneId, "This requires arbitration due quality concerns.")
+    ).to.be.revertedWith("need at least 3 arbitrators");
   });
 
   it("voteOnDispute resolves with majority (2 of 3)", async function () {
@@ -181,6 +226,19 @@ describe("MilestoneEscrow", function () {
     expect(await usdc.balanceOf(freelancer.address)).to.equal(freelancerBefore + (amount - fee));
   });
 
+  it("platform treasury receives correct fee on approval", async function () {
+    const { owner, client, freelancer, escrow, usdc } = await deployFixture();
+    const { milestoneId, amount } = await createSingleMilestoneProject(escrow, client, freelancer);
+    await escrow.connect(client).fundMilestone(milestoneId);
+    await escrow.connect(freelancer).submitDeliverable(milestoneId, "https://example.com/work");
+
+    const treasuryBefore = await usdc.balanceOf(owner.address);
+    await escrow.connect(client).approveMilestone(milestoneId);
+
+    const fee = (amount * 1000n) / 10000n;
+    expect(await usdc.balanceOf(owner.address)).to.equal(treasuryBefore + fee);
+  });
+
   it("FavorClient outcome refunds client", async function () {
     const { client, freelancer, escrow, usdc, arb1, arb2, arb3 } = await deployFixture();
     const { milestoneId, amount } = await createSingleMilestoneProject(escrow, client, freelancer);
@@ -216,6 +274,48 @@ describe("MilestoneEscrow", function () {
 
     await escrow.connect(first).voteOnDispute(milestoneId, 1);
     await expect(escrow.connect(first).voteOnDispute(milestoneId, 1)).to.be.revertedWith("already voted");
+  });
+
+  it("non-arbitrator cannot vote", async function () {
+    const { client, freelancer, other, escrow } = await deployFixture();
+    const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);
+    await escrow.connect(client).fundMilestone(milestoneId);
+    await escrow.connect(freelancer).submitDeliverable(milestoneId, "https://example.com/work");
+    await escrow.connect(client).raiseDispute(milestoneId, "Escalating to arbitrators due mismatch.");
+
+    await expect(escrow.connect(other).voteOnDispute(milestoneId, 1)).to.be.revertedWith(
+      "not an assigned arbitrator"
+    );
+  });
+
+  it("non-party cannot raise dispute", async function () {
+    const { client, freelancer, other, escrow } = await deployFixture();
+    const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);
+    await escrow.connect(client).fundMilestone(milestoneId);
+    await escrow.connect(freelancer).submitDeliverable(milestoneId, "https://example.com/work");
+
+    await expect(
+      escrow.connect(other).raiseDispute(milestoneId, "This should fail because caller is not a party.")
+    ).to.be.revertedWith("only parties can dispute");
+  });
+
+  it("client cannot fund already-funded milestone", async function () {
+    const { client, freelancer, escrow } = await deployFixture();
+    const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);
+    await escrow.connect(client).fundMilestone(milestoneId);
+
+    await expect(escrow.connect(client).fundMilestone(milestoneId)).to.be.revertedWith("already funded");
+  });
+
+  it("freelancer cannot submit after deadline", async function () {
+    const { client, freelancer, escrow } = await deployFixture();
+    const { milestoneId, deadline } = await createSingleMilestoneProject(escrow, client, freelancer);
+    await escrow.connect(client).fundMilestone(milestoneId);
+    await time.increaseTo(deadline + 1);
+
+    await expect(
+      escrow.connect(freelancer).submitDeliverable(milestoneId, "https://example.com/work")
+    ).to.be.revertedWith("past deadline");
   });
 
   it("Cannot dispute after window elapsed", async function () {
