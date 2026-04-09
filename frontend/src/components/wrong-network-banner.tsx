@@ -2,46 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { expectedChainId } from "@/lib/contracts";
-
-type AddChainParams = {
-  chainId: string;
-  chainName: string;
-  nativeCurrency: {
-    name: string;
-    symbol: string;
-    decimals: number;
-  };
-  rpcUrls: string[];
-  blockExplorerUrls: string[];
-};
-
-function getChainConfig(chainId: number): AddChainParams {
-  if (chainId === 5042002) {
-    return {
-      chainId: "0x4CEF52",
-      chainName: "Arc Testnet",
-      nativeCurrency: {
-        name: "USDC",
-        symbol: "USDC",
-        decimals: 18
-      },
-      rpcUrls: ["https://rpc.testnet.arc.network"],
-      blockExplorerUrls: ["https://testnet.arcscan.app"]
-    };
-  }
-
-  return {
-    chainId: "0x7A69",
-    chainName: "Hardhat Local",
-    nativeCurrency: {
-      name: "ETH",
-      symbol: "ETH",
-      decimals: 18
-    },
-    rpcUrls: ["http://127.0.0.1:8545"],
-    blockExplorerUrls: []
-  };
-}
+import { getChainConfig } from "@/lib/network-config";
 
 export function WrongNetworkBanner({ isWrongNetwork }: { isWrongNetwork: boolean }) {
   const [switching, setSwitching] = useState(false);
