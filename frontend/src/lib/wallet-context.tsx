@@ -1,23 +1,15 @@
 "use client";
 
 import { BrowserProvider, JsonRpcSigner } from "ethers";
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { expectedChainId } from "@/lib/contracts";
 import { getChainConfig } from "@/lib/network-config";
 import {
-  EIP6963ProviderDetail,
-  EIP1193Provider,
-  getLegacyProvider,
-  getLegacyProviders,
-  onWalletAnnounced,
+  DetectedWallet,
+  WalletProvider as RawWalletProvider,
+  getDetectedWallets,
+  initWalletDiscovery,
+  onWalletsChanged,
   requestWallets
 } from "@/lib/wallet-discovery";
 
@@ -31,11 +23,11 @@ type WalletContextType = {
   isConnecting: boolean;
   isConnected: boolean;
   error: string | null;
-  availableWallets: EIP6963ProviderDetail[];
+  availableWallets: DetectedWallet[];
   showWalletPicker: boolean;
   openWalletPicker: () => void;
   closeWalletPicker: () => void;
-  connectWallet: (walletDetail: EIP6963ProviderDetail) => Promise<BrowserProvider | null>;
+  connectWallet: (wallet: DetectedWallet) => Promise<BrowserProvider | null>;
   connect: () => Promise<BrowserProvider | null>;
   disconnect: () => void;
 };
@@ -61,12 +53,18 @@ const WalletContext = createContext<WalletContextType>({
 
 const LAST_WALLET_KEY = "archon.last_wallet_uuid";
 
+type ProviderListenerState = {
+  provider: RawWalletProvider;
+  handleAccountsChanged: (...args: unknown[]) => void;
+  handleChainChanged: (...args: unknown[]) => void;
+};
+
 function isMissingChainError(error: unknown) {
   const candidate = error as { code?: number; message?: string };
   return candidate?.code === 4902 || String(candidate?.message ?? "").toLowerCase().includes("unrecognized chain");
 }
 
-async function ensureExpectedNetwork(provider: EIP1193Provider) {
+async function ensureExpectedNetwork(provider: RawWalletProvider) {
   const chainConfig = getChainConfig(expectedChainId);
 
   try {
@@ -98,89 +96,169 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [chainId, setChainId] = useState<number | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [availableWallets, setAvailableWallets] = useState<EIP6963ProviderDetail[]>([]);
+  const [availableWallets, setAvailableWallets] = useState<DetectedWallet[]>(() => getDetectedWallets());
   const [showWalletPicker, setShowWalletPicker] = useState(false);
-  const [activeWallet, setActiveWallet] = useState<EIP6963ProviderDetail | null>(null);
-  const walletsRef = useRef<EIP6963ProviderDetail[]>([]);
 
-  const setWalletList = useCallback((list: EIP6963ProviderDetail[]) => {
-    walletsRef.current = list;
-    setAvailableWallets(list);
+  const listenersRef = useRef<ProviderListenerState | null>(null);
+
+  const detachProviderListeners = useCallback(() => {
+    const current = listenersRef.current;
+    if (!current) return;
+
+    try {
+      current.provider.removeListener?.("accountsChanged", current.handleAccountsChanged);
+      current.provider.removeListener?.("chainChanged", current.handleChainChanged);
+    } catch {
+      // ignore provider-specific listener errors
+    }
+
+    listenersRef.current = null;
   }, []);
 
+  const clearConnection = useCallback(() => {
+    detachProviderListeners();
+    setAddress(null);
+    setProvider(null);
+    setSigner(null);
+    setChainId(null);
+  }, [detachProviderListeners]);
+
+  const disconnect = useCallback(() => {
+    clearConnection();
+  }, [clearConnection]);
+
+  const attachProviderListeners = useCallback(
+    (wallet: DetectedWallet) => {
+      const rawProvider = wallet.provider;
+
+      detachProviderListeners();
+
+      const handleAccountsChanged = (...args: unknown[]) => {
+        const maybeAccounts = args[0];
+        const accounts = Array.isArray(maybeAccounts)
+          ? maybeAccounts.filter((value): value is string => typeof value === "string")
+          : [];
+
+        if (accounts.length === 0) {
+          clearConnection();
+          return;
+        }
+
+        setAddress(accounts[0]);
+      };
+
+      const handleChainChanged = (...args: unknown[]) => {
+        const maybeChainId = args[0];
+        if (typeof maybeChainId === "string") {
+          const parsed = Number.parseInt(maybeChainId, 16);
+          if (!Number.isNaN(parsed)) {
+            setChainId(parsed);
+            return;
+          }
+        }
+
+        window.location.reload();
+      };
+
+      rawProvider.on?.("accountsChanged", handleAccountsChanged);
+      rawProvider.on?.("chainChanged", handleChainChanged);
+
+      listenersRef.current = {
+        provider: rawProvider,
+        handleAccountsChanged,
+        handleChainChanged
+      };
+    },
+    [clearConnection, detachProviderListeners]
+  );
+
+  const hydrateFromWallet = useCallback(
+    async (
+      wallet: DetectedWallet,
+      options: {
+        requestAccounts: boolean;
+        ensureNetwork: boolean;
+      }
+    ) => {
+      const rawProvider = wallet.provider;
+      if (!rawProvider || typeof rawProvider.request !== "function") {
+        throw new Error("Selected wallet provider is invalid.");
+      }
+
+      if (options.requestAccounts) {
+        await rawProvider.request({ method: "eth_requestAccounts" });
+      }
+
+      if (options.ensureNetwork) {
+        await ensureExpectedNetwork(rawProvider);
+      }
+
+      const ethProvider = new BrowserProvider(rawProvider as never);
+      const nextSigner = await ethProvider.getSigner();
+      const nextAddress = await nextSigner.getAddress();
+      const network = await ethProvider.getNetwork();
+
+      setProvider(ethProvider);
+      setSigner(nextSigner);
+      setAddress(nextAddress);
+      setChainId(Number(network.chainId));
+      setShowWalletPicker(false);
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LAST_WALLET_KEY, wallet.info.uuid);
+      }
+
+      attachProviderListeners(wallet);
+
+      return ethProvider;
+    },
+    [attachProviderListeners]
+  );
+
   useEffect(() => {
-    if (typeof window === "undefined") return () => undefined;
+    initWalletDiscovery();
 
-    const seen = new Set<string>();
-    const discovered: EIP6963ProviderDetail[] = [];
+    const unsubscribe = onWalletsChanged((wallets) => {
+      setAvailableWallets([...wallets]);
+    });
 
-    const addWallet = (detail: EIP6963ProviderDetail) => {
-      const key = detail.info.uuid || detail.info.rdns || detail.info.name;
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      discovered.push(detail);
-      setWalletList([...discovered]);
+    return () => {
+      unsubscribe();
     };
-
-    const cleanup = onWalletAnnounced(addWallet);
-
-    const legacyProviders = getLegacyProviders();
-    for (const detail of legacyProviders) {
-      addWallet(detail);
-    }
-    if (legacyProviders.length === 0) {
-      const legacy = getLegacyProvider();
-      if (legacy) addWallet(legacy);
-    }
-
-    requestWallets();
-
-    return cleanup;
-  }, [setWalletList]);
-
-  const hydrateProviderState = useCallback(async (walletDetail: EIP6963ProviderDetail) => {
-    const browserProvider = new BrowserProvider(walletDetail.provider as never);
-    const nextSigner = await browserProvider.getSigner();
-    const nextAddress = await nextSigner.getAddress();
-    const network = await browserProvider.getNetwork();
-
-    setProvider(browserProvider);
-    setSigner(nextSigner);
-    setAddress(nextAddress);
-    setChainId(Number(network.chainId));
-    setActiveWallet(walletDetail);
-
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(LAST_WALLET_KEY, walletDetail.info.uuid);
-    }
-
-    return browserProvider;
   }, []);
 
   const connectWallet = useCallback(
-    async (walletDetail: EIP6963ProviderDetail) => {
+    async (wallet: DetectedWallet) => {
       setIsConnecting(true);
       setError(null);
-      setShowWalletPicker(false);
 
       try {
-        await walletDetail.provider.request({ method: "eth_requestAccounts" });
-        await ensureExpectedNetwork(walletDetail.provider);
-        return await hydrateProviderState(walletDetail);
+        return await hydrateFromWallet(wallet, {
+          requestAccounts: true,
+          ensureNetwork: true
+        });
       } catch (connectError) {
-        const message = connectError instanceof Error ? connectError.message : "Connection failed";
-        setError(message);
+        const message = connectError instanceof Error ? connectError.message : String(connectError);
+        const lowered = message.toLowerCase();
+        if (lowered.includes("user rejected") || lowered.includes("4001")) {
+          setError(null);
+        } else {
+          setError(message);
+        }
         return null;
       } finally {
         setIsConnecting(false);
       }
     },
-    [hydrateProviderState]
+    [hydrateFromWallet]
   );
 
   const connect = useCallback(async () => {
-    const wallets = walletsRef.current;
+    if (provider && address) return provider;
+
+    const wallets = getDetectedWallets();
     if (wallets.length === 0) {
+      initWalletDiscovery();
       requestWallets();
       setError("No EVM wallet detected. Install MetaMask, Coinbase Wallet, Rabby, Rainbow, Trust Wallet, or another EVM wallet.");
       setShowWalletPicker(true);
@@ -188,104 +266,67 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
 
     let selected = wallets[0];
+
     if (typeof window !== "undefined") {
-      const remembered = window.localStorage.getItem(LAST_WALLET_KEY);
-      const matched = wallets.find((wallet) => wallet.info.uuid === remembered);
-      if (matched) selected = matched;
+      const rememberedUuid = window.localStorage.getItem(LAST_WALLET_KEY);
+      const remembered = wallets.find((wallet) => wallet.info.uuid === rememberedUuid);
+      if (remembered) {
+        selected = remembered;
+      }
     }
 
     return connectWallet(selected);
-  }, [connectWallet]);
-
-  const disconnect = useCallback(() => {
-    setAddress(null);
-    setProvider(null);
-    setSigner(null);
-    setChainId(null);
-    setActiveWallet(null);
-  }, []);
+  }, [address, connectWallet, provider]);
 
   useEffect(() => {
     let active = true;
 
-    const restore = async () => {
-      const wallets = walletsRef.current;
-      if (wallets.length === 0) return;
+    const restoreSession = async () => {
+      if (availableWallets.length === 0) return;
 
-      let selected: EIP6963ProviderDetail | undefined;
+      let selected = availableWallets[0];
       if (typeof window !== "undefined") {
-        const remembered = window.localStorage.getItem(LAST_WALLET_KEY);
-        selected = wallets.find((wallet) => wallet.info.uuid === remembered);
+        const rememberedUuid = window.localStorage.getItem(LAST_WALLET_KEY);
+        const remembered = availableWallets.find((wallet) => wallet.info.uuid === rememberedUuid);
+        if (remembered) selected = remembered;
       }
-      selected = selected ?? wallets[0];
 
       try {
-        const browserProvider = new BrowserProvider(selected.provider as never);
-        const accounts = (await selected.provider.request({ method: "eth_accounts" })) as string[];
-        if (!active || !accounts?.length) return;
+        const accounts = (await selected.provider.request({ method: "eth_accounts" })) as unknown;
+        const knownAccounts = Array.isArray(accounts)
+          ? accounts.filter((value): value is string => typeof value === "string")
+          : [];
 
-        const nextSigner = await browserProvider.getSigner();
-        const network = await browserProvider.getNetwork();
+        if (!active || knownAccounts.length === 0) return;
 
-        if (!active) return;
-        setProvider(browserProvider);
-        setSigner(nextSigner);
-        setAddress(accounts[0]);
-        setChainId(Number(network.chainId));
-        setActiveWallet(selected);
+        await hydrateFromWallet(selected, {
+          requestAccounts: false,
+          ensureNetwork: false
+        });
       } catch {
         if (!active) return;
-        setProvider(null);
-        setSigner(null);
-        setAddress(null);
-        setChainId(null);
-        setActiveWallet(null);
+        clearConnection();
       }
     };
 
-    void restore();
+    void restoreSession();
 
     return () => {
       active = false;
     };
-  }, [availableWallets]);
+  }, [availableWallets, clearConnection, hydrateFromWallet]);
 
   useEffect(() => {
-    const activeProvider = activeWallet?.provider;
-    if (!activeProvider?.on || !activeProvider.removeListener) {
-      return () => undefined;
-    }
-
-    const handleAccountsChanged = (...args: unknown[]) => {
-      const accounts = Array.isArray(args[0])
-        ? args[0].filter((value): value is string => typeof value === "string")
-        : [];
-      if (accounts.length === 0) {
-        disconnect();
-        return;
-      }
-      setAddress(accounts[0]);
-    };
-
-    const handleChainChanged = (...args: unknown[]) => {
-      const hexChainId = typeof args[0] === "string" ? args[0] : "";
-      const parsed = Number.parseInt(hexChainId, 16);
-      setChainId(Number.isNaN(parsed) ? null : parsed);
-    };
-
-    activeProvider.on("accountsChanged", handleAccountsChanged);
-    activeProvider.on("chainChanged", handleChainChanged);
-
     return () => {
-      activeProvider.removeListener?.("accountsChanged", handleAccountsChanged);
-      activeProvider.removeListener?.("chainChanged", handleChainChanged);
+      detachProviderListeners();
     };
-  }, [activeWallet, disconnect]);
+  }, [detachProviderListeners]);
 
   const openWalletPicker = useCallback(() => {
+    initWalletDiscovery();
     requestWallets();
-    setShowWalletPicker(true);
     setError(null);
+    setShowWalletPicker(true);
   }, []);
 
   const closeWalletPicker = useCallback(() => {
