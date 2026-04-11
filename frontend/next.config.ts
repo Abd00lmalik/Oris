@@ -7,7 +7,7 @@ const securityHeaders = [
   {
     key: "Content-Security-Policy",
     value:
-      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; connect-src 'self' https: wss: http://127.0.0.1:8545;"
+      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; connect-src 'self' https: wss: http://127.0.0.1:8545; img-src 'self' data: https: chrome-extension:;"
   }
 ];
 
