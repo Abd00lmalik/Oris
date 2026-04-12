@@ -119,10 +119,6 @@ contract AgentTaskSource is ICredentialSource {
         uint256 deadline,
         uint256 rewardUSDC
     ) external returns (uint256 taskId) {
-        require(
-            ISourceRegistry(sourceRegistry).isApprovedFor("agent_task", msg.sender),
-            "source operator not approved"
-        );
         require(bytes(taskDescription).length > 0, "description required");
         require(bytes(inputData).length > 0, "input data required");
         require(deadline > block.timestamp + MIN_TASK_DURATION, "deadline too soon");

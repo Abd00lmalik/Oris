@@ -25,8 +25,6 @@ describe("Archon Hook + ERC8183Job", function () {
     await usdc.connect(owner).mint(agentA.address, oneMillion);
     await usdc.connect(owner).mint(agentB.address, oneMillion);
 
-    await sourceRegistry.connect(owner).approveOperator("job", client.address);
-
     const job = await (await ethers.getContractFactory("ERC8183Job"))
       .connect(owner)
       .deploy(await hook.getAddress(), await usdc.getAddress(), await sourceRegistry.getAddress(), treasury.address, 1000);
@@ -35,7 +33,7 @@ describe("Archon Hook + ERC8183Job", function () {
 
     await usdc.connect(client).approve(await job.getAddress(), oneMillion);
 
-    return { owner, client, agentA, agentB, treasury, other, sourceRegistry, registry, hook, usdc, job };
+    return { owner, client, agentA, agentB, treasury, other, registry, hook, usdc, job };
   }
 
   async function createJob(
@@ -58,29 +56,9 @@ describe("Archon Hook + ERC8183Job", function () {
     expect(await hook.owner()).to.equal(owner.address);
   });
 
-  it("creates escrowed jobs only for approved source operators", async function () {
-    const { job, sourceRegistry, client, other } = await deployFixture();
-    const deadline = (await time.latest()) + 7200;
-    const reward = ethers.parseUnits("300", 6);
-
-    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward, 3)).to.be.revertedWith(
-      "source operator not approved"
-    );
-
-    await sourceRegistry.approveOperator("job", other.address);
-    await expect(job.connect(other).createJob("Title", "Desc", deadline, reward, 3)).to.be.revertedWith(
-      "insufficient allowance"
-    );
-
-    await expect(job.connect(client).createJob("Title", "Desc", deadline, reward, 3))
-      .to.emit(job, "JobCreated")
-      .withArgs(0, client.address, "Title", "Desc", deadline, reward);
-  });
-
   it("enforces review delay and approval cap", async function () {
     const { owner, job, client, agentA, agentB, other } = await deployFixture();
     await createJob(job, client);
-    await sourceRegistryApprove(job, owner, other);
 
     await job.connect(agentA).acceptJob(0);
     await job.connect(agentA).submitDeliverable(0, "https://github.com/a");
@@ -149,18 +127,6 @@ describe("Archon Hook + ERC8183Job", function () {
       hook.connect(other).onActivityComplete(other.address, 1, "job", 100)
     ).to.be.revertedWith("source contract not registered");
   });
-
-  async function sourceRegistryApprove(job: any, owner: any, wallet: any) {
-    const sourceRegistryAddress = await job.sourceRegistry();
-    const sourceRegistry = await ethers.getContractAt("SourceRegistry", sourceRegistryAddress, owner);
-    await sourceRegistry.approveOperator("job", wallet.address);
-
-    const oneMillion = ethers.parseUnits("1000000", 6);
-    const usdcAddress = await job.usdc();
-    const usdc = await ethers.getContractAt("MockUSDC", usdcAddress, owner);
-    await usdc.mint(wallet.address, oneMillion);
-    await usdc.connect(wallet).approve(await job.getAddress(), oneMillion);
-  }
 
   async function hookIssuer(job: any) {
     return await job.hook();

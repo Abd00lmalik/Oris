@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -66,12 +66,12 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   },
   {
     id: 6,
-    title: "Post Tasks (Requires Approval)",
+    title: "Post Tasks Instantly",
     content:
-      "Want to post tasks for others? Go to the Apply page and submit an operator application. Once approved by the platform, you can create tasks with USDC reward pools.",
+      "Anyone can post tasks now. Go to Create Task, set your reward pool, approve USDC, and publish your task immediately.",
     highlight: null,
     icon: "star",
-    link: { label: "Apply to Post Tasks ->", url: "/apply" }
+    link: { label: "Create a Task ->", url: "/create-job" }
   },
   {
     id: 7,
@@ -134,7 +134,7 @@ export function Tutorial({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       return "tutorial-slide-left";
     }
     return "tutorial-slide-right";
-  }, [direction, animateKey]);
+  }, [direction]);
 
   const markSeenAndClose = () => {
     if (typeof window !== "undefined") {
@@ -255,3 +255,4 @@ export function Tutorial({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     </div>
   );
 }
+

@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import {ICredentialHook} from "./interfaces/ICredentialHook.sol";
 import {ICredentialSource} from "./interfaces/ICredentialSource.sol";
 import {IERC20Minimal} from "./interfaces/IERC20Minimal.sol";
-import {ISourceRegistry} from "./interfaces/ISourceRegistry.sol";
 import {IValidationRegistry} from "./interfaces/IValidationRegistry.sol";
 
 contract ERC8183Job is ICredentialSource {
@@ -201,11 +200,6 @@ contract ERC8183Job is ICredentialSource {
         uint256 rewardUSDC,
         uint256 maxApprovals
     ) external returns (uint256 createdJobId) {
-        require(
-            ISourceRegistry(sourceRegistry).isApprovedFor("job", msg.sender) ||
-                ISourceRegistry(sourceRegistry).isApprovedFor("task", msg.sender),
-            "source operator not approved"
-        );
         require(bytes(title).length > 0, "title required");
         require(bytes(description).length > 0, "description required");
         require(deadline >= block.timestamp + MIN_JOB_DURATION, "deadline too soon");

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { ethers } from "ethers";
@@ -9,30 +9,16 @@ import {
   SourceOperatorStatus,
   txApplyToOperate
 } from "@/lib/contracts";
-import {
-  IconCommunity,
-  IconGovernance,
-  IconRobot,
-  IconStar,
-  IconTask
-} from "@/lib/icons";
+import { IconCommunity, IconGovernance, IconTask } from "@/lib/icons";
 import { useWallet } from "@/lib/wallet-context";
 
-type RoleKey = "task" | "community" | "agent_task" | "dao_governance";
+type RoleKey = "community" | "dao_governance";
 
-const ROLE_TYPES: RoleKey[] = ["task", "community", "agent_task", "dao_governance"];
+const ROLE_TYPES: RoleKey[] = ["community", "dao_governance"];
 
 const EMPTY_STATUS: Record<RoleKey, SourceOperatorStatus> = {
-  task: { sourceType: "task", approved: false, pending: false, appliedAt: 0, profileURI: "" },
   community: { sourceType: "community", approved: false, pending: false, appliedAt: 0, profileURI: "" },
-  agent_task: { sourceType: "agent_task", approved: false, pending: false, appliedAt: 0, profileURI: "" },
-  dao_governance: {
-    sourceType: "dao_governance",
-    approved: false,
-    pending: false,
-    appliedAt: 0,
-    profileURI: ""
-  }
+  dao_governance: { sourceType: "dao_governance", approved: false, pending: false, appliedAt: 0, profileURI: "" }
 };
 
 function statusBadge(status: SourceOperatorStatus) {
@@ -55,15 +41,6 @@ export default function ApplyPage() {
   const [error, setError] = useState("");
   const formRef = useRef<HTMLDivElement | null>(null);
 
-  const [taskForm, setTaskForm] = useState({
-    name: "",
-    website: "",
-    taskTypes: "",
-    reason: "",
-    monthlyVolume: "1-5 tasks",
-    rewardRange: "5-50 USDC"
-  });
-
   const [moderatorForm, setModeratorForm] = useState({
     name: "",
     github: "",
@@ -71,15 +48,6 @@ export default function ApplyPage() {
     notableContribution: "",
     weeklyCapacity: "5-10",
     expertise: [] as string[]
-  });
-
-  const [agentForm, setAgentForm] = useState({
-    name: "",
-    portfolio: "",
-    taskSpecs: "",
-    automationSetup: "",
-    validationApproach: "",
-    monthlyVolume: "1-5 tasks"
   });
 
   const [daoForm, setDaoForm] = useState({
@@ -117,9 +85,7 @@ export default function ApplyPage() {
     try {
       const result = await fetchSourceOperatorStatuses(account, ROLE_TYPES);
       setStatuses({
-        task: result.task ?? EMPTY_STATUS.task,
         community: result.community ?? EMPTY_STATUS.community,
-        agent_task: result.agent_task ?? EMPTY_STATUS.agent_task,
         dao_governance: result.dao_governance ?? EMPTY_STATUS.dao_governance
       });
     } catch {
@@ -165,9 +131,9 @@ export default function ApplyPage() {
   return (
     <section className="space-y-6">
       <div className="archon-card p-6">
-        <h1 className="text-2xl font-semibold text-[#EAEAF0]">Apply for a Role</h1>
+        <h1 className="text-2xl font-semibold text-[#EAEAF0]">Join Archon</h1>
         <p className="mt-2 text-sm text-[#9CA3AF]">
-          Apply to become a Task Creator, Community Moderator, Agent Task Operator, or DAO Governance Admin on Archon.
+          Complete tasks immediately — no approval needed. Apply for a moderator role to help grow the community.
         </p>
         {account ? (
           <p className="mt-2 text-xs text-[#9CA3AF]">
@@ -197,8 +163,8 @@ export default function ApplyPage() {
               </div>
               <h2 className="text-lg font-semibold text-[#EAEAF0]">Complete Tasks</h2>
               <p className="mt-2 text-sm text-[#9CA3AF]">
-                Browse open tasks, submit your work, get paid in USDC, and earn on-chain credentials. No approval needed
-                - start immediately.
+                Browse open tasks, submit your work, get paid in USDC, and earn on-chain credentials. No approval needed —
+                start immediately.
               </p>
               <p className="mt-2 text-xs text-[#9CA3AF]">No application required.</p>
             </div>
@@ -209,32 +175,6 @@ export default function ApplyPage() {
         </article>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <article className="archon-card p-5">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-[#2DE2FF]/15 px-2 py-1 text-xs text-[#2DE2FF]">
-              <IconStar className="h-3.5 w-3.5" />
-              Requires approval
-            </div>
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="text-lg font-semibold text-[#EAEAF0]">Task Creator</h3>
-              {statusBadge(statuses.task)}
-            </div>
-            <p className="mt-2 text-sm text-[#9CA3AF]">
-              Post tasks with USDC reward pools. Contributors complete your tasks and earn credentials. Requires platform
-              approval to prevent spam.
-            </p>
-            {statuses.task.approved ? (
-              <Link href="/create-job" className="archon-button-primary mt-4 inline-flex px-3 py-2 text-sm">
-                Go to Create Task
-              </Link>
-            ) : statuses.task.pending ? (
-              <p className="mt-4 text-xs text-amber-200">Your application is pending review. Response time is within 48 hours.</p>
-            ) : (
-              <button type="button" onClick={() => openForm("task")} className="archon-button-primary mt-4 px-3 py-2 text-sm">
-                Apply as Task Creator
-              </button>
-            )}
-          </article>
-
           <article className="archon-card p-5">
             <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-[#22C55E]/15 px-2 py-1 text-xs text-[#22C55E]">
               <IconCommunity className="h-3.5 w-3.5" />
@@ -256,31 +196,6 @@ export default function ApplyPage() {
             ) : (
               <button type="button" onClick={() => openForm("community")} className="archon-button-primary mt-4 px-3 py-2 text-sm">
                 Apply as Moderator
-              </button>
-            )}
-          </article>
-
-          <article className="archon-card p-5">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-[#8B5CF6]/15 px-2 py-1 text-xs text-[#8B5CF6]">
-              <IconRobot className="h-3.5 w-3.5" />
-              Requires approval
-            </div>
-            <div className="flex items-start justify-between gap-2">
-              <h3 className="text-lg font-semibold text-[#EAEAF0]">Agent Task Operator</h3>
-              {statusBadge(statuses.agent_task)}
-            </div>
-            <p className="mt-2 text-sm text-[#9CA3AF]">
-              Post structured tasks for autonomous AI agents and developers. You define specs and validate completions.
-            </p>
-            {statuses.agent_task.approved ? (
-              <Link href="/tasks" className="archon-button-primary mt-4 inline-flex px-3 py-2 text-sm">
-                Open Agentic Tasks
-              </Link>
-            ) : statuses.agent_task.pending ? (
-              <p className="mt-4 text-xs text-amber-200">Your application is pending review. Response time is within 48 hours.</p>
-            ) : (
-              <button type="button" onClick={() => openForm("agent_task")} className="archon-button-primary mt-4 px-3 py-2 text-sm">
-                Apply as Agent Operator
               </button>
             )}
           </article>
@@ -313,66 +228,6 @@ export default function ApplyPage() {
       </div>
 
       <div ref={formRef}>
-        {selectedRole === "task" ? (
-          <div className="archon-card space-y-4 p-6">
-            <h2 className="text-xl font-semibold text-[#EAEAF0]">Apply to Post Tasks</h2>
-            <p className="text-sm text-[#9CA3AF]">Tell us about the tasks you plan to create.</p>
-
-            <label className="block text-sm text-[#9CA3AF]">
-              Your name or organization
-              <input className="archon-input mt-1" value={taskForm.name} onChange={(e) => setTaskForm((p) => ({ ...p, name: e.target.value }))} />
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Your website, GitHub, or portfolio
-              <input className="archon-input mt-1" type="url" value={taskForm.website} onChange={(e) => setTaskForm((p) => ({ ...p, website: e.target.value }))} />
-              <span className="mt-1 block text-xs">We verify this to confirm your identity.</span>
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Task types and examples
-              <textarea className="archon-input mt-1 min-h-28" value={taskForm.taskTypes} onChange={(e) => setTaskForm((p) => ({ ...p, taskTypes: e.target.value }))} />
-              <span className="mt-1 block text-xs">Minimum 100 characters.</span>
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Why you should be approved
-              <textarea className="archon-input mt-1 min-h-28" value={taskForm.reason} onChange={(e) => setTaskForm((p) => ({ ...p, reason: e.target.value }))} />
-              <span className="mt-1 block text-xs">Minimum 150 characters.</span>
-            </label>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm text-[#9CA3AF]">
-                Expected monthly task volume
-                <select className="archon-input mt-1" value={taskForm.monthlyVolume} onChange={(e) => setTaskForm((p) => ({ ...p, monthlyVolume: e.target.value }))}>
-                  <option>1-5 tasks</option>
-                  <option>6-20 tasks</option>
-                  <option>21-50 tasks</option>
-                  <option>50+ tasks</option>
-                </select>
-              </label>
-              <label className="block text-sm text-[#9CA3AF]">
-                Typical reward per task
-                <select className="archon-input mt-1" value={taskForm.rewardRange} onChange={(e) => setTaskForm((p) => ({ ...p, rewardRange: e.target.value }))}>
-                  <option>5-50 USDC</option>
-                  <option>50-200 USDC</option>
-                  <option>200-500 USDC</option>
-                  <option>500+ USDC</option>
-                </select>
-              </label>
-            </div>
-            <button
-              type="button"
-              disabled={submitting || loadingStatuses}
-              onClick={() => {
-                if (!account) return setError("Connect your wallet before submitting.");
-                if (taskForm.taskTypes.trim().length < 100) return setError("Task types and examples must be at least 100 characters.");
-                if (taskForm.reason.trim().length < 150) return setError("Why you should be approved must be at least 150 characters.");
-                void submitRole("task", { role: "task", ...taskForm });
-              }}
-              className="archon-button-primary px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {submitting ? "Submitting..." : "Submit Task Creator Application"}
-            </button>
-          </div>
-        ) : null}
-
         {selectedRole === "community" ? (
           <div className="archon-card space-y-4 p-6">
             <h2 className="text-xl font-semibold text-[#EAEAF0]">Apply as Community Moderator</h2>
@@ -442,59 +297,6 @@ export default function ApplyPage() {
           </div>
         ) : null}
 
-        {selectedRole === "agent_task" ? (
-          <div className="archon-card space-y-4 p-6">
-            <h2 className="text-xl font-semibold text-[#EAEAF0]">Apply as Agent Task Operator</h2>
-            <p className="text-sm text-[#9CA3AF]">Agent tasks are structured for autonomous AI completion. You define specs and validation criteria.</p>
-            <label className="block text-sm text-[#9CA3AF]">
-              Your name or organization
-              <input className="archon-input mt-1" value={agentForm.name} onChange={(e) => setAgentForm((p) => ({ ...p, name: e.target.value }))} />
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              GitHub or technical portfolio
-              <input className="archon-input mt-1" type="url" value={agentForm.portfolio} onChange={(e) => setAgentForm((p) => ({ ...p, portfolio: e.target.value }))} />
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Task types and specifications
-              <textarea className="archon-input mt-1 min-h-28" value={agentForm.taskSpecs} onChange={(e) => setAgentForm((p) => ({ ...p, taskSpecs: e.target.value }))} />
-              <span className="mt-1 block text-xs">Minimum 100 characters.</span>
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Your agent or automation setup
-              <textarea className="archon-input mt-1 min-h-24" value={agentForm.automationSetup} onChange={(e) => setAgentForm((p) => ({ ...p, automationSetup: e.target.value }))} />
-              <span className="mt-1 block text-xs">Minimum 50 characters.</span>
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Validation approach
-              <textarea className="archon-input mt-1 min-h-24" value={agentForm.validationApproach} onChange={(e) => setAgentForm((p) => ({ ...p, validationApproach: e.target.value }))} />
-              <span className="mt-1 block text-xs">Minimum 100 characters.</span>
-            </label>
-            <label className="block text-sm text-[#9CA3AF]">
-              Expected monthly task volume
-              <select className="archon-input mt-1" value={agentForm.monthlyVolume} onChange={(e) => setAgentForm((p) => ({ ...p, monthlyVolume: e.target.value }))}>
-                <option>1-5 tasks</option>
-                <option>6-20 tasks</option>
-                <option>21-50 tasks</option>
-                <option>50+ tasks</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              disabled={submitting || loadingStatuses}
-              onClick={() => {
-                if (!account) return setError("Connect your wallet before submitting.");
-                if (agentForm.taskSpecs.trim().length < 100) return setError("Task types and specifications must be at least 100 characters.");
-                if (agentForm.automationSetup.trim().length < 50) return setError("Agent setup must be at least 50 characters.");
-                if (agentForm.validationApproach.trim().length < 100) return setError("Validation approach must be at least 100 characters.");
-                void submitRole("agent_task", { role: "agent_task", ...agentForm });
-              }}
-              className="archon-button-primary px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {submitting ? "Submitting..." : "Submit Agent Operator Application"}
-            </button>
-          </div>
-        ) : null}
-
         {selectedRole === "dao_governance" ? (
           <div className="archon-card space-y-4 p-6">
             <h2 className="text-xl font-semibold text-[#EAEAF0]">Apply as DAO Governance Admin</h2>
@@ -559,3 +361,4 @@ export default function ApplyPage() {
     </section>
   );
 }
+

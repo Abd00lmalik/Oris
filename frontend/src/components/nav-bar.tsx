@@ -11,7 +11,7 @@ import { expectedChainId, fetchSourceOperatorStatuses, shortAddress } from "@/li
 import { IconCheck } from "@/lib/icons";
 import { useWallet } from "@/lib/wallet-context";
 
-const ROLE_TYPES = ["task", "community", "agent_task", "dao_governance"] as const;
+const ROLE_TYPES = ["community", "dao_governance"] as const;
 
 type NavLink = {
   href: string;

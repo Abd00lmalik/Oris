@@ -4,7 +4,6 @@ import { ethers } from "ethers";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
-  fetchSourceOperatorStatus,
   contractAddresses,
   expectedChainId,
   fetchUsdcAllowance,
@@ -47,9 +46,6 @@ function clampApprovals(value: string) {
 
 export default function CreateJobPage() {
   const { account, browserProvider, connect } = useWallet();
-  const [isApprovedOperator, setIsApprovedOperator] = useState<boolean | null>(null);
-  const [hasAppliedOperator, setHasAppliedOperator] = useState(false);
-  const [checkingOperatorStatus, setCheckingOperatorStatus] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [deadlineInput, setDeadlineInput] = useState("");
@@ -134,40 +130,6 @@ export default function CreateJobPage() {
       active = false;
     };
   }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    const checkOperatorStatus = async () => {
-      if (!account) {
-        if (!active) return;
-        setIsApprovedOperator(null);
-        setHasAppliedOperator(false);
-        setCheckingOperatorStatus(false);
-        return;
-      }
-
-      setCheckingOperatorStatus(true);
-      try {
-        const taskStatus = await fetchSourceOperatorStatus("task", account);
-        if (!active) return;
-        setIsApprovedOperator(taskStatus.approved);
-        setHasAppliedOperator(taskStatus.appliedAt > 0);
-      } catch {
-        if (!active) return;
-        setIsApprovedOperator(false);
-        setHasAppliedOperator(false);
-      } finally {
-        if (active) setCheckingOperatorStatus(false);
-      }
-    };
-
-    void checkOperatorStatus();
-
-    return () => {
-      active = false;
-    };
-  }, [account]);
 
   useEffect(() => {
     let active = true;
@@ -329,10 +291,6 @@ export default function CreateJobPage() {
     }
     if (gateEnabled && !arcGateAllowed) {
       setError(`You need at least ${ARC_TOKEN_CONFIG.minBalanceToPost} ${ARC_TOKEN_CONFIG.symbol} to post a task.`);
-      return;
-    }
-    if (!isApprovedOperator) {
-      setError("Operator approval required before posting tasks. Apply at /apply.");
       return;
     }
 
@@ -507,7 +465,7 @@ export default function CreateJobPage() {
 
         {!account ? (
           <div className="mt-6 rounded-xl border border-amber-300/35 bg-amber-500/10 p-4 text-sm text-amber-200">
-            <p>Connect your wallet to check operator approval and post tasks.</p>
+            <p>Connect your wallet to start posting tasks.</p>
             <button
               type="button"
               onClick={() => void connect()}
@@ -515,38 +473,6 @@ export default function CreateJobPage() {
             >
               Connect Wallet
             </button>
-          </div>
-        ) : checkingOperatorStatus || isApprovedOperator === null ? (
-          <div className="mt-6 rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
-            Checking operator approval...
-          </div>
-        ) : isApprovedOperator === false ? (
-          <div className="mt-6 rounded-xl border border-white/10 bg-[#111214] p-5">
-            <h2 className="text-lg font-semibold text-[#EAEAF0]">Operator Approval Required</h2>
-            <p className="mt-2 text-sm text-[#9CA3AF]">
-              To post tasks on Archon, your wallet must be approved by the platform. This prevents spam and ensures task quality.
-            </p>
-            <p className="mt-3 text-sm text-[#9CA3AF]">
-              Your wallet: <span className="text-[#EAEAF0]">{account}</span>
-            </p>
-            <div className="mt-3">
-              <span className="rounded-full bg-amber-500/20 px-2 py-1 text-xs text-amber-200">
-                {hasAppliedOperator ? "Pending Review" : "Not Applied"}
-              </span>
-            </div>
-            {hasAppliedOperator ? (
-              <p className="mt-3 text-sm text-[#9CA3AF]">
-                Your application was submitted. The platform team will review it and approve you within 48 hours.
-              </p>
-            ) : (
-              <p className="mt-3 text-sm text-[#9CA3AF]">You have not applied yet.</p>
-            )}
-            <Link href="/apply" className="archon-button-primary mt-4 inline-flex px-3 py-2 text-sm">
-              Apply to Post Tasks
-            </Link>
-            <div className="mt-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-[#9CA3AF]">
-              Already approved but seeing this? Make sure you are connected with the same wallet you used to apply.
-            </div>
           </div>
         ) : (
         <form onSubmit={handleCreate} className="mt-6 space-y-4">
