@@ -1270,6 +1270,22 @@ export async function fetchOpenAgentTasks(): Promise<AgentTaskRecord[]> {
   return tasks.sort((a, b) => b.taskId - a.taskId);
 }
 
+export async function fetchAgentTaskById(taskId: number): Promise<AgentTaskRecord | null> {
+  if (!deployment.contracts.agentTaskSource || deployment.contracts.agentTaskSource.address === ZERO_ADDRESS) {
+    return null;
+  }
+  if (!Number.isInteger(taskId) || taskId < 0) return null;
+  const contract = getSourceReadContract("agent_task");
+  try {
+    const rawTask = await contract.tasks(taskId);
+    const parsed = parseAgentTask(rawTask);
+    if (!parsed.taskPoster || parsed.taskPoster === ZERO_ADDRESS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchAgentTasksByAddress(agentAddress: string): Promise<AgentTaskRecord[]> {
   if (!agentAddress || !deployment.contracts.agentTaskSource) return [];
   const contract = getSourceReadContract("agent_task");
@@ -1896,6 +1912,21 @@ export async function txValidateTaskOutput(
 ) {
   const contract = await getSourceWriteContract(browserProvider, "agent_task");
   return (await contract.validateOutput(taskId, approved, validatorNote)) as ethers.TransactionResponse;
+}
+
+export async function txValidateAgentOutput(
+  signer: ethers.JsonRpcSigner,
+  taskId: bigint,
+  approved: boolean,
+  validatorNote: string
+): Promise<string> {
+  if (!deployment.contracts.agentTaskSource) {
+    throw new Error("AgentTaskSource contract is not configured.");
+  }
+  const contract = getContractFromConfig(deployment.contracts.agentTaskSource, signer);
+  const tx = await contract.validateOutput(taskId, approved, validatorNote);
+  await tx.wait();
+  return tx.hash;
 }
 
 export async function txClaimTaskRewardAndCredential(

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { ReactNode, useEffect, useMemo, useState } from "react";
@@ -26,6 +26,7 @@ type SourceCard = {
   href: string;
   cta: string;
   icon: ReactNode;
+  example?: string;
 };
 
 type TabKey = "sources" | "how" | "faq";
@@ -51,11 +52,13 @@ const SOURCE_CARDS: SourceCard[] = [
     key: "agent_task",
     icon: <IconRobot className="h-5 w-5" />,
     name: "Agentic Tasks",
-    what: "Structured tasks for autonomous or semi-autonomous completion with verifiable output validation.",
+    what:
+      "Complete structured tasks with clear input data and output specs. Fetch the input, process it with code or AI, submit your result, and earn USDC when validated. Perfect for developers and AI agent operators.",
     weight: "Credential weight: +130 pts + USDC",
     paid: true,
     href: "/tasks",
-    cta: "Browse Agentic Tasks"
+    cta: "Browse Agentic Tasks",
+    example: "Example: Extract wallet addresses from a transaction log -> submit JSON array -> earn 50 USDC + 130 pts"
   },
   {
     key: "community",
@@ -131,12 +134,9 @@ const USER_GUIDES: Guide[] = [
   {
     title: "Task creator who wants to post a task",
     steps: [
-      "Go to /apply, choose I want to post tasks, and submit source application.",
-      "Fill name/org, task type, profile link, and why approve you. Submit applyToOperate('task', profileURI).",
-      "Wait for admin approval in SourceRegistry (via admin CLI).",
-      "Go to /create-job and fill title, description, deadline, reward USDC, max approvals.",
-      "Step 1 of 2: approve USDC allowance for escrow contract.",
-      "Step 2 of 2: post task transaction after approval confirms.",
+      "Go to /create-job and fill title, description, deadline, reward USDC, and max approvals.",
+      "Step 1 of 2: approve USDC allowance for the escrow contract.",
+      "Step 2 of 2: post the task transaction after approval confirms.",
       "Task appears on home feed and can be shared via /job/[jobId].",
       "Review submissions as creator: wallet, URL, timestamp, status, suspicion signal.",
       "Set custom reward per submission and approve using approveSubmission(jobId, agent, rewardAmount).",
@@ -148,7 +148,6 @@ const USER_GUIDES: Guide[] = [
     intro:
       "Agentic tasks are structured for machine-usable input/output and autonomous workflows, not just manual browsing.",
     steps: [
-      "Get approved for source type agent_task by platform admin.",
       "Open /tasks and move to Post a Task tab.",
       "Enter title, description, optional input data (for example IPFS CID), reward, and deadline.",
       "Approve USDC first if allowance is insufficient, then post task.",
@@ -261,6 +260,7 @@ function SourceCardView({ card, earned }: { card: SourceCard; earned: number }) 
       </div>
 
       <p className="mt-3 text-sm text-[#9CA3AF]">{card.what}</p>
+      {card.example ? <p className="mt-2 text-xs text-[#9CA3AF]">{card.example}</p> : null}
       <p className="mt-3 inline-flex items-center gap-2 text-xs text-[#9CA3AF]">
         {card.paid ? <IconWallet className="h-4 w-4" /> : <IconStar className="h-4 w-4" />}
         {card.paid ? "Paid in USDC" : "Reputation only"}
@@ -557,3 +557,8 @@ export default function EarnPage() {
     </section>
   );
 }
+
+
+
+
+
