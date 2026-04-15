@@ -66,6 +66,7 @@ type RawJobRecord = {
 };
 
 type RawSubmissionRecord = {
+  submissionId?: unknown;
   agent: unknown;
   deliverableLink: unknown;
   status: unknown;
@@ -112,6 +113,7 @@ export type JobRecord = {
 };
 
 export type SubmissionRecord = {
+  submissionId: number;
   agent: string;
   deliverableLink: string;
   status: number;
@@ -204,6 +206,12 @@ export type SuspicionResult = {
   score: number;
   reason: string;
 };
+
+export const RESPONSE_TYPE = {
+  BuildsOn: 0,
+  Critiques: 1,
+  Alternative: 2
+} as const;
 
 export type SourceOperatorApplicationRecord = {
   sourceType: string;
@@ -310,9 +318,21 @@ const JOB_OPTIONAL_ABI = [
   "function CREDENTIAL_COOLDOWN() view returns (uint256)",
   "function nextJobId() view returns (uint256)",
   "function lastCredentialClaim(address wallet) view returns (uint256)",
+  "function respondToSubmission(uint256 parentSubmissionId, uint8 responseType, string contentURI) returns (uint256)",
+  "function returnResponseStake(uint256 responseId)",
+  "function slashResponseStake(uint256 responseId)",
+  "function getSubmissionResponses(uint256 submissionId) view returns (uint256[])",
+  "function getResponse(uint256 responseId) view returns (tuple(uint256 responseId, uint256 parentSubmissionId, uint256 taskId, address responder, uint8 responseType, string contentURI, uint256 stakedAmount, uint256 createdAt, bool stakeSlashed, bool stakeReturned))",
+  "function submissionResponseCount(uint256 submissionId) view returns (uint256)",
+  "function submissionIdToAgent(uint256 submissionId) view returns (address)",
+  "event SubmissionResponseAdded(uint256 indexed taskId, uint256 indexed parentSubmissionId, uint256 indexed responseId, uint8 responseType)",
   "function setMinJobStake(uint256 amount)",
   "function setRequireCredentialToPost(bool required)",
   "function setPlatformConfig(address treasuryAddress,uint256 feeBps)"
+] as const;
+const REGISTRY_OPTIONAL_ABI = [
+  "function applyRelationshipReputation(address wallet, int256 delta, string reason)",
+  "function relationshipReputation(address wallet) view returns (int256)"
 ] as const;
 const AGENT_TASK_OPTIONAL_ABI = [
   "function CREDENTIAL_COOLDOWN() view returns (uint256)",
@@ -509,14 +529,18 @@ export function parseJob(rawJob: unknown): JobRecord {
 
 export function parseSubmission(rawSubmission: unknown): SubmissionRecord {
   const candidate = rawSubmission as Partial<RawSubmissionRecord>;
+  const tuple = rawSubmission as unknown[];
+  const hasSubmissionIdAtIndexZero = Array.isArray(tuple) && (typeof tuple[0] === "bigint" || typeof tuple[0] === "number");
+  const idx = hasSubmissionIdAtIndexZero ? 1 : 0;
   return {
-    agent: toString(candidate.agent),
-    deliverableLink: toString(candidate.deliverableLink),
-    status: toNumber(candidate.status),
-    submittedAt: toNumber(candidate.submittedAt),
-    reviewerNote: toString(candidate.reviewerNote),
-    credentialClaimed: toBoolean(candidate.credentialClaimed),
-    allocatedReward: toString(candidate.allocatedReward ?? "0")
+    submissionId: toNumber(candidate.submissionId ?? (hasSubmissionIdAtIndexZero ? tuple[0] : 0)),
+    agent: toString(candidate.agent ?? tuple[idx + 0]),
+    deliverableLink: toString(candidate.deliverableLink ?? tuple[idx + 1]),
+    status: toNumber(candidate.status ?? tuple[idx + 2]),
+    submittedAt: toNumber(candidate.submittedAt ?? tuple[idx + 3]),
+    reviewerNote: toString(candidate.reviewerNote ?? tuple[idx + 4]),
+    credentialClaimed: toBoolean(candidate.credentialClaimed ?? tuple[idx + 5]),
+    allocatedReward: toString(candidate.allocatedReward ?? tuple[idx + 6] ?? "0")
   };
 }
 
@@ -720,6 +744,10 @@ function getOptionalJobReadContract() {
     throw new Error("Job contract is not configured.");
   }
   return new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, getReadProvider());
+}
+
+export function getJobSignalsReadContract() {
+  return getOptionalJobReadContract();
 }
 
 export function getRegistryReadContract() {
@@ -1113,6 +1141,18 @@ export async function fetchSubmissions(jobId: number): Promise<SubmissionRecord[
   const contract = getJobReadContract();
   const raw = (await contract.getSubmissions(jobId)) as unknown[];
   return raw.map((item) => parseSubmission(item));
+}
+
+export async function fetchSubmissionGraph(
+  provider: ethers.BrowserProvider | null,
+  taskId: number
+): Promise<{ nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }> {
+  const { buildTaskGraph } = await import("@/lib/graph");
+  const graph = await buildTaskGraph(provider, taskId);
+  return {
+    nodes: graph.nodes as unknown as Array<Record<string, unknown>>,
+    edges: graph.edges as unknown as Array<Record<string, unknown>>
+  };
 }
 
 export async function fetchJobsByClient(clientAddress: string): Promise<JobRecord[]> {
@@ -1761,6 +1801,32 @@ export async function verifyCredentialOnChain(
   return (await registry.hasCredentialForSource(agent, activityId, sourceType)) as boolean;
 }
 
+export async function fetchRelationshipReputation(wallet: string): Promise<number> {
+  if (!wallet) return 0;
+  const registry = new ethers.Contract(
+    contractAddresses.validationRegistry,
+    REGISTRY_OPTIONAL_ABI,
+    getReadProvider()
+  );
+  try {
+    return Number(await registry.relationshipReputation(wallet));
+  } catch {
+    return 0;
+  }
+}
+
+export async function txApplyRelationshipReputation(
+  signer: ethers.JsonRpcSigner,
+  wallet: string,
+  delta: number,
+  reason: string
+): Promise<string> {
+  const registry = new ethers.Contract(contractAddresses.validationRegistry, REGISTRY_OPTIONAL_ABI, signer);
+  const tx = await registry.applyRelationshipReputation(wallet, delta, reason);
+  await tx.wait();
+  return tx.hash;
+}
+
 export async function txCreateJob(
   browserProvider: ethers.BrowserProvider,
   title: string,
@@ -1811,6 +1877,32 @@ export async function txRejectSubmission(
 export async function txClaimJobCredential(browserProvider: ethers.BrowserProvider, jobId: number) {
   const contract = await getJobWriteContract(browserProvider);
   return (await contract.claimCredential(jobId)) as ethers.TransactionResponse;
+}
+
+export async function txRespondToSubmission(
+  signer: ethers.JsonRpcSigner,
+  parentSubmissionId: bigint,
+  responseType: number,
+  contentURI: string
+): Promise<string> {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const tx = await contract.respondToSubmission(parentSubmissionId, responseType, contentURI);
+  await tx.wait();
+  return tx.hash;
+}
+
+export async function txReturnStake(signer: ethers.JsonRpcSigner, responseId: bigint): Promise<string> {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const tx = await contract.returnResponseStake(responseId);
+  await tx.wait();
+  return tx.hash;
+}
+
+export async function txSlashResponseStake(signer: ethers.JsonRpcSigner, responseId: bigint): Promise<string> {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const tx = await contract.slashResponseStake(responseId);
+  await tx.wait();
+  return tx.hash;
 }
 
 export async function txAwardCommunityActivity(
