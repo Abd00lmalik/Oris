@@ -3,9 +3,12 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import SubmissionGraph from "@/components/submission-graph";
+import type { GraphEdge, GraphNode } from "@/lib/graph";
 import {
   expectedChainId,
   fetchApprovedAgentCount,
+  fetchSubmissionGraph,
   fetchJobCredentialCooldownSeconds,
   fetchJob,
   fetchJobEscrow,
@@ -20,8 +23,10 @@ import {
   formatUsdc,
   getDeploymentConfig,
   getJobReadContract,
+  getJobSignalsReadContract,
   isJobOpen,
   JobRecord,
+  RESPONSE_TYPE,
   statusLabel,
   SubmissionRecord,
   submissionStatusLabel,
@@ -31,6 +36,8 @@ import {
   txApproveSubmission,
   txClaimJobCredential,
   txRejectSubmission,
+  txRespondToSubmission,
+  txSlashResponseStake,
   txSubmitDeliverable
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
@@ -38,6 +45,13 @@ import { useWallet } from "@/lib/wallet-context";
 type AgentInsight = {
   suspicion: SuspicionResult;
   completedCount: number;
+};
+
+type ViewMode = "graph" | "list" | "timeline";
+
+type ResponseFormState = {
+  type: number;
+  content: string;
 };
 
 function shortAddress(address: string) {
@@ -59,7 +73,12 @@ function suspicionClass(score: number) {
 }
 
 function isHttpUrl(value: string) {
-  return value.startsWith("http://") || value.startsWith("https://");
+  return (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("ipfs://") ||
+    value.startsWith("data:")
+  );
 }
 
 function parseUsdcInput(value: string): bigint | null {
@@ -89,6 +108,35 @@ function formatRemainingDuration(seconds: number) {
   return `${hours}h ${minutes}m`;
 }
 
+function mapToGateway(uri: string) {
+  if (uri.startsWith("ipfs://")) {
+    return `https://ipfs.io/ipfs/${uri.replace("ipfs://", "")}`;
+  }
+  return uri;
+}
+
+function responseTypeLabel(value: number) {
+  if (value === RESPONSE_TYPE.BuildsOn) return "builds_on";
+  if (value === RESPONSE_TYPE.Critiques) return "critiques";
+  return "alternative";
+}
+
+function makeResponseDataUri(content: string, responseType: number, address: string) {
+  const payload = {
+    responseType: responseTypeLabel(responseType),
+    summary: content.slice(0, 120),
+    content,
+    referencedElements: [],
+    agentId: address
+  };
+  const serialized = JSON.stringify(payload);
+  if (typeof window === "undefined") {
+    return `data:application/json,${encodeURIComponent(serialized)}`;
+  }
+  const encoded = window.btoa(unescape(encodeURIComponent(serialized)));
+  return `data:application/json;base64,${encoded}`;
+}
+
 export default function JobDetailsPage() {
   const params = useParams<{ jobId: string }>();
   const { account, browserProvider, connect } = useWallet();
@@ -114,6 +162,20 @@ export default function JobDetailsPage() {
   const [busyAction, setBusyAction] = useState("");
   const [claimReadyAt, setClaimReadyAt] = useState<number | null>(null);
   const [claimCountdown, setClaimCountdown] = useState(0);
+  const [viewMode, setViewMode] = useState<ViewMode>("graph");
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({
+    nodes: [],
+    edges: []
+  });
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [selectedPreview, setSelectedPreview] = useState("");
+  const [showResponseForm, setShowResponseForm] = useState(false);
+  const [responseForm, setResponseForm] = useState<ResponseFormState>({
+    type: RESPONSE_TYPE.BuildsOn,
+    content: ""
+  });
 
   const jobId = useMemo(() => Number(params.jobId), [params.jobId]);
   const isConnected = Boolean(account);
@@ -158,6 +220,35 @@ export default function JobDetailsPage() {
     const fee = (gross * BigInt(platformFeeBps)) / 10_000n;
     return gross - fee;
   }, [mySubmission?.allocatedReward, platformFeeBps]);
+
+  const responseSignals = useMemo(() => {
+    const counts = { builds_on: 0, critiques: 0, alternative: 0 };
+    for (const edge of graphData.edges) {
+      if (edge.type === "builds_on") counts.builds_on += 1;
+      if (edge.type === "critiques") counts.critiques += 1;
+      if (edge.type === "alternative") counts.alternative += 1;
+    }
+    return counts;
+  }, [graphData.edges]);
+
+  const timelineItems = useMemo(() => {
+    const submissionItems = submissions.map((submission) => ({
+      id: `submission-${submission.submissionId}`,
+      at: submission.submittedAt,
+      type: "Submission",
+      label: `${shortAddress(submission.agent)} submitted work`
+    }));
+    const responseItems = graphData.nodes
+      .filter((node) => node.type === "response")
+      .map((node) => ({
+        id: node.id,
+        at: node.createdAt,
+        type: "Response",
+        label: `${shortAddress(node.submitterAddress)} posted ${node.responseType}`
+      }));
+
+    return [...submissionItems, ...responseItems].sort((a, b) => b.at - a.at);
+  }, [graphData.nodes, submissions]);
 
   const loadJobData = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0) {
@@ -242,9 +333,29 @@ export default function JobDetailsPage() {
     }
   }, [account, jobId]);
 
+  const loadGraph = useCallback(async () => {
+    if (!Number.isInteger(jobId) || jobId < 0) return;
+    setGraphLoading(true);
+    try {
+      const result = await fetchSubmissionGraph(browserProvider ?? null, jobId);
+      setGraphData({
+        nodes: result.nodes as unknown as GraphNode[],
+        edges: result.edges as unknown as GraphEdge[]
+      });
+      if (!selectedNodeId && result.nodes.length > 0) {
+        setSelectedNodeId((result.nodes[0] as unknown as GraphNode).id);
+      }
+    } catch {
+      setGraphData({ nodes: [], edges: [] });
+    } finally {
+      setGraphLoading(false);
+    }
+  }, [browserProvider, jobId, selectedNodeId]);
+
   useEffect(() => {
     void loadJobData();
-  }, [loadJobData]);
+    void loadGraph();
+  }, [loadGraph, loadJobData]);
 
   useEffect(() => {
     if (!claimReadyAt) {
@@ -261,6 +372,58 @@ export default function JobDetailsPage() {
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
   }, [claimReadyAt]);
+
+  useEffect(() => {
+    setSelectedNode(graphData.nodes.find((node) => node.id === selectedNodeId) ?? null);
+  }, [graphData.nodes, selectedNodeId]);
+
+  useEffect(() => {
+    const pullPreview = async () => {
+      if (!selectedNode?.contentURI) {
+        setSelectedPreview("");
+        return;
+      }
+      if (selectedNode.contentURI.startsWith("data:")) {
+        try {
+          const [, encoded] = selectedNode.contentURI.split(",");
+          const decoded = decodeURIComponent(escape(window.atob(encoded)));
+          setSelectedPreview(decoded.slice(0, 300));
+          return;
+        } catch {
+          setSelectedPreview("Unable to decode response payload.");
+          return;
+        }
+      }
+      if (selectedNode.contentURI.startsWith("ipfs://") || selectedNode.contentURI.startsWith("http")) {
+        try {
+          const target = mapToGateway(selectedNode.contentURI);
+          const response = await fetch(target);
+          const text = await response.text();
+          setSelectedPreview(text.slice(0, 300));
+          return;
+        } catch {
+          setSelectedPreview("Unable to fetch content preview.");
+          return;
+        }
+      }
+      setSelectedPreview(selectedNode.contentURI.slice(0, 300));
+    };
+    void pullPreview();
+  }, [selectedNode]);
+
+  useEffect(() => {
+    if (!Number.isInteger(jobId) || jobId < 0) return () => undefined;
+    const contract = getJobSignalsReadContract();
+    const handler = async (eventTaskId: bigint) => {
+      if (Number(eventTaskId) !== jobId) return;
+      await loadGraph();
+      await loadJobData();
+    };
+    contract.on("SubmissionResponseAdded", handler);
+    return () => {
+      contract.off("SubmissionResponseAdded", handler);
+    };
+  }, [jobId, loadGraph, loadJobData]);
 
   const withProvider = async () => {
     const provider = browserProvider ?? (await connect());
@@ -297,7 +460,7 @@ export default function JobDetailsPage() {
 
     const trimmed = deliverableLink.trim();
     if (!trimmed || !isHttpUrl(trimmed)) {
-      setError("Deliverable link must start with http:// or https://");
+      setError("Deliverable link must start with http://, https://, ipfs://, or data:");
       return;
     }
 
@@ -310,6 +473,7 @@ export default function JobDetailsPage() {
       setStatus("Work submitted. Awaiting review.");
       setDeliverableLink("");
       await loadJobData();
+      await loadGraph();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to submit work.");
     } finally {
@@ -351,6 +515,7 @@ export default function JobDetailsPage() {
         return next;
       });
       await loadJobData();
+      await loadGraph();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to approve submission.");
     } finally {
@@ -375,6 +540,7 @@ export default function JobDetailsPage() {
       await tx.wait();
       setStatus(`Submission rejected for ${toDisplayName(agent)}.`);
       await loadJobData();
+      await loadGraph();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to reject submission.");
     } finally {
@@ -393,6 +559,7 @@ export default function JobDetailsPage() {
       await tx.wait();
       setStatus("Reward and credential claimed successfully.");
       await loadJobData();
+      await loadGraph();
     } catch (actionError) {
       const message = actionError instanceof Error ? actionError.message : "Failed to claim reward and credential.";
       if (account && message.toLowerCase().includes("cooldown")) {
@@ -412,8 +579,57 @@ export default function JobDetailsPage() {
     }
   };
 
+  const handleSubmitResponse = async () => {
+    if (!selectedNode || selectedNode.type !== "submission") {
+      setError("Select a submission node before responding.");
+      return;
+    }
+    if (!account) {
+      setError("Connect wallet to respond.");
+      return;
+    }
+    if (responseForm.content.trim().length < 50) {
+      setError("Response content should be at least 50 characters.");
+      return;
+    }
+
+    setBusyAction("respond");
+    setError("");
+    setStatus("");
+    try {
+      const provider = await withProvider();
+      const signer = await provider.getSigner();
+      const contentURI = makeResponseDataUri(responseForm.content.trim(), responseForm.type, account);
+      const txHash = await txRespondToSubmission(
+        signer,
+        BigInt(selectedNode.submissionId ?? 0),
+        responseForm.type,
+        contentURI
+      );
+      setStatus(`Response submitted and 2 USDC staked. Tx: ${txHash}`);
+      setResponseForm({ type: RESPONSE_TYPE.BuildsOn, content: "" });
+      setShowResponseForm(false);
+      await loadGraph();
+      await loadJobData();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Failed to submit response.");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const selectedNodeSignals = useMemo(() => {
+    if (!selectedNode || selectedNode.type !== "submission") return null;
+    const incoming = graphData.edges.filter((edge) => edge.target === selectedNode.id);
+    return {
+      buildsOn: incoming.filter((edge) => edge.type === "builds_on").length,
+      critiques: incoming.filter((edge) => edge.type === "critiques").length,
+      alternative: incoming.filter((edge) => edge.type === "alternative").length
+    };
+  }, [graphData.edges, selectedNode]);
+
   return (
-    <section className="mx-auto max-w-5xl space-y-5">
+    <section className="mx-auto max-w-6xl space-y-5">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">
           Task #{Number.isInteger(jobId) ? jobId : "?"}
@@ -475,13 +691,173 @@ export default function JobDetailsPage() {
               {" | "}
               {formatUsdc(remainingBeforeDraft)} USDC remaining before new approvals
             </div>
-          </div>
 
-          {!isConnected ? (
-            <div className="archon-card px-4 py-5 text-sm text-[#9CA3AF]">
-              Connect your wallet to accept this task, submit work, or review submissions.
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setViewMode("graph")}
+                className={`rounded-full px-3 py-1.5 text-xs ${viewMode === "graph" ? "bg-[#00D1B2]/20 text-[#D1FFF7]" : "bg-white/5 text-[#9CA3AF]"}`}
+              >
+                Graph
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className={`rounded-full px-3 py-1.5 text-xs ${viewMode === "list" ? "bg-[#00D1B2]/20 text-[#D1FFF7]" : "bg-white/5 text-[#9CA3AF]"}`}
+              >
+                List
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("timeline")}
+                className={`rounded-full px-3 py-1.5 text-xs ${viewMode === "timeline" ? "bg-[#00D1B2]/20 text-[#D1FFF7]" : "bg-white/5 text-[#9CA3AF]"}`}
+              >
+                Timeline
+              </button>
             </div>
-          ) : null}
+	          </div>
+
+	          {viewMode === "graph" ? (
+	            <div className="grid gap-4 lg:grid-cols-[65%_35%]">
+	              <div className="archon-card p-4">
+	                {graphLoading ? (
+	                  <p className="text-sm text-[#9CA3AF]">Rendering submission network...</p>
+	                ) : graphData.nodes.length === 0 ? (
+	                  <p className="text-sm text-[#9CA3AF]">No submissions yet. The graph appears once participants submit work.</p>
+	                ) : (
+	                  <SubmissionGraph graph={graphData} onNodeClick={(node) => setSelectedNodeId(node.id)} selectedNodeId={selectedNodeId} />
+	                )}
+	              </div>
+
+	              <div className="archon-card p-4">
+	                {!selectedNode ? (
+	                  <p className="text-sm text-[#9CA3AF]">Select a node to inspect submission signals.</p>
+	                ) : (
+	                  <div className="space-y-3 text-sm">
+	                    <div className="flex items-center justify-between">
+	                      <p className="font-semibold text-[#EAEAF0]">{selectedNode.type === "submission" ? "Submission" : "Response"} Node</p>
+	                      <span className="rounded-full bg-white/5 px-2 py-1 text-xs text-[#C9D0DB]">{selectedNode.isAgent ? "Agent" : "Human"}</span>
+	                    </div>
+	                    <p className="text-[#9CA3AF]">Submitter: <span className="text-[#EAEAF0]">{shortAddress(selectedNode.submitterAddress)}</span></p>
+	                    <a href={mapToGateway(selectedNode.contentURI)} target="_blank" rel="noreferrer" className="break-all text-xs text-[#8FD9FF] underline underline-offset-4">
+	                      Open content URI
+	                    </a>
+	                    <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#C9D0DB]">{selectedPreview || "Preview unavailable."}</div>
+
+	                    {selectedNodeSignals ? (
+	                      <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#C9D0DB]">
+	                        builds_on: {selectedNodeSignals.buildsOn} | critiques: {selectedNodeSignals.critiques} | alternative: {selectedNodeSignals.alternative}
+	                      </div>
+	                    ) : null}
+
+	                    {selectedNode.type === "submission" ? (
+	                      <button type="button" onClick={() => setShowResponseForm((value) => !value)} className="archon-button-secondary px-3 py-2 text-xs">
+	                        {showResponseForm ? "Close Response Form" : "Respond to this submission"}
+	                      </button>
+	                    ) : null}
+
+	                    {showResponseForm && selectedNode.type === "submission" ? (
+	                      <div className="space-y-2 rounded-xl border border-white/10 bg-[#111214] p-3">
+	                        <label className="block text-xs text-[#EAEAF0]">Response Type</label>
+	                        <select
+	                          className="archon-input"
+	                          value={responseForm.type}
+	                          onChange={(event) => setResponseForm((previous) => ({ ...previous, type: Number(event.target.value) }))}
+	                        >
+	                          <option value={RESPONSE_TYPE.BuildsOn}>builds_on</option>
+	                          <option value={RESPONSE_TYPE.Critiques}>critiques</option>
+	                          <option value={RESPONSE_TYPE.Alternative}>alternative</option>
+	                        </select>
+	                        <textarea
+	                          className="archon-input min-h-28"
+	                          placeholder="Describe your response (stored as URI payload)."
+	                          value={responseForm.content}
+	                          onChange={(event) => setResponseForm((previous) => ({ ...previous, content: event.target.value }))}
+	                        />
+	                        <p className="text-xs text-[#9CA3AF]">Stake required: 2 USDC. Stake returns after 7 days unless slashed by task creator.</p>
+	                        <button
+	                          type="button"
+	                          onClick={() => void handleSubmitResponse()}
+	                          disabled={busyAction === "respond"}
+	                          className="archon-button-primary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+	                        >
+	                          {busyAction === "respond" ? "Submitting response..." : "Submit Response - Stake 2 USDC"}
+	                        </button>
+	                      </div>
+	                    ) : null}
+	                  </div>
+	                )}
+	              </div>
+	            </div>
+	          ) : null}
+
+	          {viewMode === "timeline" ? (
+	            <div className="archon-card p-5">
+	              {timelineItems.length === 0 ? (
+	                <p className="text-sm text-[#9CA3AF]">No timeline events yet.</p>
+	              ) : (
+	                <div className="space-y-2">
+	                  {timelineItems.map((item) => (
+	                    <div key={item.id} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#C9D0DB]">
+	                      <span className="text-[#EAEAF0]">{item.type}</span> | {item.label} | {formatTimestamp(item.at)}
+	                    </div>
+	                  ))}
+	                </div>
+	              )}
+	              <div className="rounded-xl border border-white/10 bg-[#111214] p-3 text-xs text-[#C9D0DB]">
+	                <p className="font-semibold text-[#EAEAF0]">Network Signals</p>
+	                <p className="mt-1">builds_on: {responseSignals.builds_on} | critiques: {responseSignals.critiques} | alternative: {responseSignals.alternative}</p>
+	                <p className="mt-1 text-[#9CA3AF]">Signal suggestion: prioritize high-builds_on submissions and inspect critiques before final approvals.</p>
+	                {selectedNode?.type === "response" && selectedNode.submissionId !== undefined ? (
+	                  <button
+	                    type="button"
+	                    onClick={async () => {
+	                      try {
+	                        const provider = await withProvider();
+	                        const signer = await provider.getSigner();
+	                        setBusyAction("slash");
+	                        const txHash = await txSlashResponseStake(signer, BigInt(selectedNode.submissionId ?? 0));
+	                        setStatus(`Response stake slashed. Tx: ${txHash}`);
+	                        await loadGraph();
+	                      } catch (slashError) {
+	                        setError(slashError instanceof Error ? slashError.message : "Failed to slash stake.");
+	                      } finally {
+	                        setBusyAction("");
+	                      }
+	                    }}
+	                    className="archon-button-secondary mt-2 px-3 py-1.5 text-xs"
+	                    disabled={busyAction === "slash"}
+	                  >
+	                    {busyAction === "slash" ? "Slashing..." : "Slash Selected Response Stake"}
+	                  </button>
+	                ) : null}
+	              </div>
+	            </div>
+	          ) : null}
+
+	          {viewMode === "timeline" ? (
+	            <div className="archon-card p-5">
+	              {timelineItems.length === 0 ? (
+	                <p className="text-sm text-[#9CA3AF]">No timeline events yet.</p>
+	              ) : (
+	                <div className="space-y-2">
+	                  {timelineItems.map((item) => (
+	                    <div key={item.id} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#C9D0DB]">
+	                      <span className="text-[#EAEAF0]">{item.type}</span> | {item.label} | {formatTimestamp(item.at)}
+	                    </div>
+	                  ))}
+	                </div>
+	              )}
+	            </div>
+	          ) : null}
+
+	          {viewMode === "list" ? (
+	            <>
+	          {!isConnected ? (
+	            <div className="archon-card px-4 py-5 text-sm text-[#9CA3AF]">
+	              Connect your wallet to accept this task, submit work, or review submissions.
+	            </div>
+	          ) : null}
 
           {isConnected && isCreator ? (
             <div className="archon-card space-y-4 p-5">
@@ -730,16 +1106,18 @@ export default function JobDetailsPage() {
                 </div>
               ) : null}
 
-              {mySubmission?.status === 3 ? (
-                <div className="space-y-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                  <p>Rejected: {mySubmission.reviewerNote || "No rejection note provided."}</p>
-                  <p className="text-xs text-[#F5C2CD]">You can resubmit with an updated link.</p>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </>
-      ) : null}
-    </section>
-  );
+	              {mySubmission?.status === 3 ? (
+	                <div className="space-y-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+	                  <p>Rejected: {mySubmission.reviewerNote || "No rejection note provided."}</p>
+	                  <p className="text-xs text-[#F5C2CD]">You can resubmit with an updated link.</p>
+	                </div>
+	              ) : null}
+	            </div>
+	          ) : null}
+	            </>
+	          ) : null}
+	        </>
+	      ) : null}
+	    </section>
+	  );
 }

@@ -14,6 +14,12 @@ contract ERC8183Job is ICredentialSource {
         Rejected
     }
 
+    enum ResponseType {
+        BuildsOn,
+        Critiques,
+        Alternative
+    }
+
     struct Job {
         uint256 jobId;
         address client;
@@ -31,6 +37,7 @@ contract ERC8183Job is ICredentialSource {
     }
 
     struct Submission {
+        uint256 submissionId;
         address agent;
         string deliverableLink;
         SubmissionStatus status;
@@ -41,6 +48,7 @@ contract ERC8183Job is ICredentialSource {
     }
 
     struct SubmissionView {
+        uint256 submissionId;
         address agent;
         string deliverableLink;
         SubmissionStatus status;
@@ -50,13 +58,29 @@ contract ERC8183Job is ICredentialSource {
         uint256 allocatedReward;
     }
 
+    struct SubmissionResponse {
+        uint256 responseId;
+        uint256 parentSubmissionId;
+        uint256 taskId;
+        address responder;
+        ResponseType responseType;
+        string contentURI;
+        uint256 stakedAmount;
+        uint256 createdAt;
+        bool stakeSlashed;
+        bool stakeReturned;
+    }
+
     uint256 public constant BASIS_POINTS = 10_000;
     uint256 public constant MIN_JOB_DURATION = 1 hours;
     uint256 public constant MIN_REVIEW_DELAY = 15 minutes;
     uint256 public constant CREDENTIAL_COOLDOWN = 6 hours;
+    uint256 public constant RESPONSE_STAKE = 2_000_000; // 2 USDC
 
     address public owner;
     uint256 public nextJobId;
+    uint256 public nextResponseId;
+    uint256 public nextSubmissionId;
     address public immutable hook;
     address public immutable sourceRegistry;
     IERC20Minimal public immutable usdc;
@@ -77,6 +101,14 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(address => bool)) public isAccepted;
     mapping(uint256 => address[]) private submissionAgentsByJob;
     mapping(uint256 => mapping(address => Submission)) private submissions;
+    mapping(uint256 => SubmissionResponse) public responses;
+    mapping(uint256 => uint256[]) public submissionResponses;
+    mapping(uint256 => uint256) public submissionResponseCount;
+    mapping(uint256 => mapping(address => bool)) public hasResponded;
+    mapping(uint256 => uint256) public submissionIdToTaskId;
+    mapping(uint256 => address) public submissionIdToAgent;
+
+    uint256 private _reentrancyLock;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event PlatformConfigUpdated(address indexed platformTreasury, uint256 platformFeeBps);
@@ -112,6 +144,14 @@ contract ERC8183Job is ICredentialSource {
         uint256 weight
     );
     event JobRefunded(uint256 indexed jobId, address indexed client, uint256 refundedAmount);
+    event SubmissionResponseAdded(
+        uint256 indexed taskId,
+        uint256 indexed parentSubmissionId,
+        uint256 indexed responseId,
+        ResponseType responseType
+    );
+    event StakeSlashed(uint256 indexed responseId, address indexed responder, uint256 amount);
+    event StakeReturned(uint256 indexed responseId, address indexed responder, uint256 amount);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "only owner");
@@ -121,6 +161,13 @@ contract ERC8183Job is ICredentialSource {
     modifier onlyClient(uint256 jobId) {
         require(msg.sender == jobs[jobId].client, "only client can review");
         _;
+    }
+
+    modifier nonReentrant() {
+        require(_reentrancyLock == 0, "reentrant call");
+        _reentrancyLock = 1;
+        _;
+        _reentrancyLock = 0;
     }
 
     constructor(
@@ -143,6 +190,7 @@ contract ERC8183Job is ICredentialSource {
         platformTreasury = treasuryAddress;
         platformFeeBps = feeBps;
         validationRegistry = address(0);
+        _reentrancyLock = 0;
     }
 
     function sourceType() external pure returns (string memory) {
@@ -266,9 +314,14 @@ contract ERC8183Job is ICredentialSource {
 
         Submission storage submission = submissions[jobId][msg.sender];
         if (submission.agent == address(0)) {
+            uint256 sid = nextSubmissionId;
+            nextSubmissionId += 1;
             submission.agent = msg.sender;
+            submission.submissionId = sid;
             submissionAgentsByJob[jobId].push(msg.sender);
             job.submissionCount += 1;
+            submissionIdToTaskId[sid] = jobId;
+            submissionIdToAgent[sid] = msg.sender;
         }
 
         // Prevent approved submissions from being overwritten.
@@ -419,6 +472,7 @@ contract ERC8183Job is ICredentialSource {
         for (uint256 i = 0; i < agents.length; i++) {
             Submission storage submission = submissions[jobId][agents[i]];
             allSubmissions[i] = SubmissionView({
+                submissionId: submission.submissionId,
                 agent: submission.agent,
                 deliverableLink: submission.deliverableLink,
                 status: submission.status,
@@ -477,6 +531,86 @@ contract ERC8183Job is ICredentialSource {
         }
 
         return (score, reason);
+    }
+
+    function respondToSubmission(
+        uint256 parentSubmissionId,
+        ResponseType responseType,
+        string memory contentURI
+    ) external nonReentrant returns (uint256 responseId) {
+        uint256 taskId = submissionIdToTaskId[parentSubmissionId];
+        address parentAgent = submissionIdToAgent[parentSubmissionId];
+
+        require(parentAgent != address(0), "submission not found");
+
+        Job storage job = _getExistingJob(taskId);
+        require(block.timestamp <= job.deadline, "task closed");
+        require(msg.sender != parentAgent, "cannot respond to own submission");
+        require(!hasResponded[parentSubmissionId][msg.sender], "already responded");
+        require(bytes(contentURI).length > 0, "content required");
+        require(usdc.transferFrom(msg.sender, address(this), RESPONSE_STAKE), "stake transfer failed");
+
+        responseId = nextResponseId;
+        nextResponseId += 1;
+        responses[responseId] = SubmissionResponse({
+            responseId: responseId,
+            parentSubmissionId: parentSubmissionId,
+            taskId: taskId,
+            responder: msg.sender,
+            responseType: responseType,
+            contentURI: contentURI,
+            stakedAmount: RESPONSE_STAKE,
+            createdAt: block.timestamp,
+            stakeSlashed: false,
+            stakeReturned: false
+        });
+
+        submissionResponses[parentSubmissionId].push(responseId);
+        submissionResponseCount[parentSubmissionId] += 1;
+        hasResponded[parentSubmissionId][msg.sender] = true;
+
+        emit SubmissionResponseAdded(taskId, parentSubmissionId, responseId, responseType);
+        return responseId;
+    }
+
+    function returnResponseStake(uint256 responseId) external nonReentrant {
+        SubmissionResponse storage response = responses[responseId];
+        require(response.responder == msg.sender, "not responder");
+        require(!response.stakeSlashed && !response.stakeReturned, "already processed");
+
+        Job storage job = _getExistingJob(response.taskId);
+        require(block.timestamp > job.deadline + 7 days, "wait 7 days after deadline");
+
+        response.stakeReturned = true;
+        require(usdc.transfer(msg.sender, response.stakedAmount), "stake return failed");
+
+        emit StakeReturned(responseId, msg.sender, response.stakedAmount);
+    }
+
+    function slashResponseStake(uint256 responseId) external nonReentrant {
+        SubmissionResponse storage response = responses[responseId];
+        uint256 taskId = response.taskId;
+        require(jobs[taskId].client == msg.sender, "only task creator");
+        require(!response.stakeSlashed && !response.stakeReturned, "already processed");
+
+        response.stakeSlashed = true;
+        uint256 slashAmount = (response.stakedAmount * 5_000) / BASIS_POINTS;
+        uint256 returnAmount = response.stakedAmount - slashAmount;
+
+        require(usdc.transfer(platformTreasury, slashAmount), "slash transfer failed");
+        if (returnAmount > 0) {
+            require(usdc.transfer(response.responder, returnAmount), "partial return failed");
+        }
+
+        emit StakeSlashed(responseId, response.responder, slashAmount);
+    }
+
+    function getSubmissionResponses(uint256 submissionId) external view returns (uint256[] memory) {
+        return submissionResponses[submissionId];
+    }
+
+    function getResponse(uint256 responseId) external view returns (SubmissionResponse memory) {
+        return responses[responseId];
     }
 
     function _getExistingJob(uint256 jobId) internal view returns (Job storage) {

@@ -17,6 +17,7 @@ contract ERC8004ValidationRegistry {
     uint256 public totalCredentials;
     mapping(address => bool) public authorizedIssuers;
     mapping(address => uint256[]) private credentialIdsByAgent;
+    mapping(address => int256) public relationshipReputation;
     // Backwards-compatible job lookup: agent => jobId => credentialId
     mapping(address => mapping(uint256 => uint256)) public credentialId;
     // Generic uniqueness: agent => hash(sourceType, activityId) => credentialId
@@ -33,6 +34,7 @@ contract ERC8004ValidationRegistry {
         uint256 weight,
         address issuedBy
     );
+    event RelationshipReputationApplied(address indexed wallet, int256 delta, string reason);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "only owner");
@@ -127,16 +129,38 @@ contract ERC8004ValidationRegistry {
         return credentialIdsByAgent[agent].length;
     }
 
+    function applyRelationshipReputation(
+        address wallet,
+        int256 delta,
+        string memory reason
+    ) external onlyAuthorizedIssuer {
+        require(wallet != address(0), "invalid wallet");
+        relationshipReputation[wallet] += delta;
+        if (relationshipReputation[wallet] < -500) {
+            relationshipReputation[wallet] = -500;
+        }
+        emit RelationshipReputationApplied(wallet, delta, reason);
+    }
+
     function getWeightedScore(address agent) external view returns (uint256) {
+        uint256 credentialScore = _sumCredentialWeights(agent);
+        int256 relationshipScore = relationshipReputation[agent];
+        int256 total = int256(credentialScore) + relationshipScore;
+        if (total <= 0) {
+            return 0;
+        }
+        uint256 bounded = uint256(total);
+        return bounded > 2000 ? 2000 : bounded;
+    }
+
+    function _sumCredentialWeights(address agent) internal view returns (uint256 total) {
         uint256[] storage ids = credentialIdsByAgent[agent];
-        uint256 total = 0;
         for (uint256 i = 0; i < ids.length; i++) {
             Credential storage credential = credentials[ids[i]];
             if (credential.valid) {
                 total += credential.weight;
             }
         }
-        return total > 2000 ? 2000 : total;
     }
 
     function _activityKey(string calldata sourceType, uint256 activityId) internal pure returns (bytes32) {
