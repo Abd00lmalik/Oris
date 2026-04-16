@@ -1144,7 +1144,7 @@ export async function fetchSubmissions(jobId: number): Promise<SubmissionRecord[
 }
 
 export async function fetchSubmissionGraph(
-  provider: ethers.BrowserProvider | null,
+  provider: ethers.BrowserProvider | ethers.JsonRpcProvider,
   taskId: number
 ): Promise<{ nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }> {
   const { buildTaskGraph } = await import("@/lib/graph");
