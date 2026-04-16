@@ -6,14 +6,12 @@ import LandingPage from "@/app/landing/page";
 import { LiveFeed } from "@/components/ui/live-feed";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatBlock } from "@/components/ui/stat";
-import { ActivityEvent, startActivitySubscriptions, subscribeToActivity } from "@/lib/activity";
+import { ActivityEvent, initActivityFeed, subscribeToActivity } from "@/lib/activity";
 import {
-  contractAddresses,
   CredentialRecord,
   fetchAllJobs,
   fetchCredentialsForAgent,
   formatUsdc,
-  getReadProvider,
   JobRecord,
   statusLabel
 } from "@/lib/contracts";
@@ -40,7 +38,7 @@ function statusBadgeClass(status: number) {
 const FILTERS = ["All", "Tasks", "Tournaments"] as const;
 
 export default function HomePage() {
-  const { account, browserProvider } = useWallet();
+  const { account } = useWallet();
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<(typeof FILTERS)[number]>("All");
@@ -64,18 +62,10 @@ export default function HomePage() {
   }, [loadFeed]);
 
   useEffect(() => {
-    if (!account) return () => undefined;
-
-    const graphProvider = browserProvider ?? getReadProvider();
-    void startActivitySubscriptions(graphProvider, {
-      jobAddress: contractAddresses.job,
-      registryAddress: contractAddresses.validationRegistry,
-      identityAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e"
-    });
-
+    initActivityFeed();
     const unsubscribe = subscribeToActivity(setActivityEvents);
     return unsubscribe;
-  }, [account, browserProvider]);
+  }, []);
 
   const myScore = useMemo(() => calculateWeightedScore(myCredentials), [myCredentials]);
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
@@ -174,7 +164,7 @@ export default function HomePage() {
         <div className="px-4 pt-4">
           <SectionHeader>Live Activity</SectionHeader>
         </div>
-        <LiveFeed events={activityEvents} maxVisible={30} />
+        <LiveFeed events={activityEvents} maxVisible={10} />
       </aside>
     </section>
   );

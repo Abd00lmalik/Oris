@@ -1,118 +1,64 @@
+﻿
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import SubmissionGraph from "@/components/submission-graph";
 import type { GraphEdge, GraphNode } from "@/lib/graph";
 import {
   expectedChainId,
   fetchApprovedAgentCount,
-  fetchSubmissionGraph,
-  fetchJobCredentialCooldownSeconds,
   fetchJob,
+  fetchJobCredentialCooldownSeconds,
   fetchJobEscrow,
-  fetchLastJobCredentialClaim,
-  fetchJobsCompletedCount,
   fetchJobsCreatedCount,
+  fetchLastJobCredentialClaim,
   fetchMaxApprovalsForJob,
   fetchSubmissionForAgent,
+  fetchSubmissionGraph,
   fetchSubmissions,
-  fetchSuspicionScore,
   formatTimestamp,
   formatUsdc,
   getDeploymentConfig,
   getJobReadContract,
   getJobSignalsReadContract,
   getReadProvider,
-  isJobOpen,
   JobRecord,
   RESPONSE_TYPE,
-  statusLabel,
   SubmissionRecord,
-  submissionStatusLabel,
-  SuspicionResult,
-  toDisplayName,
   txAcceptJob,
   txApproveSubmission,
   txClaimJobCredential,
   txRejectSubmission,
   txRespondToSubmission,
-  txSlashResponseStake,
   txSubmitDeliverable
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 
-type AgentInsight = {
-  suspicion: SuspicionResult;
-  completedCount: number;
-};
-
 type ViewMode = "graph" | "list" | "timeline";
-
-type ResponseFormState = {
-  type: number;
-  content: string;
-};
 
 function shortAddress(address: string) {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-function submissionClass(status: number) {
-  if (status === 2) return "border border-emerald-400/30 bg-emerald-500/10 text-emerald-200";
-  if (status === 3) return "border border-rose-400/30 bg-rose-500/10 text-rose-200";
-  if (status === 1) return "border border-cyan-400/30 bg-cyan-500/10 text-cyan-200";
-  return "border border-white/10 bg-white/5 text-[#9CA3AF]";
-}
-
-function suspicionClass(score: number) {
-  if (score > 70) return "text-rose-300";
-  if (score > 40) return "text-amber-300";
-  return "text-[#9CA3AF]";
-}
-
-function isHttpUrl(value: string) {
-  return (
-    value.startsWith("http://") ||
-    value.startsWith("https://") ||
-    value.startsWith("ipfs://") ||
-    value.startsWith("data:")
-  );
-}
-
 function parseUsdcInput(value: string): bigint | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  try {
-    const [whole, frac = ""] = trimmed.split(".");
-    const safeWhole = whole === "" ? "0" : whole;
-    const safeFrac = frac.slice(0, 6).padEnd(6, "0");
-    if (!/^\d+$/.test(safeWhole) || !/^\d+$/.test(safeFrac)) return null;
-    return BigInt(safeWhole) * 1_000_000n + BigInt(safeFrac);
-  } catch {
-    return null;
-  }
+  const [whole, frac = ""] = trimmed.split(".");
+  const safeWhole = whole === "" ? "0" : whole;
+  const safeFrac = frac.slice(0, 6).padEnd(6, "0");
+  if (!/^\d+$/.test(safeWhole) || !/^\d+$/.test(safeFrac)) return null;
+  return BigInt(safeWhole) * 1_000_000n + BigInt(safeFrac);
 }
 
-function formatDraftValue(units: bigint | null) {
-  if (units === null) return "0";
-  return formatUsdc(units);
-}
-
-function formatRemainingDuration(seconds: number) {
-  if (seconds <= 0) return "0m";
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours <= 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
+function isHttpUrl(value: string) {
+  return value.startsWith("http://") || value.startsWith("https://") || value.startsWith("ipfs://") || value.startsWith("data:");
 }
 
 function mapToGateway(uri: string) {
-  if (uri.startsWith("ipfs://")) {
-    return `https://ipfs.io/ipfs/${uri.replace("ipfs://", "")}`;
-  }
+  if (uri.startsWith("ipfs://")) return `https://ipfs.io/ipfs/${uri.replace("ipfs://", "")}`;
   return uri;
 }
 
@@ -131,135 +77,139 @@ function makeResponseDataUri(content: string, responseType: number, address: str
     agentId: address
   };
   const serialized = JSON.stringify(payload);
-  if (typeof window === "undefined") {
-    return `data:application/json,${encodeURIComponent(serialized)}`;
-  }
+  if (typeof window === "undefined") return `data:application/json,${encodeURIComponent(serialized)}`;
   const encoded = window.btoa(unescape(encodeURIComponent(serialized)));
   return `data:application/json;base64,${encoded}`;
 }
 
+function formatRemainingDuration(seconds: number) {
+  if (seconds <= 0) return "0m";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${minutes}m`;
+}
+
+function DeadlineCountdown({ deadline }: { deadline: number }) {
+  const [remaining, setRemaining] = useState("");
+  const [urgent, setUrgent] = useState(false);
+
+  useEffect(() => {
+    const update = () => {
+      const now = Date.now() / 1000;
+      const diff = deadline - now;
+      if (diff <= 0) {
+        setRemaining("EXPIRED");
+        setUrgent(false);
+        return;
+      }
+      const days = Math.floor(diff / 86400);
+      const hours = Math.floor((diff % 86400) / 3600);
+      const minutes = Math.floor((diff % 3600) / 60);
+      const seconds = Math.floor(diff % 60);
+      setUrgent(diff < 3600);
+      if (days > 0) setRemaining(`${days}d ${hours}h ${minutes}m`);
+      else if (hours > 0) setRemaining(`${hours}h ${minutes}m ${seconds}s`);
+      else setRemaining(`${minutes}m ${seconds}s`);
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [deadline]);
+
+  return <span className="text-data font-semibold" style={{ color: urgent ? "var(--danger)" : "var(--text-primary)" }}>{remaining}</span>;
+}
+
 export default function JobDetailsPage() {
   const params = useParams<{ jobId: string }>();
+  const router = useRouter();
   const { account, browserProvider, connect } = useWallet();
 
   const [job, setJob] = useState<JobRecord | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [mySubmission, setMySubmission] = useState<SubmissionRecord | null>(null);
   const [isAccepted, setIsAccepted] = useState(false);
-  const [escrowLocked, setEscrowLocked] = useState<bigint>(0n);
-  const [approvalsUsed, setApprovalsUsed] = useState(0);
+  const [escrowLocked, setEscrowLocked] = useState(0n);
   const [maxApprovals, setMaxApprovals] = useState(3);
+  const [approvalsUsed, setApprovalsUsed] = useState(0);
+  const [creatorPostedCount, setCreatorPostedCount] = useState(0);
   const [platformFeeBps, setPlatformFeeBps] = useState(
     getDeploymentConfig().platformFeeBps ?? getDeploymentConfig().platform?.feeBps ?? 1000
   );
-  const [creatorPostedCount, setCreatorPostedCount] = useState(0);
-  const [insightsByAgent, setInsightsByAgent] = useState<Record<string, AgentInsight>>({});
-  const [deliverableLink, setDeliverableLink] = useState("");
-  const [rejectNotes, setRejectNotes] = useState<Record<string, string>>({});
-  const [rewardDraftByAgent, setRewardDraftByAgent] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
-  const [busyAction, setBusyAction] = useState("");
-  const [claimReadyAt, setClaimReadyAt] = useState<number | null>(null);
-  const [claimCountdown, setClaimCountdown] = useState(0);
-  const [viewMode, setViewMode] = useState<ViewMode>("graph");
-  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({
-    nodes: [],
-    edges: []
-  });
   const [graphLoading, setGraphLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+
+  const [viewMode, setViewMode] = useState<ViewMode>("graph");
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [selectedPreview, setSelectedPreview] = useState("");
-  const [showResponseForm, setShowResponseForm] = useState(false);
-  const [responseForm, setResponseForm] = useState<ResponseFormState>({
-    type: RESPONSE_TYPE.BuildsOn,
-    content: ""
-  });
+
+  const [deliverableLink, setDeliverableLink] = useState("");
+  const [rewardInputs, setRewardInputs] = useState<Record<string, string>>({});
+  const [rejectNotes, setRejectNotes] = useState<Record<string, string>>({});
+
+  const [showResponsePanel, setShowResponsePanel] = useState(false);
+  const [responseType, setResponseType] = useState<number>(RESPONSE_TYPE.BuildsOn);
+  const [responseContent, setResponseContent] = useState("");
+
+  const [claimReadyAt, setClaimReadyAt] = useState<number | null>(null);
+  const [claimCountdown, setClaimCountdown] = useState(0);
 
   const jobId = useMemo(() => Number(params.jobId), [params.jobId]);
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
+  const isTaskOpen = Boolean(job && Date.now() / 1000 < job.deadline);
 
-  const allocatedReserved = useMemo(() => {
-    return submissions.reduce((sum, submission) => {
-      if (submission.status === 2 || submission.credentialClaimed) {
-        return sum + BigInt(submission.allocatedReward || "0");
-      }
-      return sum;
-    }, 0n);
-  }, [submissions]);
+  const allocatedReserved = useMemo(
+    () =>
+      submissions.reduce((sum, submission) => {
+        if (submission.status === 2 || submission.credentialClaimed) return sum + BigInt(submission.allocatedReward || "0");
+        return sum;
+      }, 0n),
+    [submissions]
+  );
 
-  const remainingBeforeDraft = useMemo(() => {
+  const remainingPool = useMemo(() => {
     if (!job) return 0n;
     const pool = BigInt(job.rewardUSDC);
-    if (allocatedReserved >= pool) return 0n;
-    return pool - allocatedReserved;
+    return pool > allocatedReserved ? pool - allocatedReserved : 0n;
   }, [allocatedReserved, job]);
 
-  const draftTotal = useMemo(() => {
-    return Object.values(rewardDraftByAgent).reduce((sum, value) => {
-      const parsed = parseUsdcInput(value);
-      if (!parsed) return sum;
-      return sum + parsed;
-    }, 0n);
-  }, [rewardDraftByAgent]);
-
-  const remainingWithDraft = useMemo(() => {
-    return remainingBeforeDraft > draftTotal ? remainingBeforeDraft - draftTotal : 0n;
-  }, [draftTotal, remainingBeforeDraft]);
-
-  const myStatus = mySubmission?.status ?? 0;
-  const canSubmit = isConnected && !isCreator && isAccepted && (mySubmission === null || myStatus === 3);
-  const canClaim = isConnected && !isCreator && mySubmission?.status === 2 && !mySubmission.credentialClaimed;
-  const claimBlockedByCooldown = canClaim && claimCountdown > 0;
-
-  const netForMyClaim = useMemo(() => {
+  const claimableNet = useMemo(() => {
     if (!mySubmission?.allocatedReward) return 0n;
     const gross = BigInt(mySubmission.allocatedReward);
     const fee = (gross * BigInt(platformFeeBps)) / 10_000n;
     return gross - fee;
   }, [mySubmission?.allocatedReward, platformFeeBps]);
 
-  const responseSignals = useMemo(() => {
-    const counts = { builds_on: 0, critiques: 0, alternative: 0 };
-    for (const edge of graphData.edges) {
-      if (edge.type === "builds_on") counts.builds_on += 1;
-      if (edge.type === "critiques") counts.critiques += 1;
-      if (edge.type === "alternative") counts.alternative += 1;
-    }
-    return counts;
-  }, [graphData.edges]);
+  const pendingSubmissions = useMemo(() => submissions.filter((item) => item.status === 1), [submissions]);
 
   const timelineItems = useMemo(() => {
-    const submissionItems = submissions.map((submission) => ({
+    const base = submissions.map((submission) => ({
       id: `submission-${submission.submissionId}`,
       at: submission.submittedAt,
-      type: "Submission",
       label: `${shortAddress(submission.agent)} submitted work`
     }));
-    const responseItems = graphData.nodes
+    const responses = graphData.nodes
       .filter((node) => node.type === "response")
       .map((node) => ({
         id: node.id,
         at: node.createdAt,
-        type: "Response",
-        label: `${shortAddress(node.submitterAddress)} posted ${node.responseType}`
+        label: `${shortAddress(node.submitterAddress)} posted ${node.responseType ?? "response"}`
       }));
-
-    return [...submissionItems, ...responseItems].sort((a, b) => b.at - a.at);
+    return [...base, ...responses].sort((a, b) => b.at - a.at);
   }, [graphData.nodes, submissions]);
 
-  const loadJobData = useCallback(async () => {
+  const loadTask = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0) {
-      setError("Invalid job ID.");
+      setErrorMessage("Invalid task id.");
       return;
     }
-
     setLoading(true);
-    setError("");
-
+    setErrorMessage("");
     try {
       const [jobData, submissionRows, escrow, approvedCount, maxAllowed] = await Promise.all([
         fetchJob(jobId),
@@ -268,13 +218,11 @@ export default function JobDetailsPage() {
         fetchApprovedAgentCount(jobId),
         fetchMaxApprovalsForJob(jobId)
       ]);
-
       if (!jobData) {
         setJob(null);
         setSubmissions([]);
         return;
       }
-
       setJob(jobData);
       setSubmissions(submissionRows);
       setEscrowLocked(escrow);
@@ -283,18 +231,18 @@ export default function JobDetailsPage() {
       setCreatorPostedCount(await fetchJobsCreatedCount(jobData.client));
 
       try {
-        const readContract = getJobReadContract();
-        setPlatformFeeBps(Number(await readContract.platformFeeBps()));
+        const contract = getJobReadContract();
+        setPlatformFeeBps(Number(await contract.platformFeeBps()));
       } catch {
         setPlatformFeeBps(getDeploymentConfig().platformFeeBps ?? getDeploymentConfig().platform?.feeBps ?? 1000);
       }
 
       if (account) {
-        const [accepted, submission, lastClaim, cooldownSeconds] = await Promise.all([
+        const [accepted, mine, lastClaim, cooldownSeconds] = await Promise.all([
           (async () => {
             try {
-              const readContract = getJobReadContract();
-              return (await readContract.isAccepted(jobId, account)) as boolean;
+              const contract = getJobReadContract();
+              return (await contract.isAccepted(jobId, account)) as boolean;
             } catch {
               return false;
             }
@@ -304,31 +252,16 @@ export default function JobDetailsPage() {
           fetchJobCredentialCooldownSeconds()
         ]);
         setIsAccepted(accepted);
-        setMySubmission(submission);
-        const readyAt = Number(lastClaim) + cooldownSeconds;
-        setClaimReadyAt(readyAt > 0 ? readyAt : null);
+        setMySubmission(mine);
+        const ready = Number(lastClaim) + cooldownSeconds;
+        setClaimReadyAt(ready > 0 ? ready : null);
       } else {
         setIsAccepted(false);
         setMySubmission(null);
         setClaimReadyAt(null);
       }
-
-      if (submissionRows.length > 0) {
-        const insightEntries = await Promise.all(
-          submissionRows.map(async (submission) => {
-            const [suspicion, completedCount] = await Promise.all([
-              fetchSuspicionScore(jobId, submission.agent),
-              fetchJobsCompletedCount(submission.agent)
-            ]);
-            return [submission.agent.toLowerCase(), { suspicion, completedCount }] as const;
-          })
-        );
-        setInsightsByAgent(Object.fromEntries(insightEntries));
-      } else {
-        setInsightsByAgent({});
-      }
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load task data.");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to load task.");
     } finally {
       setLoading(false);
     }
@@ -338,16 +271,13 @@ export default function JobDetailsPage() {
     if (!Number.isInteger(jobId) || jobId < 0) return;
     setGraphLoading(true);
     try {
-      const graphProvider = browserProvider ?? getReadProvider();
-      console.log("[TaskPage] Fetching graph for task:", jobId);
-      const result = await fetchSubmissionGraph(graphProvider, jobId);
-      console.log("[TaskPage] Graph result:", result.nodes.length, "nodes");
-      setGraphData({
-        nodes: result.nodes as unknown as GraphNode[],
-        edges: result.edges as unknown as GraphEdge[]
-      });
-      if (!selectedNodeId && result.nodes.length > 0) {
-        setSelectedNodeId((result.nodes[0] as unknown as GraphNode).id);
+      const provider = browserProvider ?? getReadProvider();
+      console.log("[graph] Loading for task:", jobId);
+      const data = await fetchSubmissionGraph(provider, jobId);
+      console.log("[graph] Result:", data.nodes.length, "nodes");
+      setGraphData({ nodes: data.nodes as unknown as GraphNode[], edges: data.edges as unknown as GraphEdge[] });
+      if (!selectedNodeId && data.nodes.length > 0) {
+        setSelectedNodeId((data.nodes[0] as unknown as GraphNode).id);
       }
     } catch {
       setGraphData({ nodes: [], edges: [] });
@@ -355,22 +285,23 @@ export default function JobDetailsPage() {
       setGraphLoading(false);
     }
   }, [browserProvider, jobId, selectedNodeId]);
+  useEffect(() => {
+    void loadTask();
+    void loadGraph();
+  }, [loadTask, loadGraph]);
 
   useEffect(() => {
-    void loadJobData();
-    void loadGraph();
-  }, [loadGraph, loadJobData]);
+    setSelectedNode(graphData.nodes.find((node) => node.id === selectedNodeId) ?? null);
+  }, [graphData.nodes, selectedNodeId]);
 
   useEffect(() => {
     if (!claimReadyAt) {
       setClaimCountdown(0);
       return () => undefined;
     }
-
     const update = () => {
       const now = Math.floor(Date.now() / 1000);
-      const remaining = Math.max(0, claimReadyAt - now);
-      setClaimCountdown(remaining);
+      setClaimCountdown(Math.max(0, claimReadyAt - now));
     };
     update();
     const timer = window.setInterval(update, 1000);
@@ -378,56 +309,30 @@ export default function JobDetailsPage() {
   }, [claimReadyAt]);
 
   useEffect(() => {
-    setSelectedNode(graphData.nodes.find((node) => node.id === selectedNodeId) ?? null);
-  }, [graphData.nodes, selectedNodeId]);
-
-  useEffect(() => {
-    const pullPreview = async () => {
-      if (!selectedNode?.contentURI) {
-        setSelectedPreview("");
-        return;
-      }
-      if (selectedNode.contentURI.startsWith("data:")) {
-        try {
-          const [, encoded] = selectedNode.contentURI.split(",");
-          const decoded = decodeURIComponent(escape(window.atob(encoded)));
-          setSelectedPreview(decoded.slice(0, 300));
-          return;
-        } catch {
-          setSelectedPreview("Unable to decode response payload.");
-          return;
-        }
-      }
-      if (selectedNode.contentURI.startsWith("ipfs://") || selectedNode.contentURI.startsWith("http")) {
-        try {
-          const target = mapToGateway(selectedNode.contentURI);
-          const response = await fetch(target);
-          const text = await response.text();
-          setSelectedPreview(text.slice(0, 300));
-          return;
-        } catch {
-          setSelectedPreview("Unable to fetch content preview.");
-          return;
-        }
-      }
-      setSelectedPreview(selectedNode.contentURI.slice(0, 300));
-    };
-    void pullPreview();
-  }, [selectedNode]);
-
-  useEffect(() => {
     if (!Number.isInteger(jobId) || jobId < 0) return () => undefined;
     const contract = getJobSignalsReadContract();
-    const handler = async (eventTaskId: bigint) => {
-      if (Number(eventTaskId) !== jobId) return;
+
+    const onNewSubmission = async (taskId: bigint) => {
+      if (Number(taskId) !== jobId) return;
+      console.log("[graph] New submission, refreshing graph");
       await loadGraph();
-      await loadJobData();
+      await loadTask();
     };
-    contract.on("SubmissionResponseAdded", handler);
+
+    const onNewResponse = async (taskId: bigint) => {
+      if (Number(taskId) !== jobId) return;
+      console.log("[graph] New response, refreshing graph");
+      await loadGraph();
+      await loadTask();
+    };
+
+    contract.on("DeliverableSubmitted", onNewSubmission);
+    contract.on("SubmissionResponseAdded", onNewResponse);
     return () => {
-      contract.off("SubmissionResponseAdded", handler);
+      contract.off("DeliverableSubmitted", onNewSubmission);
+      contract.off("SubmissionResponseAdded", onNewResponse);
     };
-  }, [jobId, loadGraph, loadJobData]);
+  }, [jobId, loadGraph, loadTask]);
 
   const withProvider = async () => {
     const provider = browserProvider ?? (await connect());
@@ -440,144 +345,126 @@ export default function JobDetailsPage() {
   };
 
   const handleAccept = async () => {
-    setError("");
-    setStatus("");
     setBusyAction("accept");
+    setErrorMessage("");
+    setStatusMessage("");
     try {
       const provider = await withProvider();
       const tx = await txAcceptJob(provider, jobId);
-      setStatus(`Accept transaction submitted: ${tx.hash}`);
+      setStatusMessage(`Accept transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus("Task accepted. You can now submit your work.");
-      await loadJobData();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to accept task.");
+      setStatusMessage("Task accepted. You can now submit your work.");
+      await loadTask();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to accept task.");
     } finally {
       setBusyAction("");
     }
   };
 
-  const handleSubmitWork = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmitWork = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setError("");
-    setStatus("");
-
-    const trimmed = deliverableLink.trim();
-    if (!trimmed || !isHttpUrl(trimmed)) {
-      setError("Deliverable link must start with http://, https://, ipfs://, or data:");
-      return;
-    }
-
     setBusyAction("submit");
+    setErrorMessage("");
+    setStatusMessage("");
     try {
+      const trimmed = deliverableLink.trim();
+      if (!trimmed || !isHttpUrl(trimmed)) throw new Error("Deliverable link must start with http://, https://, ipfs://, or data:");
       const provider = await withProvider();
       const tx = await txSubmitDeliverable(provider, jobId, trimmed);
-      setStatus(`Submit transaction submitted: ${tx.hash}`);
+      setStatusMessage(`Submission transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus("Work submitted. Awaiting review.");
+      setStatusMessage("Work submitted. Awaiting review.");
       setDeliverableLink("");
-      await loadJobData();
+      await loadTask();
       await loadGraph();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to submit work.");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to submit work.");
     } finally {
       setBusyAction("");
     }
   };
 
   const handleApprove = async (agent: string) => {
-    setError("");
-    setStatus("");
-    const agentKey = agent.toLowerCase();
-    const draft = parseUsdcInput(rewardDraftByAgent[agentKey] ?? "");
-    if (!draft || draft <= 0n) {
-      setError("Enter a valid reward amount before approving.");
+    setErrorMessage("");
+    setStatusMessage("");
+    const key = agent.toLowerCase();
+    const amount = parseUsdcInput(rewardInputs[key] ?? "");
+    if (!amount || amount <= 0n) {
+      setErrorMessage("Enter a valid reward amount before approving.");
       return;
     }
 
-    const otherDraftTotal = Object.entries(rewardDraftByAgent).reduce((sum, [key, value]) => {
-      if (key === agentKey) return sum;
+    const otherDraftTotal = Object.entries(rewardInputs).reduce((sum, [address, value]) => {
+      if (address === key) return sum;
       const parsed = parseUsdcInput(value);
       return parsed ? sum + parsed : sum;
     }, 0n);
-    const availableForThis = remainingBeforeDraft > otherDraftTotal ? remainingBeforeDraft - otherDraftTotal : 0n;
-    if (draft > availableForThis) {
-      setError(`Reward exceeds remaining pool. Available: ${formatUsdc(availableForThis)} USDC`);
+
+    const availableForThis = remainingPool > otherDraftTotal ? remainingPool - otherDraftTotal : 0n;
+    if (amount > availableForThis) {
+      setErrorMessage(`Reward exceeds remaining pool. Available: ${formatUsdc(availableForThis)} USDC`);
       return;
     }
 
-    setBusyAction(`approve-${agentKey}`);
+    setBusyAction(`approve-${key}`);
     try {
       const provider = await withProvider();
-      const tx = await txApproveSubmission(provider, jobId, agent, draft);
-      setStatus(`Approve transaction submitted: ${tx.hash}`);
+      const tx = await txApproveSubmission(provider, jobId, agent, amount);
+      setStatusMessage(`Approve transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus(`Submission approved for ${toDisplayName(agent)}.`);
-      setRewardDraftByAgent((previous) => {
-        const next = { ...previous };
-        delete next[agentKey];
+      setRewardInputs((prev) => {
+        const next = { ...prev };
+        delete next[key];
         return next;
       });
-      await loadJobData();
+      await loadTask();
       await loadGraph();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to approve submission.");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to approve submission.");
     } finally {
       setBusyAction("");
     }
   };
-
   const handleReject = async (agent: string) => {
-    setError("");
-    setStatus("");
-    const agentKey = agent.toLowerCase();
-    const reason = (rejectNotes[agentKey] ?? "").trim();
-    if (!reason) {
-      setError("Rejection note is required.");
+    const key = agent.toLowerCase();
+    const note = (rejectNotes[key] ?? "").trim();
+    if (!note) {
+      setErrorMessage("Rejection note is required.");
       return;
     }
-    setBusyAction(`reject-${agentKey}`);
+
+    setBusyAction(`reject-${key}`);
+    setErrorMessage("");
+    setStatusMessage("");
     try {
       const provider = await withProvider();
-      const tx = await txRejectSubmission(provider, jobId, agent, reason);
-      setStatus(`Reject transaction submitted: ${tx.hash}`);
+      const tx = await txRejectSubmission(provider, jobId, agent, note);
+      setStatusMessage(`Reject transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus(`Submission rejected for ${toDisplayName(agent)}.`);
-      await loadJobData();
+      await loadTask();
       await loadGraph();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to reject submission.");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to reject submission.");
     } finally {
       setBusyAction("");
     }
   };
 
   const handleClaim = async () => {
-    setError("");
-    setStatus("");
     setBusyAction("claim");
+    setErrorMessage("");
+    setStatusMessage("");
     try {
       const provider = await withProvider();
       const tx = await txClaimJobCredential(provider, jobId);
-      setStatus(`Claim transaction submitted: ${tx.hash}`);
+      setStatusMessage(`Claim transaction submitted: ${tx.hash}`);
       await tx.wait();
-      setStatus("Reward and credential claimed successfully.");
-      await loadJobData();
+      setStatusMessage("Reward and credential claimed successfully.");
+      await loadTask();
       await loadGraph();
-    } catch (actionError) {
-      const message = actionError instanceof Error ? actionError.message : "Failed to claim reward and credential.";
-      if (account && message.toLowerCase().includes("cooldown")) {
-        try {
-          const [lastClaim, cooldownSeconds] = await Promise.all([
-            fetchLastJobCredentialClaim(account),
-            fetchJobCredentialCooldownSeconds()
-          ]);
-          setClaimReadyAt(Number(lastClaim) + cooldownSeconds);
-        } catch {
-          // ignore cooldown lookup failures
-        }
-      }
-      setError(message);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to claim reward.");
     } finally {
       setBusyAction("");
     }
@@ -585,560 +472,269 @@ export default function JobDetailsPage() {
 
   const handleSubmitResponse = async () => {
     if (!selectedNode || selectedNode.type !== "submission") {
-      setError("Select a submission node before responding.");
+      setErrorMessage("Select a submission node before responding.");
       return;
     }
     if (!account) {
-      setError("Connect wallet to respond.");
+      setErrorMessage("Connect wallet to respond.");
       return;
     }
-    if (responseForm.content.trim().length < 50) {
-      setError("Response content should be at least 50 characters.");
+    if (responseContent.trim().length < 20) {
+      setErrorMessage("Response must be at least 20 characters.");
       return;
     }
 
     setBusyAction("respond");
-    setError("");
-    setStatus("");
+    setErrorMessage("");
+    setStatusMessage("");
     try {
       const provider = await withProvider();
       const signer = await provider.getSigner();
-      const contentURI = makeResponseDataUri(responseForm.content.trim(), responseForm.type, account);
+      const contentURI = makeResponseDataUri(responseContent.trim(), responseType, account);
       const txHash = await txRespondToSubmission(
         signer,
         BigInt(selectedNode.submissionId ?? 0),
-        responseForm.type,
+        responseType,
         contentURI
       );
-      setStatus(`Response submitted and 2 USDC staked. Tx: ${txHash}`);
-      setResponseForm({ type: RESPONSE_TYPE.BuildsOn, content: "" });
-      setShowResponseForm(false);
+      setStatusMessage(`Response submitted. Tx: ${txHash}`);
+      setResponseContent("");
+      setResponseType(RESPONSE_TYPE.BuildsOn);
+      setShowResponsePanel(false);
+      await loadTask();
       await loadGraph();
-      await loadJobData();
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Failed to submit response.");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to submit response.");
     } finally {
       setBusyAction("");
     }
   };
 
-  const selectedNodeSignals = useMemo(() => {
-    if (!selectedNode || selectedNode.type !== "submission") return null;
-    const incoming = graphData.edges.filter((edge) => edge.target === selectedNode.id);
-    return {
-      buildsOn: incoming.filter((edge) => edge.type === "builds_on").length,
-      critiques: incoming.filter((edge) => edge.type === "critiques").length,
-      alternative: incoming.filter((edge) => edge.type === "alternative").length
-    };
-  }, [graphData.edges, selectedNode]);
-
+  const hasSubmitted = Boolean(mySubmission && mySubmission.status !== 0);
+  const isApproved = mySubmission?.status === 2;
+  const isClaimed = Boolean(mySubmission?.credentialClaimed);
+  const canClaim = Boolean(isConnected && !isCreator && isApproved && !isClaimed);
+  const claimBlockedByCooldown = canClaim && claimCountdown > 0;
   return (
-    <section className="mx-auto max-w-6xl space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-wide text-[#EAEAF0]">
-          Task #{Number.isInteger(jobId) ? jobId : "?"}
-        </h1>
-        <Link href="/" className="archon-button-secondary px-3 py-2 text-sm">
-          Back to Home
-        </Link>
-      </div>
-
-      {status ? (
-        <div className="archon-card border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          {status}
-        </div>
-      ) : null}
-      {error ? (
-        <div className="archon-card border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {error}
-        </div>
-      ) : null}
-
-      {loading ? <div className="archon-card px-4 py-6 text-sm text-[#9CA3AF]">Loading task details...</div> : null}
-
-      {!loading && !job ? <div className="archon-card px-4 py-6 text-sm text-[#9CA3AF]">Task not found.</div> : null}
+    <section className="page-container space-y-6">
+      {statusMessage ? <div className="panel border-[var(--pulse)] py-3 text-sm text-[var(--pulse)]">{statusMessage}</div> : null}
+      {errorMessage ? <div className="panel border-[var(--danger)] py-3 text-sm text-[var(--danger)]">{errorMessage}</div> : null}
+      {loading ? <div className="panel text-sm text-[var(--text-secondary)]">Loading task details...</div> : null}
+      {!loading && !job ? <div className="panel text-sm text-[var(--text-secondary)]">Task not found.</div> : null}
 
       {job ? (
         <>
-          <div className="archon-card p-5 text-sm text-[#9CA3AF]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="mb-0 border-b border-[var(--border)] pb-6">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => router.back()} className="text-sm font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+                  ? TASKS
+                </button>
+                <span className="text-sm font-mono text-[var(--border-bright)]">/</span>
+                <span className="text-xs font-mono text-[var(--text-muted)]">#{job.jobId}</span>
+              </div>
+              <span className="text-xs font-mono tracking-wider" style={{ color: isTaskOpen ? "var(--pulse)" : "var(--danger)" }}>
+                {isTaskOpen ? "OPEN" : "DEADLINE REACHED"}
+              </span>
+            </div>
+
+            <div className="flex items-start justify-between gap-6">
+              <h1 className="text-heading-1 flex-1">{job.title}</h1>
+              <div className="shrink-0 text-right">
+                <div className="font-heading text-[var(--gold)]" style={{ fontSize: "clamp(24px, 3vw, 36px)", fontWeight: 700 }}>
+                  {formatUsdc(job.rewardUSDC)} USDC
+                </div>
+                <div className="text-label mt-1 text-[var(--text-muted)]">Reward Pool</div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-6 border-t border-[var(--border)] pt-4">
+              <div className="flex items-center gap-2"><span className="text-label">BY</span><span className="text-data text-[var(--arc)]">{shortAddress(job.client)}</span></div>
+              <div className="flex items-center gap-2"><span className="text-label">DEADLINE</span><DeadlineCountdown deadline={job.deadline} /></div>
+              <div className="flex items-center gap-2"><span className="text-label">SUBMISSIONS</span><span className="text-data">{job.submissionCount}</span></div>
+              <div className="flex items-center gap-2"><span className="text-label">MAX WINNERS</span><span className="text-data">{maxApprovals}</span></div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+            <aside className="panel h-fit space-y-6">
+              <div><div className="section-header">Description</div><p className="text-sm leading-relaxed text-[var(--text-secondary)]">{job.description}</p></div>
               <div>
-                <h2 className="text-xl font-semibold text-[#EAEAF0]">{job.title}</h2>
-                <p className="mt-2 max-w-3xl">{job.description}</p>
+                <div className="section-header">Metadata</div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between"><span className="text-[var(--text-muted)]">Creator</span><span className="text-data">{shortAddress(job.client)}</span></div>
+                  <div className="flex justify-between"><span className="text-[var(--text-muted)]">Tasks posted</span><span className="font-mono text-[var(--text-primary)]">{creatorPostedCount}</span></div>
+                  <div className="flex justify-between"><span className="text-[var(--text-muted)]">Created</span><span className="font-mono text-[var(--text-primary)]">{formatTimestamp(job.createdAt)}</span></div>
+                </div>
               </div>
-              <span className="rounded-full bg-white/5 px-3 py-1 text-xs">{statusLabel(job.status)}</span>
-            </div>
-
-            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Creator:</span> {shortAddress(job.client)}
+              <div>
+                <div className="section-header">Reward Breakdown</div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between"><span className="text-[var(--text-muted)]">Total pool</span><span className="font-mono text-[var(--gold)]">{formatUsdc(job.rewardUSDC)} USDC</span></div>
+                  <div className="flex justify-between"><span className="text-[var(--text-muted)]">Escrow locked</span><span className="font-mono text-[var(--text-primary)]">{formatUsdc(escrowLocked)} USDC</span></div>
+                  <div className="flex justify-between"><span className="text-[var(--text-muted)]">Platform fee</span><span className="font-mono text-[var(--text-muted)]">10%</span></div>
+                </div>
               </div>
-              <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Creator activity:</span> {creatorPostedCount} tasks posted
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Deadline:</span> {formatTimestamp(job.deadline)}
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Reward Pool:</span> {formatUsdc(job.rewardUSDC)} USDC
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Submissions:</span> {job.submissionCount}
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2">
-                <span className="font-medium text-[#EAEAF0]">Approvals:</span> {approvalsUsed}/{maxApprovals}
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-xl border border-white/10 bg-[#111214] px-3 py-3 text-xs text-[#C9D0DB]">
-              <span className="font-semibold text-[#EAEAF0]">Escrow info:</span> {formatUsdc(escrowLocked)} USDC locked
-              {" | "}
-              {formatUsdc(remainingBeforeDraft)} USDC remaining before new approvals
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setViewMode("graph")}
-                className={`rounded-full px-3 py-1.5 text-xs ${viewMode === "graph" ? "bg-[#00D1B2]/20 text-[#D1FFF7]" : "bg-white/5 text-[#9CA3AF]"}`}
-              >
-                Graph
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                className={`rounded-full px-3 py-1.5 text-xs ${viewMode === "list" ? "bg-[#00D1B2]/20 text-[#D1FFF7]" : "bg-white/5 text-[#9CA3AF]"}`}
-              >
-                List
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("timeline")}
-                className={`rounded-full px-3 py-1.5 text-xs ${viewMode === "timeline" ? "bg-[#00D1B2]/20 text-[#D1FFF7]" : "bg-white/5 text-[#9CA3AF]"}`}
-              >
-                Timeline
-              </button>
-            </div>
-	          </div>
-
-	          {viewMode === "graph" ? (
-	            <div className="grid gap-4 lg:grid-cols-[65%_35%]">
-	              <div className="archon-card p-4">
-	                {graphLoading ? (
-	                  <p className="text-sm text-[#9CA3AF]">Rendering submission network...</p>
-	                ) : graphData.nodes.length === 0 ? (
-	                  <p className="text-sm text-[#9CA3AF]">No submissions yet. The graph appears once participants submit work.</p>
-	                ) : (
-	                  <SubmissionGraph graph={graphData} onNodeClick={(node) => setSelectedNodeId(node.id)} selectedNodeId={selectedNodeId} />
-	                )}
-	              </div>
-
-	              <div className="archon-card p-4">
-	                {!selectedNode ? (
-	                  <p className="text-sm text-[#9CA3AF]">Select a node to inspect submission signals.</p>
-	                ) : (
-	                  <div className="space-y-3 text-sm">
-	                    <div className="flex items-center justify-between">
-	                      <p className="font-semibold text-[#EAEAF0]">{selectedNode.type === "submission" ? "Submission" : "Response"} Node</p>
-	                      <span className="rounded-full bg-white/5 px-2 py-1 text-xs text-[#C9D0DB]">{selectedNode.isAgent ? "Agent" : "Human"}</span>
-	                    </div>
-	                    <p className="text-[#9CA3AF]">Submitter: <span className="text-[#EAEAF0]">{shortAddress(selectedNode.submitterAddress)}</span></p>
-	                    <a href={mapToGateway(selectedNode.contentURI)} target="_blank" rel="noreferrer" className="break-all text-xs text-[#8FD9FF] underline underline-offset-4">
-	                      Open content URI
-	                    </a>
-	                    <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#C9D0DB]">{selectedPreview || "Preview unavailable."}</div>
-
-	                    {selectedNodeSignals ? (
-	                      <div className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-xs text-[#C9D0DB]">
-	                        builds_on: {selectedNodeSignals.buildsOn} | critiques: {selectedNodeSignals.critiques} | alternative: {selectedNodeSignals.alternative}
-	                      </div>
-	                    ) : null}
-
-	                    {selectedNode.type === "submission" ? (
-	                      <button type="button" onClick={() => setShowResponseForm((value) => !value)} className="archon-button-secondary px-3 py-2 text-xs">
-	                        {showResponseForm ? "Close Response Form" : "Respond to this submission"}
-	                      </button>
-	                    ) : null}
-
-	                    {showResponseForm && selectedNode.type === "submission" ? (
-	                      <div className="space-y-2 rounded-xl border border-white/10 bg-[#111214] p-3">
-	                        <label className="block text-xs text-[#EAEAF0]">Response Type</label>
-	                        <div className="flex border border-[var(--border)]">
-	                          {[
-	                            { type: RESPONSE_TYPE.BuildsOn, color: "var(--arc)", label: "BUILDS ON" },
-	                            { type: RESPONSE_TYPE.Critiques, color: "var(--warn)", label: "CRITIQUES" },
-	                            { type: RESPONSE_TYPE.Alternative, color: "var(--agent)", label: "ALTERNATIVE" }
-	                          ].map((item) => (
-	                            <button
-	                              key={item.type}
-	                              type="button"
-	                              onClick={() =>
-	                                setResponseForm((previous) => ({
-	                                  ...previous,
-	                                  type: item.type
-	                                }))
-	                              }
-	                              className="mono flex-1 py-3 text-xs font-semibold tracking-wider transition-all"
-	                              style={{
-	                                background: responseForm.type === item.type ? `${item.color}15` : "transparent",
-	                                color: responseForm.type === item.type ? item.color : "var(--text-muted)",
-	                                borderBottom: responseForm.type === item.type ? `2px solid ${item.color}` : "2px solid transparent"
-	                              }}
-	                            >
-	                              {item.label}
-	                            </button>
-	                          ))}
-	                        </div>
-	                        <textarea
-	                          className="archon-input min-h-28"
-	                          placeholder="Describe your response (stored as URI payload)."
-	                          value={responseForm.content}
-	                          onChange={(event) => setResponseForm((previous) => ({ ...previous, content: event.target.value }))}
-	                        />
-	                        <p className="text-xs text-[#9CA3AF]">Stake required: 2 USDC. Stake returns after 7 days unless slashed by task creator.</p>
-	                        <button
-	                          type="button"
-	                          onClick={() => void handleSubmitResponse()}
-	                          disabled={busyAction === "respond"}
-	                          className="archon-button-primary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-	                        >
-	                          {busyAction === "respond" ? "Submitting response..." : "Submit Response - Stake 2 USDC"}
-	                        </button>
-	                      </div>
-	                    ) : null}
-	                  </div>
-	                )}
-	              </div>
-	            </div>
-	          ) : null}
-
-	          {viewMode === "timeline" ? (
-	            <div className="archon-card p-5">
-	              {timelineItems.length === 0 ? (
-	                <p className="text-sm text-[#9CA3AF]">No timeline events yet.</p>
-	              ) : (
-	                <div className="space-y-2">
-	                  {timelineItems.map((item) => (
-	                    <div key={item.id} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#C9D0DB]">
-	                      <span className="text-[#EAEAF0]">{item.type}</span> | {item.label} | {formatTimestamp(item.at)}
-	                    </div>
-	                  ))}
-	                </div>
-	              )}
-	              <div className="rounded-xl border border-white/10 bg-[#111214] p-3 text-xs text-[#C9D0DB]">
-	                <p className="font-semibold text-[#EAEAF0]">Network Signals</p>
-	                <p className="mt-1">builds_on: {responseSignals.builds_on} | critiques: {responseSignals.critiques} | alternative: {responseSignals.alternative}</p>
-	                <p className="mt-1 text-[#9CA3AF]">Signal suggestion: prioritize high-builds_on submissions and inspect critiques before final approvals.</p>
-	                {selectedNode?.type === "response" && selectedNode.submissionId !== undefined ? (
-	                  <button
-	                    type="button"
-	                    onClick={async () => {
-	                      try {
-	                        const provider = await withProvider();
-	                        const signer = await provider.getSigner();
-	                        setBusyAction("slash");
-	                        const txHash = await txSlashResponseStake(signer, BigInt(selectedNode.submissionId ?? 0));
-	                        setStatus(`Response stake slashed. Tx: ${txHash}`);
-	                        await loadGraph();
-	                      } catch (slashError) {
-	                        setError(slashError instanceof Error ? slashError.message : "Failed to slash stake.");
-	                      } finally {
-	                        setBusyAction("");
-	                      }
-	                    }}
-	                    className="archon-button-secondary mt-2 px-3 py-1.5 text-xs"
-	                    disabled={busyAction === "slash"}
-	                  >
-	                    {busyAction === "slash" ? "Slashing..." : "Slash Selected Response Stake"}
-	                  </button>
-	                ) : null}
-	              </div>
-	            </div>
-	          ) : null}
-
-	          {viewMode === "timeline" ? (
-	            <div className="archon-card p-5">
-	              {timelineItems.length === 0 ? (
-	                <p className="text-sm text-[#9CA3AF]">No timeline events yet.</p>
-	              ) : (
-	                <div className="space-y-2">
-	                  {timelineItems.map((item) => (
-	                    <div key={item.id} className="rounded-xl border border-white/10 bg-[#111214] px-3 py-2 text-sm text-[#C9D0DB]">
-	                      <span className="text-[#EAEAF0]">{item.type}</span> | {item.label} | {formatTimestamp(item.at)}
-	                    </div>
-	                  ))}
-	                </div>
-	              )}
-	            </div>
-	          ) : null}
-
-	          {viewMode === "list" ? (
-	            <>
-	          {!isConnected ? (
-	            <div className="archon-card px-4 py-5 text-sm text-[#9CA3AF]">
-	              Connect your wallet to accept this task, submit work, or review submissions.
-	            </div>
-	          ) : null}
-
-          {isConnected && isCreator ? (
-            <div className="archon-card space-y-4 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold text-[#EAEAF0]">Review Submissions</h3>
-                <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-[#9CA3AF]">
-                  {approvalsUsed} of {maxApprovals} approvals used | {formatUsdc(remainingWithDraft)} USDC remaining
-                </span>
-              </div>
-
-              {submissions.length === 0 ? (
-                <p className="text-sm text-[#9CA3AF]">
-                  No submissions yet. Share this task link with agents to get started.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {submissions.map((submission) => {
-                    const agentKey = submission.agent.toLowerCase();
-                    const insight = insightsByAgent[agentKey];
-                    const isPending = submission.status === 1;
-                    const isBusyApprove = busyAction === `approve-${agentKey}`;
-                    const isBusyReject = busyAction === `reject-${agentKey}`;
-                    const draft = parseUsdcInput(rewardDraftByAgent[agentKey] ?? "");
-
-                    const otherDraftTotal = Object.entries(rewardDraftByAgent).reduce((sum, [key, value]) => {
-                      if (key === agentKey) return sum;
-                      const parsed = parseUsdcInput(value);
-                      return parsed ? sum + parsed : sum;
-                    }, 0n);
-                    const availableForThis = remainingBeforeDraft > otherDraftTotal ? remainingBeforeDraft - otherDraftTotal : 0n;
-
+              <div>
+                <div className="section-header">Approval Slots</div>
+                <div className="flex items-center gap-2">
+                  {Array.from({ length: maxApprovals }, (_, idx) => {
+                    const used = idx < approvalsUsed;
                     return (
-                      <article key={`${submission.agent}-${submission.submittedAt}`} className="rounded-xl border border-white/10 bg-[#111214] p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-sm text-[#EAEAF0]">
-                              <span>{shortAddress(submission.agent)}</span>
-                              <button
-                                type="button"
-                                onClick={() => void navigator.clipboard.writeText(submission.agent)}
-                                className="archon-button-secondary px-2 py-1 text-xs"
-                              >
-                                Copy
-                              </button>
-                            </div>
-                            <p className="text-xs text-[#9CA3AF]">
-                              {toDisplayName(submission.agent)} | Agent has completed {insight?.completedCount ?? 0} tasks total
-                            </p>
-                          </div>
-                          <span className={`rounded-full px-2 py-1 text-xs ${submissionClass(submission.status)}`}>
-                            {submissionStatusLabel(submission.status)}
-                          </span>
-                        </div>
-
-                        <a
-                          href={submission.deliverableLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-3 block break-all text-sm text-[#8FD9FF] underline underline-offset-4"
-                        >
-                          {submission.deliverableLink}
-                        </a>
-
-                        <p className="mt-2 text-xs text-[#9CA3AF]">Submitted: {formatTimestamp(submission.submittedAt)}</p>
-
-                        <p className={`mt-2 text-xs ${suspicionClass(insight?.suspicion.score ?? 0)}`}>
-                          Suspicion score: {insight?.suspicion.score ?? 0}
-                          {insight?.suspicion.reason ? ` | ${insight.suspicion.reason}` : ""}
-                        </p>
-
-                        {submission.status === 2 && submission.credentialClaimed ? (
-                          <p className="mt-2 text-xs text-emerald-200">Approved - credential minted</p>
-                        ) : null}
-                        {submission.status === 2 && !submission.credentialClaimed ? (
-                          <p className="mt-2 text-xs text-emerald-200">
-                            Approved - awaiting credential claim | Allocated {formatUsdc(submission.allocatedReward)} USDC
-                          </p>
-                        ) : null}
-                        {submission.status === 3 ? (
-                          <p className="mt-2 text-xs text-rose-200">
-                            Rejected: {submission.reviewerNote || "No note provided."}
-                          </p>
-                        ) : null}
-
-                        {isPending ? (
-                          <div className="mt-3 space-y-2">
-                            <label className="block text-xs text-[#EAEAF0]">
-                              Reward amount (USDC)
-                              <input
-                                className="archon-input mt-1"
-                                type="number"
-                                min={0}
-                                step="0.000001"
-                                placeholder="e.g. 150"
-                                value={rewardDraftByAgent[agentKey] ?? ""}
-                                onChange={(event) =>
-                                  setRewardDraftByAgent((previous) => ({
-                                    ...previous,
-                                    [agentKey]: event.target.value
-                                  }))
-                                }
-                              />
-                            </label>
-                            <p className="text-xs text-[#9CA3AF]">
-                              Remaining pool: {formatUsdc(availableForThis)} USDC | Draft: {formatDraftValue(draft)} USDC
-                            </p>
-                            <p className="text-xs text-[#9CA3AF]">
-                              Agent receives:{" "}
-                              {draft ? formatUsdc(draft - (draft * BigInt(platformFeeBps)) / 10_000n) : "0"} USDC after platform fee
-                              {" | "}
-                              Platform fee: {draft ? formatUsdc((draft * BigInt(platformFeeBps)) / 10_000n) : "0"} USDC
-                            </p>
-                            <p className="text-xs text-[#9CA3AF]">
-                              Allocated: {formatUsdc(allocatedReserved + (draft ?? 0n))} of {formatUsdc(job.rewardUSDC)} USDC total pool
-                            </p>
-                            <textarea
-                              className="archon-input min-h-20 text-xs"
-                              placeholder="Explain why this submission was rejected..."
-                              value={rejectNotes[agentKey] ?? ""}
-                              onChange={(event) =>
-                                setRejectNotes((previous) => ({
-                                  ...previous,
-                                  [agentKey]: event.target.value
-                                }))
-                              }
-                            />
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                disabled={
-                                  isBusyApprove ||
-                                  isBusyReject ||
-                                  approvalsUsed >= maxApprovals ||
-                                  draft === null ||
-                                  draft <= 0n ||
-                                  draft > availableForThis
-                                }
-                                onClick={() => void handleApprove(submission.agent)}
-                                className="archon-button-primary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {isBusyApprove ? "Approving..." : "Approve"}
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isBusyApprove || isBusyReject || !(rejectNotes[agentKey] ?? "").trim()}
-                                onClick={() => void handleReject(submission.agent)}
-                                className="archon-button-secondary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {isBusyReject ? "Rejecting..." : "Reject"}
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
-                      </article>
+                      <div key={`slot-${idx}`} className="flex h-6 w-6 items-center justify-center border text-xs" style={{ borderColor: used ? "var(--pulse)" : "var(--border-bright)", background: used ? "rgba(0,255,163,0.1)" : "transparent", color: used ? "var(--pulse)" : "var(--text-muted)" }}>{used ? "?" : "·"}</div>
                     );
                   })}
                 </div>
-              )}
-            </div>
-          ) : null}
+                <p className="mt-2 text-xs text-[var(--text-muted)]">{approvalsUsed}/{maxApprovals} used</p>
+              </div>
+            </aside>
 
-          {isConnected && !isCreator ? (
-            <div className="archon-card p-5 space-y-4">
-              <h3 className="text-lg font-semibold text-[#EAEAF0]">Your Submission</h3>
+            <div className="space-y-4">
+              <div className="panel-elevated flex flex-wrap gap-2">
+                <button type="button" className={viewMode === "graph" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("graph")}>Graph</button>
+                <button type="button" className={viewMode === "list" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("list")}>List</button>
+                <button type="button" className={viewMode === "timeline" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("timeline")}>Timeline</button>
+              </div>
 
-              {!isAccepted && mySubmission === null ? (
-                <div className="space-y-3">
-                  <p className="text-sm text-[#9CA3AF]">You have not accepted this task yet.</p>
-                  <button
-                    type="button"
-                    onClick={() => void handleAccept()}
-                    disabled={busyAction === "accept" || !isJobOpen(job)}
-                    className="archon-button-primary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {busyAction === "accept" ? "Accepting..." : "Accept Task"}
-                  </button>
-                </div>
-              ) : null}
-
-              {canSubmit ? (
-                <form onSubmit={handleSubmitWork} className="space-y-3">
-                  <label className="block text-sm text-[#EAEAF0]">
-                    Deliverable Link
-                    <input
-                      className="archon-input mt-1"
-                      type="url"
-                      placeholder="https://github.com/..."
-                      value={deliverableLink}
-                      onChange={(event) => setDeliverableLink(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <p className="text-xs text-[#9CA3AF]">
-                    GitHub PR, Notion doc, deployed app URL, IPFS link, or any verifiable output.
-                  </p>
-                  <button
-                    type="submit"
-                    disabled={busyAction === "submit"}
-                    className="archon-button-primary px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {busyAction === "submit" ? "Submitting..." : "Submit Work"}
-                  </button>
-                </form>
-              ) : null}
-
-              {mySubmission?.status === 1 ? (
-                <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">
-                  <p>Awaiting review.</p>
-                  <a
-                    href={mySubmission.deliverableLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 block break-all text-xs underline underline-offset-4"
-                  >
-                    {mySubmission.deliverableLink}
-                  </a>
-                </div>
-              ) : null}
-
-              {canClaim ? (
-                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                  <p>Approved! Claim your reward and credential.</p>
-                  <p className="mt-1 text-xs">
-                    Allocated: {formatUsdc(mySubmission?.allocatedReward || "0")} USDC | You receive:{" "}
-                    {formatUsdc(netForMyClaim)} USDC after fee
-                  </p>
-                  {claimBlockedByCooldown ? (
-                    <p className="mt-1 text-xs text-amber-200">
-                      Claim available in: {formatRemainingDuration(claimCountdown)}
-                    </p>
+              {viewMode === "graph" ? (
+                <div className="panel space-y-3">
+                  {isTaskOpen ? <div className="mb-3 flex items-center gap-2"><span className="live-dot" /><span className="text-xs font-mono tracking-wider text-[var(--pulse)]">LIVE — updates as submissions arrive</span></div> : null}
+                  {graphLoading ? <p className="text-sm text-[var(--text-secondary)]">Rendering graph...</p> : <SubmissionGraph graph={graphData} onNodeClick={(node) => setSelectedNodeId(node.id)} selectedNodeId={selectedNodeId} />}
+                  {selectedNode ? (
+                    <div className="card-sharp space-y-2 p-4 text-sm">
+                      <div className="flex items-center justify-between"><p className="font-heading text-base">Selected {selectedNode.type}</p><span className="badge badge-agent">{selectedNode.isAgent ? "Agent" : "Human"}</span></div>
+                      <p className="text-xs text-[var(--text-secondary)]">From <span className="text-data">{shortAddress(selectedNode.submitterAddress)}</span></p>
+                      <a href={mapToGateway(selectedNode.contentURI)} target="_blank" rel="noreferrer" className="text-xs font-mono text-[var(--arc)] underline">Open content ?</a>
+                    </div>
                   ) : null}
-                  <button
-                    type="button"
-                    onClick={() => void handleClaim()}
-                    disabled={busyAction === "claim" || claimBlockedByCooldown}
-                    className="archon-button-primary mt-3 px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {busyAction === "claim" ? "Claiming..." : "Claim USDC + Credential"}
-                  </button>
+                </div>
+              ) : null}
+              {viewMode === "list" ? (
+                <div className="space-y-3">
+                  {submissions.length === 0 ? <div className="panel text-sm text-[var(--text-secondary)]">No submissions yet.</div> : submissions.map((submission) => (
+                    <article key={`${submission.agent}-${submission.submittedAt}`} className="card-sharp space-y-2 p-4">
+                      <div className="flex items-center justify-between"><span className="text-data text-xs">{shortAddress(submission.agent)}</span><span className="badge badge-arc">{submission.status === 2 ? "APPROVED" : submission.status === 1 ? "SUBMITTED" : submission.status === 3 ? "REJECTED" : "PENDING"}</span></div>
+                      <a href={submission.deliverableLink} target="_blank" rel="noreferrer" className="break-all text-xs font-mono text-[var(--arc)] underline">{submission.deliverableLink}</a>
+                      <p className="text-xs text-[var(--text-muted)]">Submitted: {formatTimestamp(submission.submittedAt)}</p>
+                    </article>
+                  ))}
                 </div>
               ) : null}
 
-              {mySubmission?.status === 2 && mySubmission.credentialClaimed ? (
-                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                  Approved and claimed. Credential minted.
+              {viewMode === "timeline" ? (
+                <div className="panel space-y-2">
+                  {timelineItems.length === 0 ? <p className="text-sm text-[var(--text-secondary)]">No timeline events yet.</p> : timelineItems.map((item) => (
+                    <div key={item.id} className="card-sharp flex items-center justify-between px-3 py-2 text-xs">
+                      <span className="text-[var(--text-primary)]">{item.label}</span>
+                      <span className="font-mono text-[var(--text-muted)]">{formatTimestamp(item.at)}</span>
+                    </div>
+                  ))}
                 </div>
               ) : null}
+            </div>
 
-	              {mySubmission?.status === 3 ? (
-	                <div className="space-y-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-	                  <p>Rejected: {mySubmission.reviewerNote || "No rejection note provided."}</p>
-	                  <p className="text-xs text-[#F5C2CD]">You can resubmit with an updated link.</p>
-	                </div>
-	              ) : null}
-	            </div>
-	          ) : null}
-	            </>
-	          ) : null}
-	        </>
-	      ) : null}
-	    </section>
-	  );
+            <aside className="panel h-fit space-y-4">
+              {!isConnected ? (
+                <>
+                  <div className="section-header">Connect Wallet</div>
+                  <p className="text-sm text-[var(--text-secondary)]">Connect your wallet to accept tasks, submit work, and claim rewards.</p>
+                  <button type="button" className="btn-primary w-full" onClick={() => void connect()}>Connect Wallet</button>
+                </>
+              ) : null}
+
+              {isConnected && !isCreator ? (
+                <>
+                  <div className="section-header">Your Actions</div>
+                  {[{ step: 1, label: "Accept task", done: isAccepted, active: !isAccepted }, { step: 2, label: "Submit your work", done: hasSubmitted, active: isAccepted && !hasSubmitted }, { step: 3, label: "Await approval", done: isApproved, active: hasSubmitted && !isApproved }, { step: 4, label: "Claim reward", done: isClaimed, active: isApproved && !isClaimed }].map((item) => (
+                    <div key={item.step} className="flex items-center gap-3 border p-3" style={{ borderColor: item.active ? "var(--arc)" : item.done ? "var(--pulse)" : "var(--border)", background: item.active ? "rgba(0,229,255,0.04)" : "transparent" }}>
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full border text-xs font-mono" style={{ borderColor: item.done ? "var(--pulse)" : item.active ? "var(--arc)" : "var(--border-bright)", color: item.done ? "var(--pulse)" : item.active ? "var(--arc)" : "var(--text-muted)" }}>{item.done ? "?" : item.step}</div>
+                      <span className="text-sm" style={{ color: item.active ? "var(--text-primary)" : item.done ? "var(--pulse)" : "var(--text-muted)" }}>{item.label}</span>
+                    </div>
+                  ))}
+
+                  {!isAccepted ? <button type="button" className="btn-primary w-full" onClick={() => void handleAccept()} disabled={busyAction === "accept" || !isTaskOpen}>{busyAction === "accept" ? "Accepting..." : "Accept Task"}</button> : null}
+
+                  {isAccepted && !hasSubmitted ? (
+                    <form className="space-y-3" onSubmit={handleSubmitWork}>
+                      <div>
+                        <label className="label">Deliverable Link</label>
+                        <input type="url" className="input-field" placeholder="https://github.com/... or ipfs://..." value={deliverableLink} onChange={(event) => setDeliverableLink(event.target.value)} />
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">GitHub PR, IPFS link, deployed URL, or any public deliverable.</p>
+                      </div>
+                      <button type="submit" className="btn-primary w-full" disabled={busyAction === "submit" || !deliverableLink.trim()}>{busyAction === "submit" ? "Submitting..." : "Submit Work"}</button>
+                    </form>
+                  ) : null}
+
+                  {canClaim ? (
+                    <div className="space-y-3">
+                      <div className="panel border-[var(--pulse)]" style={{ padding: "16px" }}>
+                        <div className="text-label mb-2">Your Reward</div>
+                        <div className="font-heading text-2xl text-[var(--pulse)]">{formatUsdc(claimableNet)} USDC</div>
+                        <div className="mt-1 text-xs text-[var(--text-muted)]">After 10% platform fee</div>
+                        <div className="mt-1 text-xs text-[var(--arc)]">+100 reputation pts</div>
+                      </div>
+                      {claimBlockedByCooldown ? <p className="text-xs text-[var(--warn)]">Claim available in: {formatRemainingDuration(claimCountdown)}</p> : null}
+                      <button type="button" className="btn-primary w-full" onClick={() => void handleClaim()} disabled={busyAction === "claim" || claimBlockedByCooldown}>{busyAction === "claim" ? "Claiming..." : "Claim USDC + Credential"}</button>
+                    </div>
+                  ) : null}
+                  {selectedNode?.type === "submission" ? (
+                    <>
+                      <button type="button" className="btn-ghost w-full" onClick={() => setShowResponsePanel((prev) => !prev)}>{showResponsePanel ? "Close Response Panel" : "Respond to Selected Submission"}</button>
+                      {showResponsePanel ? (
+                        <div className="card-sharp space-y-4 p-5">
+                          <div className="flex items-center justify-between"><div className="section-header mb-0">Add Response</div><button type="button" onClick={() => setShowResponsePanel(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">?</button></div>
+                          <div>
+                            <div className="label mb-2">Response Type</div>
+                            <div className="grid grid-cols-3 gap-1">
+                              {[{ type: RESPONSE_TYPE.BuildsOn, label: "BUILDS ON", color: "var(--arc)", desc: "Extend this idea" }, { type: RESPONSE_TYPE.Critiques, label: "CRITIQUES", color: "var(--warn)", desc: "Identify a flaw" }, { type: RESPONSE_TYPE.Alternative, label: "ALTERNATIVE", color: "var(--agent)", desc: "Different approach" }].map((item) => (
+                                <button key={item.type} type="button" onClick={() => setResponseType(item.type)} className="border p-3 text-center" style={{ borderColor: responseType === item.type ? item.color : "var(--border)", background: responseType === item.type ? `${item.color}10` : "transparent" }}>
+                                  <div className="mb-1 text-[10px] font-mono font-bold tracking-wider" style={{ color: responseType === item.type ? item.color : "var(--text-muted)" }}>{item.label}</div>
+                                  <div className="text-[10px] text-[var(--text-muted)]">{item.desc}</div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div><div className="label">Your Response</div><textarea className="input-field resize-none" rows={4} placeholder="Describe your response..." value={responseContent} onChange={(event) => setResponseContent(event.target.value)} /></div>
+                          <div className="flex items-center justify-between text-xs"><span className="text-[var(--text-muted)]">Stake required: <strong className="text-[var(--gold)]">2 USDC</strong></span><span className="text-[var(--text-muted)]">Returned after 7 days unless flagged</span></div>
+                          <button type="button" className="btn-primary w-full" onClick={() => void handleSubmitResponse()} disabled={busyAction === "respond" || responseContent.trim().length < 20}>{busyAction === "respond" ? "Submitting..." : "Submit Response — Stake 2 USDC"}</button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </>
+              ) : null}
+
+              {isConnected && isCreator ? (
+                <>
+                  <div className="section-header">Review Submissions</div>
+                  {pendingSubmissions.length === 0 ? <p className="text-sm text-[var(--text-muted)]">No submissions awaiting review.</p> : pendingSubmissions.map((submission) => {
+                    const key = submission.agent.toLowerCase();
+                    return (
+                      <div key={`${submission.agent}-${submission.submittedAt}`} className="card-sharp space-y-3 p-4">
+                        <div className="flex items-center justify-between"><span className="text-data text-xs">{shortAddress(submission.agent)}</span><span className="badge badge-warn">PENDING</span></div>
+                        <div><div className="label">Deliverable</div><a href={submission.deliverableLink} target="_blank" rel="noreferrer" className="break-all text-xs font-mono text-[var(--arc)] hover:underline">{submission.deliverableLink.slice(0, 50)}... ?</a></div>
+                        <div>
+                          <div className="label">Allocate reward (USDC)</div>
+                          <input type="number" min={0} step="0.000001" className="input-field text-sm" placeholder={`Max: ${formatUsdc(remainingPool)} USDC`} value={rewardInputs[key] ?? ""} onChange={(event) => setRewardInputs((prev) => ({ ...prev, [key]: event.target.value }))} />
+                          {rewardInputs[key] ? <p className="mt-1 text-xs text-[var(--text-muted)]">Agent receives: {(Number(rewardInputs[key]) * 0.9).toFixed(2)} USDC</p> : null}
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="button" className="btn-primary flex-1 px-2 py-2 text-xs" onClick={() => void handleApprove(submission.agent)} disabled={busyAction === `approve-${key}`}>{busyAction === `approve-${key}` ? "Approving..." : "? Approve"}</button>
+                          <button type="button" className="btn-danger flex-1 px-2 py-2 text-xs" onClick={() => void handleReject(submission.agent)} disabled={busyAction === `reject-${key}`}>{busyAction === `reject-${key}` ? "Rejecting..." : "? Reject"}</button>
+                        </div>
+                        <textarea className="input-field min-h-20 resize-none text-xs" placeholder="Rejection note (required to reject)" value={rejectNotes[key] ?? ""} onChange={(event) => setRejectNotes((prev) => ({ ...prev, [key]: event.target.value }))} />
+                      </div>
+                    );
+                  })}
+                </>
+              ) : null}
+            </aside>
+          </div>
+        </>
+      ) : null}
+
+      <div className="pt-2"><Link href="/" className="btn-ghost inline-flex">Back to task feed</Link></div>
+    </section>
+  );
 }
+

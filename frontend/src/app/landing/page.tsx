@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion, useInView } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { fetchPlatformStats, PlatformStats } from "@/lib/platform-stats";
 
 const STEPS = [
   {
@@ -157,8 +158,70 @@ function GridBackground() {
   );
 }
 
+function AnimatedStat({ value, label, accent }: { value: string; label: string; accent: string }) {
+  const numericPart = Number(value.replace(/[^\d]/g, "")) || 0;
+  const isNumericLike = value !== "—" && /\d/.test(value);
+  const suffix = value.replace(/^[\d,]+/, "");
+  const [displayed, setDisplayed] = useState(0);
+
+  useEffect(() => {
+    if (!isNumericLike || numericPart <= 0) {
+      setDisplayed(0);
+      return () => undefined;
+    }
+    const duration = 1200;
+    const steps = 40;
+    let step = 0;
+    const timer = window.setInterval(() => {
+      step += 1;
+      setDisplayed(Math.min(Math.round((numericPart * step) / steps), numericPart));
+      if (step >= steps) window.clearInterval(timer);
+    }, duration / steps);
+    return () => window.clearInterval(timer);
+  }, [isNumericLike, numericPart]);
+
+  return (
+    <div style={{ borderLeft: `2px solid ${accent}`, paddingLeft: "16px" }}>
+      <div
+        style={{
+          fontFamily: "Space Grotesk, sans-serif",
+          fontSize: "clamp(20px, 2.5vw, 32px)",
+          fontWeight: 700,
+          color: accent,
+          lineHeight: 1,
+          fontVariantNumeric: "tabular-nums"
+        }}
+      >
+        {value === "—" ? value : `${displayed.toLocaleString()}${suffix}`}
+      </div>
+      <div
+        style={{
+          fontSize: "11px",
+          fontWeight: 600,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "var(--text-muted)",
+          marginTop: "4px"
+        }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
 export default function LandingPage() {
   const [visibleLogs, setVisibleLogs] = useState<string[]>([]);
+  const [stats, setStats] = useState<PlatformStats>({
+    totalCredentials: 0,
+    totalUSDCEscrowed: "0",
+    totalCreators: 0,
+    totalAgents: 0,
+    totalTasks: 0,
+    totalSubmissions: 0,
+    loading: true,
+    error: null
+  });
 
   useEffect(() => {
     let index = 0;
@@ -171,6 +234,39 @@ export default function LandingPage() {
     }, 900);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void fetchPlatformStats().then((result) => {
+      if (mounted) setStats(result);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const statItems = [
+    {
+      n: stats.loading ? "—" : stats.totalCredentials.toLocaleString(),
+      label: "Credentials Minted",
+      accent: "var(--pulse)"
+    },
+    {
+      n: stats.loading ? "—" : `${stats.totalUSDCEscrowed} USDC`,
+      label: "Total Escrowed",
+      accent: "var(--gold)"
+    },
+    {
+      n: stats.loading ? "—" : stats.totalCreators.toLocaleString(),
+      label: "Task Creators",
+      accent: "var(--arc)"
+    },
+    {
+      n: stats.loading ? "—" : stats.totalAgents.toLocaleString(),
+      label: "Agents Registered",
+      accent: "var(--agent)"
+    }
+  ];
 
   return (
     <div className="bg-[var(--void)]">
@@ -219,16 +315,8 @@ export default function LandingPage() {
           </motion.div>
 
           <motion.div className="mt-16 flex flex-wrap gap-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
-            {[
-              { n: "59", label: "Tests Passing" },
-              { n: "9", label: "Contracts Deployed" },
-              { n: "6", label: "Credential Sources" },
-              { n: "2000", label: "Max Reputation" }
-            ].map((item) => (
-              <div key={item.label} className="stat-block">
-                <div className="stat-number">{item.n}</div>
-                <div className="stat-label">{item.label}</div>
-              </div>
+            {statItems.map((item) => (
+              <AnimatedStat key={item.label} value={item.n} label={item.label} accent={item.accent} />
             ))}
           </motion.div>
         </div>

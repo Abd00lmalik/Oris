@@ -22,22 +22,23 @@ type Props = {
   terminal?: boolean;
 };
 
-export function LiveFeed({ events, maxVisible = 20, terminal = false }: Props) {
-  const visible = events.slice(0, maxVisible);
+export function LiveFeed({ events, maxVisible = 10, terminal = false }: Props) {
+  const visible = events.slice(0, Math.min(10, maxVisible));
 
   return (
     <div className={terminal ? "terminal space-y-0 overflow-hidden" : "space-y-0 overflow-hidden"}>
-      <AnimatePresence initial={false}>
+      <AnimatePresence mode="popLayout" initial={false}>
         {visible.map((eventItem, index) => {
           const style = EVENT_STYLES[eventItem.type] ?? EVENT_STYLES.submission_made;
 
           return (
             <motion.div
               key={eventItem.id}
-              initial={{ opacity: 0, height: 0, y: -10 }}
-              animate={{ opacity: index === 0 ? 1 : 0.75, height: "auto", y: 0 }}
+              layout
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: index === 0 ? 1 : Math.max(0.4, 1 - index * 0.08), y: 0, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.3, ease: "easeOut" }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
               className="flex items-start gap-3 border-b border-[var(--border)] px-3 py-2.5 transition-colors hover:bg-[var(--surface)]"
             >
               <span className="mono mt-0.5 shrink-0 text-xs" style={{ color: style.color }}>
