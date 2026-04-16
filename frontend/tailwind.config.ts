@@ -24,9 +24,10 @@ const config: Config = {
         "text-muted": "#3D5A73"
       },
       fontFamily: {
-        heading: ["Space Grotesk", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"],
-        body: ["Inter", "sans-serif"]
+        heading: ["Space Grotesk", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "Fira Code", "monospace"],
+        body: ["Inter", "system-ui", "sans-serif"],
+        sans: ["Inter", "system-ui", "sans-serif"]
       },
       animation: {
         "float-up": "float-up 0.5s ease-out forwards",
