@@ -6,19 +6,17 @@ import LandingPage from "@/app/landing/page";
 import { LiveFeed } from "@/components/ui/live-feed";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatBlock } from "@/components/ui/stat";
+import { ActivityEvent, startActivitySubscriptions, subscribeToActivity } from "@/lib/activity";
 import {
-  AgentTaskRecord,
+  contractAddresses,
   CredentialRecord,
   fetchAllJobs,
   fetchCredentialsForAgent,
-  fetchOpenAgentTasks,
-  formatTimestamp,
   formatUsdc,
-  getSourceLabelForDisplay,
+  getReadProvider,
   JobRecord,
   statusLabel
 } from "@/lib/contracts";
-import { subscribeToNewJobs, subscribeToOpenTasks } from "@/lib/events";
 import { calculateWeightedScore, getReputationTier } from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
 
@@ -39,27 +37,22 @@ function statusBadgeClass(status: number) {
   return "badge badge-muted";
 }
 
-const FILTERS = ["All", "Tasks", "Tournaments", "Agentic"] as const;
+const FILTERS = ["All", "Tasks", "Tournaments"] as const;
 
 export default function HomePage() {
   const { account, browserProvider } = useWallet();
   const [jobs, setJobs] = useState<JobRecord[]>([]);
-  const [agentTasks, setAgentTasks] = useState<AgentTaskRecord[]>([]);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<(typeof FILTERS)[number]>("All");
   const [loading, setLoading] = useState(false);
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
 
   const loadFeed = useCallback(async () => {
     if (!account) return;
     setLoading(true);
     try {
-      const [jobRows, taskRows, credentials] = await Promise.all([
-        fetchAllJobs(),
-        fetchOpenAgentTasks(),
-        fetchCredentialsForAgent(account)
-      ]);
+      const [jobRows, credentials] = await Promise.all([fetchAllJobs(), fetchCredentialsForAgent(account)]);
       setJobs(jobRows);
-      setAgentTasks(taskRows);
       setMyCredentials(credentials);
     } finally {
       setLoading(false);
@@ -72,39 +65,22 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!account) return () => undefined;
-    const provider = browserProvider;
-    const unsubs = [
-      subscribeToNewJobs(provider, () => void loadFeed()),
-      subscribeToOpenTasks(provider, () => void loadFeed())
-    ];
-    return () => unsubs.forEach((fn) => fn());
-  }, [account, browserProvider, loadFeed]);
+
+    const graphProvider = browserProvider ?? getReadProvider();
+    void startActivitySubscriptions(graphProvider, {
+      jobAddress: contractAddresses.job,
+      registryAddress: contractAddresses.validationRegistry,
+      identityAddress: "0x8004A818BFB912233c491871b3d84c89A494BD9e"
+    });
+
+    const unsubscribe = subscribeToActivity(setActivityEvents);
+    return unsubscribe;
+  }, [account, browserProvider]);
 
   const myScore = useMemo(() => calculateWeightedScore(myCredentials), [myCredentials]);
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
 
-  const liveEvents = useMemo(() => {
-    const jobEvents = jobs.slice(0, 10).map((job) => ({
-      id: `job-${job.jobId}`,
-      timestamp: formatTimestamp(job.createdAt),
-      icon: "#",
-      text: `Task #${job.jobId} posted: ${job.title}`,
-      meta: `${formatUsdc(job.rewardUSDC)} USDC`
-    }));
-
-    const credEvents = myCredentials.slice(0, 10).map((credential) => ({
-      id: `cred-${credential.credentialId}`,
-      timestamp: formatTimestamp(credential.issuedAt),
-      icon: "+",
-      text: `${getSourceLabelForDisplay(credential.sourceType)} credential minted`,
-      meta: `+${credential.weight} pts`
-    }));
-
-    return [...credEvents, ...jobEvents].slice(0, 20);
-  }, [jobs, myCredentials]);
-
   const visibleJobs = useMemo(() => {
-    if (selectedFilter === "Agentic") return [];
     if (selectedFilter === "Tournaments") return jobs.filter((job) => job.approvedCount > 1 || job.submissionCount > 4);
     return jobs;
   }, [jobs, selectedFilter]);
@@ -114,7 +90,7 @@ export default function HomePage() {
   }
 
   return (
-    <section className="page-container grid gap-6 xl:grid-cols-[240px_1fr_300px]">
+    <section className="page-container grid gap-6 xl:grid-cols-[240px_1fr_320px]">
       <aside className="panel h-fit space-y-6">
         <SectionHeader>Your Command</SectionHeader>
         <StatBlock value={myScore} label="Score" accent="var(--arc)" />
@@ -128,7 +104,7 @@ export default function HomePage() {
 
         <div className="space-y-2 border-t border-[var(--border)] pt-4">
           <div className="mono text-xs text-[var(--text-secondary)]">Credentials: {myCredentials.length}</div>
-          <div className="mono text-xs text-[var(--text-secondary)]">Agentic Open: {agentTasks.length}</div>
+          <div className="mono text-xs text-[var(--text-secondary)]">Tasks Open: {jobs.filter((job) => job.status === 0).length}</div>
         </div>
       </aside>
 
@@ -194,9 +170,11 @@ export default function HomePage() {
         )}
       </main>
 
-      <aside className="panel h-fit">
-        <SectionHeader>Live Activity</SectionHeader>
-        <LiveFeed events={liveEvents} />
+      <aside className="panel h-fit p-0">
+        <div className="px-4 pt-4">
+          <SectionHeader>Live Activity</SectionHeader>
+        </div>
+        <LiveFeed events={activityEvents} maxVisible={30} />
       </aside>
     </section>
   );

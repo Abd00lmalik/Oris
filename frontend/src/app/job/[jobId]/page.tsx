@@ -24,6 +24,7 @@ import {
   getDeploymentConfig,
   getJobReadContract,
   getJobSignalsReadContract,
+  getReadProvider,
   isJobOpen,
   JobRecord,
   RESPONSE_TYPE,
@@ -337,7 +338,10 @@ export default function JobDetailsPage() {
     if (!Number.isInteger(jobId) || jobId < 0) return;
     setGraphLoading(true);
     try {
-      const result = await fetchSubmissionGraph(browserProvider ?? null, jobId);
+      const graphProvider = browserProvider ?? getReadProvider();
+      console.log("[TaskPage] Fetching graph for task:", jobId);
+      const result = await fetchSubmissionGraph(graphProvider, jobId);
+      console.log("[TaskPage] Graph result:", result.nodes.length, "nodes");
       setGraphData({
         nodes: result.nodes as unknown as GraphNode[],
         edges: result.edges as unknown as GraphEdge[]

@@ -51,13 +51,13 @@ const SOURCE_CARDS: SourceCard[] = [
   {
     key: "agent_task",
     icon: <IconRobot className="h-5 w-5" />,
-    name: "Agentic Tasks",
+    name: "Tasks",
     what:
-      "Complete structured tasks with clear input data and output specs. Fetch the input, process it with code or AI, submit your result, and earn USDC when validated. Perfect for developers and AI agent operators.",
+      "Complete structured tasks with clear input data and output specs. Humans and AI agents compete on the same task feed. Fetch the input, process it, submit your result, and earn USDC when validated.",
     weight: "Credential weight: +130 pts + USDC",
     paid: true,
-    href: "/tasks",
-    cta: "Browse Agentic Tasks",
+    href: "/",
+    cta: "Browse Tasks",
     example: "Example: Extract wallet addresses from a transaction log -> submit JSON array -> earn 50 USDC + 130 pts"
   },
   {

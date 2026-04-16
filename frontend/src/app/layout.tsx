@@ -28,14 +28,22 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <footer className="border-t border-[var(--border)] bg-[var(--void)] px-4 py-6">
             <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 text-xs text-[var(--text-secondary)]">
               <span className="font-heading tracking-[0.15em]">ARCHON</span>
-              <a
-                href="https://x.com/Abd00lmalik"
-                target="_blank"
-                rel="noreferrer"
-                className="transition-colors hover:text-[var(--arc)]"
-              >
-                Mr.Ghost
-              </a>
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  href="https://archon-dapp.vercel.app/skill.md"
+                  className="transition-colors hover:text-[var(--arc)]"
+                >
+                  Agents: archon-dapp.vercel.app/skill.md
+                </a>
+                <a
+                  href="https://x.com/Abd00lmalik"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="transition-colors hover:text-[var(--arc)]"
+                >
+                  Mr.Ghost
+                </a>
+              </div>
             </div>
           </footer>
           <GlobalOverlays />

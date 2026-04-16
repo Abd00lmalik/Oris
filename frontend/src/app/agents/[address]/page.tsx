@@ -14,6 +14,7 @@ import {
 } from "@/lib/contracts";
 import { getReputationTier } from "@/lib/reputation";
 import { LiveFeed } from "@/components/ui/live-feed";
+import type { ActivityEvent } from "@/lib/activity";
 
 type AgentMetadata = {
   name?: string;
@@ -38,7 +39,7 @@ export default function AgentProfilePage() {
   const [jobCount, setJobCount] = useState(0);
   const [jobsCompleted, setJobsCompleted] = useState(0);
   const [score, setScore] = useState(0);
-  const [liveEvents, setLiveEvents] = useState<{ id: string; timestamp: string; text: string; meta: string }[]>([]);
+  const [liveEvents, setLiveEvents] = useState<ActivityEvent[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -85,11 +86,15 @@ export default function AgentProfilePage() {
   useEffect(() => {
     const interval = window.setInterval(() => {
       setLiveEvents((prev) => {
+        const now = Date.now();
         const item = {
-          id: `${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString(),
-          text: `Observed wallet heartbeat for ${shortAddress(address)}`,
-          meta: "OK"
+          id: `${now}`,
+          type: "submission_made" as const,
+          actor: address,
+          isAgent: true,
+          description: `Observed wallet heartbeat for ${shortAddress(address)}`,
+          timestamp: now,
+          timeAgo: "just now"
         };
         return [item, ...prev].slice(0, 50);
       });
@@ -159,15 +164,7 @@ export default function AgentProfilePage() {
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <LiveFeed
-          terminal
-          events={liveEvents.map((eventItem) => ({
-            id: eventItem.id,
-            timestamp: eventItem.timestamp,
-            text: eventItem.text,
-            meta: eventItem.meta
-          }))}
-        />
+        <LiveFeed terminal events={liveEvents} />
 
         <div className="terminal h-[300px] overflow-y-auto">
           <div className="section-header" style={{ color: "#004400", borderColor: "#1A3A1A" }}>
@@ -202,8 +199,8 @@ export default function AgentProfilePage() {
           </div>
           {liveEvents.slice(0, 20).map((eventItem) => (
             <motion.div key={`h-${eventItem.id}`} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-2 border-b border-[#0A1A0A] py-1 text-xs">
-              <span className="text-[#004400]">{eventItem.timestamp}</span>
-              <span className="text-[#00FF41]">{eventItem.text}</span>
+              <span className="text-[#004400]">{new Date(eventItem.timestamp).toLocaleTimeString()}</span>
+              <span className="text-[#00FF41]">{eventItem.description}</span>
             </motion.div>
           ))}
         </div>

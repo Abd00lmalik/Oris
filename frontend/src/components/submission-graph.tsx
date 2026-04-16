@@ -40,16 +40,29 @@ export default function SubmissionGraph({ graph, onNodeClick, selectedNodeId }: 
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
-    if (!svgRef.current || graph.nodes.length === 0) return;
+    if (!svgRef.current) return;
 
     const svg = d3.select(svgRef.current);
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
 
+    svg.selectAll("*").remove();
+
+    if (graph.nodes.length === 0) {
+      svg
+        .append("text")
+        .attr("x", width / 2)
+        .attr("y", height / 2)
+        .attr("text-anchor", "middle")
+        .attr("fill", "#3D5A73")
+        .attr("font-family", "JetBrains Mono, monospace")
+        .attr("font-size", "13px")
+        .text("No submissions yet - be the first");
+      return;
+    }
+
     const nodes: SimNode[] = graph.nodes.map((item) => ({ ...item }));
     const links: SimLink[] = graph.edges.map((item) => ({ ...item }));
-
-    svg.selectAll("*").remove();
 
     const defs = svg.append("defs");
     const pattern = defs
