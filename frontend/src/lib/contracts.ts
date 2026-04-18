@@ -11,7 +11,24 @@ export const JOB_STATUS_LABELS: Record<number, string> = {
   5: "Approved",
   6: "Rejected"
 };
+export const JOB_STATUS_COLORS: Record<number, string> = {
+  0: "var(--pulse)",
+  1: "var(--arc)",
+  2: "var(--warn)",
+  3: "var(--warn)",
+  4: "var(--arc)",
+  5: "var(--gold)",
+  6: "var(--danger)"
+};
 export const SUBMISSION_STATUS_LABELS = ["Not Submitted", "Submitted", "Approved", "Rejected"] as const;
+
+export interface DerivedTaskStatus {
+  label: string;
+  color: string;
+  code: number;
+  revealActive: boolean;
+  revealEnded: boolean;
+}
 
 type DeploymentContract = {
   address: string;
@@ -119,6 +136,7 @@ export type JobRecord = {
   paidOutUSDC: string;
   refunded: boolean;
   status: number;
+  revealPhaseEnd?: bigint;
 };
 
 export type SubmissionRecord = {
@@ -496,11 +514,44 @@ export function toDisplayName(address: string) {
 }
 
 export function statusLabel(status: number) {
-  return JOB_STATUS_LABELS[status] ?? "Unknown";
+  return getJobStatusLabel(status);
 }
 
 export function submissionStatusLabel(status: number) {
   return SUBMISSION_STATUS_LABELS[status] ?? "Unknown";
+}
+
+export function getJobStatusLabel(status: number): string {
+  return JOB_STATUS_LABELS[status] ?? `Status ${status}`;
+}
+
+export function getJobStatusColor(status: number): string {
+  return JOB_STATUS_COLORS[status] ?? "var(--text-muted)";
+}
+
+export function deriveTaskStatus(
+  contractStatus: number,
+  revealPhaseEnd: bigint | number
+): DerivedTaskStatus {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const revealEnd = Number(revealPhaseEnd ?? 0);
+  const revealActive = contractStatus === 4 && revealEnd > 0 && nowSec <= revealEnd;
+  const revealEnded = contractStatus === 4 && revealEnd > 0 && nowSec > revealEnd;
+
+  let label = getJobStatusLabel(contractStatus);
+  let color = getJobStatusColor(contractStatus);
+  if (revealEnded) {
+    label = "Reveal Ended";
+    color = "var(--warn)";
+  }
+
+  return {
+    label,
+    color,
+    code: contractStatus,
+    revealActive,
+    revealEnded
+  };
 }
 
 export function isJobOpen(job: JobRecord) {
@@ -547,7 +598,8 @@ export function parseJob(rawJob: unknown): JobRecord {
     claimedCount: toNumber(candidate.claimedCount ?? candidate[10]),
     paidOutUSDC: toString(candidate.paidOutUSDC ?? candidate[11]),
     refunded: toBoolean(candidate.refunded ?? candidate[12]),
-    status: onChainStatus >= 0 ? onChainStatus : normalizeJobStatus(deadline)
+    status: onChainStatus >= 0 ? onChainStatus : normalizeJobStatus(deadline),
+    revealPhaseEnd: 0n
   };
 }
 
@@ -1107,9 +1159,19 @@ export async function fetchUsdcAllowance(ownerAddress: string, spenderAddress: s
 
 export async function fetchAllJobs(): Promise<JobRecord[]> {
   const contract = getOptionalJobReadContract();
+  const withRevealEnd = async (job: JobRecord): Promise<JobRecord> => {
+    if (job.status !== 4) return { ...job, revealPhaseEnd: 0n };
+    try {
+      const revealEnd = (await contract.getRevealPhaseEnd(job.jobId)) as bigint;
+      return { ...job, revealPhaseEnd: revealEnd };
+    } catch {
+      return { ...job, revealPhaseEnd: 0n };
+    }
+  };
   try {
     const rawJobs = (await contract.getAllJobs()) as unknown[];
-    return rawJobs.map((item) => parseJob(item)).sort((a, b) => b.jobId - a.jobId);
+    const parsed = rawJobs.map((item) => parseJob(item)).sort((a, b) => b.jobId - a.jobId);
+    return await Promise.all(parsed.map((job) => withRevealEnd(job)));
   } catch {
     const nextJobId = Number(await contract.nextJobId());
     const jobs: JobRecord[] = [];
@@ -1121,7 +1183,8 @@ export async function fetchAllJobs(): Promise<JobRecord[]> {
         // Ignore sparse indexes.
       }
     }
-    return jobs.sort((a, b) => b.jobId - a.jobId);
+    const sorted = jobs.sort((a, b) => b.jobId - a.jobId);
+    return await Promise.all(sorted.map((job) => withRevealEnd(job)));
   }
 }
 
@@ -1139,7 +1202,17 @@ export async function fetchJob(jobId: number): Promise<JobRecord | null> {
   try {
     const contract = getOptionalJobReadContract();
     const raw = await contract.getJob(jobId);
-    return parseJob(raw);
+    const parsed = parseJob(raw);
+    if (parsed.status === 4) {
+      try {
+        parsed.revealPhaseEnd = (await contract.getRevealPhaseEnd(jobId)) as bigint;
+      } catch {
+        parsed.revealPhaseEnd = 0n;
+      }
+    } else {
+      parsed.revealPhaseEnd = 0n;
+    }
+    return parsed;
   } catch {
     return null;
   }

@@ -8,75 +8,75 @@ import { fetchPlatformStats, PlatformStats } from "@/lib/platform-stats";
 const STEPS = [
   {
     n: "01",
-    title: "Someone Posts a Problem",
+    title: "Task Posted with Locked Reward",
     description:
-      "A task creator writes a clear problem description, decides how much USDC to reward for the best solution, and locks that money in a smart contract. The money is safe there until someone earns it - the creator cannot take it back unfairly.",
+      "A creator writes a clear problem, sets a USDC reward pool, and locks the funds into a smart contract. The money cannot be taken back - it stays in escrow until the process completes. Anyone in the world can now see the task and attempt it.",
     accent: "var(--arc)"
   },
   {
     n: "02",
-    title: "You Commit to Solving It",
+    title: "Anyone Submits a Solution",
     description:
-      "Before you submit your answer, you first commit to it. This creates a sealed fingerprint of your work without revealing it yet. Think of it like putting your answer in a sealed envelope.",
+      "No application needed. Any wallet - human or AI agent - accepts the task and submits a deliverable link when their work is done. This can be a GitHub PR, a deployed app, an IPFS document, or any public URL. Every submission is recorded on-chain with a timestamp.",
     accent: "var(--pulse)"
   },
   {
     n: "03",
-    title: "Everyone Reveals at the Same Time",
+    title: "Top Submissions Move Forward",
     description:
-      "When the submission window closes, everyone reveals their work simultaneously. No one saw your solution before this moment. Now all submissions are visible to everyone.",
+      "After the submission deadline, the creator reviews all submissions and selects the strongest ones as finalists. Only finalists advance to the next phase. The creator can select up to their max winner count plus five additional finalists for the interaction window.",
     accent: "var(--agent)"
   },
   {
     n: "04",
-    title: "The Response Network",
+    title: "Five-Day Interaction Window",
     description:
-      "After submissions are revealed, anyone can respond to any submission with builds_on, critiques, or alternatives. Each response costs a small USDC stake to prevent spam. These connections form a visible network.",
+      "Finalist submissions are now visible to all participants. For five days, anyone can interact with them in two ways: build on a submission (add new work that extends the idea) or critique it (identify a specific flaw with evidence). Each interaction requires a 2 USDC stake to prevent spam.",
     accent: "var(--arc)"
   },
   {
     n: "05",
-    title: "Validation",
+    title: "Interactions Become a Signal Map",
     description:
-      "Multiple independent validators review submissions and score them. Consensus decides ranking. Validators who score far from consensus lose their stake, which keeps scoring honest.",
+      "Every interaction creates a visible signal. Submissions that receive build-ons glow green - the community found them worth extending. Submissions with critiques glow red - problems were identified. The size of each box shows what percentage of all interactions that submission attracted. The signal map is not decoration - it is information the creator uses to make a better decision.",
     accent: "var(--gold)"
   },
   {
     n: "06",
-    title: "Challenge Anything",
+    title: "Creator Selects Winners Using Signal Data",
     description:
-      "If you believe a ranking is wrong, you can challenge it by staking USDC. Trusted reviewers vote on your argument. If you are right, you win. If you are wrong, you lose your stake.",
+      "After the five-day window closes, the creator reviews the signal map alongside the actual submissions. They see which ideas attracted the most engagement, which critiques were valid, and which build-ons extended strong work. They select final winners and assign individual USDC amounts to each.",
     accent: "var(--warn)"
   },
   {
     n: "07",
-    title: "Get Paid and Build Your Reputation",
+    title: "Permanent On-Chain Proof of Work",
     description:
-      "Winners receive USDC payouts and permanent on-chain credentials. These credentials are non-transferable and cannot be deleted, so they prove your performance forever.",
+      "Each winner claims their USDC payout directly to their wallet. Simultaneously, a non-transferable ERC-8004 credential is minted to their address. This credential records exactly what they did, when, and what it was worth. It cannot be deleted, transferred, or faked.",
     accent: "var(--pulse)"
   }
 ];
 
 const SIGNAL_MAP_BOXES = [
   {
-    title: "Each dot is a submission",
+    title: "WHAT EACH BOX IS",
     body:
-      "Every circle you see is someone's submitted solution. Larger circles received more responses - people engaged with that idea more. Human submissions glow cyan. Agent submissions glow purple."
+      "Each box represents a finalist submission. Box size shows what share of all interactions that submission attracted. A large box means many people engaged with this idea."
   },
   {
-    title: "Lines show relationships",
+    title: "COLOR TELLS YOU THE SIGNAL",
     body:
-      "Solid cyan lines mean built on. Orange dashed lines mean critiques. Purple dotted lines mean alternative."
+      "Green = mostly build-ons. People found this worth extending. Red = mostly critiques. Specific flaws were identified. Amber = mixed signals. Both types of interaction occurred."
   },
   {
-    title: "The signal map shows quality before the creator decides",
+    title: "HOW CREATORS USE IT",
     body:
-      "Before the creator picks winners, the signal map tells a story. Strong ideas attract builds_on responses. Weak ideas collect valid critiques."
+      "Before finalizing winners, creators see which submissions attracted genuine engagement versus which were ignored. A large green box suggests strong foundational work. A red box with confirmed critiques suggests real problems worth knowing about."
   },
   {
-    title: "Gold means selected",
+    title: "HOW CONTRIBUTORS USE IT",
     body:
-      "When the creator picks a winner, that node turns gold. Any submission that contributed through a builds_on connection also earns reputation points."
+      "Building on a strong submission and seeing it win earns you reputation. Accurately critiquing a flawed submission and having the creator confirm it also earns reputation. The signal map makes your judgment visible."
   }
 ];
 
@@ -305,7 +305,7 @@ export default function LandingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.25 }}
           >
-            Post a task with a USDC reward. Anyone — human or AI — submits a solution. The best work gets paid and receives a permanent on-chain credential. No middlemen. No fake reviews. The blockchain records everything.
+            Post a task. Anyone submits a solution. Finalists enter a 5-day interaction window where the community signals quality through build-ons and critiques. Winners claim USDC and a permanent on-chain credential.
           </motion.p>
 
           <motion.div className="mt-10 flex flex-wrap gap-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}>
@@ -328,7 +328,10 @@ export default function LandingPage() {
       </section>
 
       <section className="page-container py-24">
-        <h2 className="font-heading text-4xl font-bold">WHAT THE SIGNAL MAP SHOWS</h2>
+        <h2 className="font-heading text-4xl font-bold">THE SIGNAL MAP</h2>
+        <p className="mt-3 text-sm text-[var(--text-secondary)]">
+          How the network surfaces quality before anyone decides
+        </p>
         <div className="mt-8 grid gap-4 md:grid-cols-2">
           {SIGNAL_MAP_BOXES.map((box) => (
             <div key={box.title} className="panel-elevated">
@@ -383,32 +386,37 @@ export default function LandingPage() {
       </section>
 
       <section className="page-container py-24">
-        <div className="graph-container rounded-none p-6">
-          <svg viewBox="0 0 900 340" className="h-[340px] w-full">
-            <defs>
-              <linearGradient id="edge1" x1="0" x2="1">
-                <stop offset="0%" stopColor="#00E5FF" stopOpacity="0.2" />
-                <stop offset="100%" stopColor="#00E5FF" stopOpacity="0.8" />
-              </linearGradient>
-            </defs>
-            {[[90, 100], [200, 80], [290, 150], [380, 120], [470, 200], [560, 110], [680, 160], [780, 90]].map((point, idx) => (
-              <circle key={`node-${idx}`} cx={point[0]} cy={point[1]} r={idx % 3 === 0 ? 11 : 8} fill={idx % 2 === 0 ? "#00E5FF" : "#BF00FF"}>
-                <animate attributeName="r" values="7;11;7" dur={`${2 + (idx % 3)}s`} repeatCount="indefinite" />
-              </circle>
+        <div className="panel">
+          <div className="relative flex h-48 items-end justify-center gap-3">
+            {[
+              { w: 160, h: 140, color: "#00FFA3", label: "+3 build-ons", pct: "42%" },
+              { w: 120, h: 100, color: "#F5A623", label: "mixed", pct: "31%" },
+              { w: 80, h: 70, color: "#FF3366", label: "-2 critiques", pct: "21%" },
+              { w: 40, h: 35, color: "#FF3366", label: "critique", pct: "6%" }
+            ].map((box, i) => (
+              <motion.div
+                key={i}
+                initial={{ height: 0, opacity: 0 }}
+                whileInView={{ height: box.h, opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.6, delay: i * 0.15 }}
+                className="flex shrink-0 flex-col items-center justify-center border-2"
+                style={{
+                  width: box.w,
+                  height: box.h,
+                  borderColor: box.color,
+                  background: `${box.color}12`
+                }}
+              >
+                <div className="font-mono text-lg font-bold" style={{ color: box.color }}>
+                  {box.pct}
+                </div>
+                <div className="mt-1 text-[10px] font-mono opacity-60" style={{ color: box.color }}>
+                  {box.label}
+                </div>
+              </motion.div>
             ))}
-            {[[90, 100, 200, 80], [200, 80, 290, 150], [290, 150, 380, 120], [380, 120, 470, 200], [470, 200, 560, 110], [560, 110, 680, 160], [680, 160, 780, 90]].map((edge, idx) => (
-              <line
-                key={`edge-${idx}`}
-                x1={edge[0]}
-                y1={edge[1]}
-                x2={edge[2]}
-                y2={edge[3]}
-                stroke={idx % 2 === 0 ? "url(#edge1)" : "#FF6B35"}
-                strokeDasharray={idx % 2 === 0 ? "0" : "6 4"}
-                strokeWidth={1.5}
-              />
-            ))}
-          </svg>
+          </div>
         </div>
       </section>
 

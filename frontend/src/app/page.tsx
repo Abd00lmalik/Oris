@@ -9,11 +9,13 @@ import { StatBlock } from "@/components/ui/stat";
 import { ActivityEvent, initActivityFeed, subscribeToActivity } from "@/lib/activity";
 import {
   CredentialRecord,
+  deriveTaskStatus,
   fetchAllJobs,
   fetchCredentialsForAgent,
   formatUsdc,
+  getJobStatusColor,
+  getJobStatusLabel,
   JobRecord,
-  statusLabel
 } from "@/lib/contracts";
 import { calculateWeightedScore, getReputationTier } from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
@@ -26,13 +28,6 @@ function formatDeadline(deadline: number) {
   const mins = Math.floor((diff % 3600) / 60);
   if (hours <= 0) return `${mins}m left`;
   return `${hours}h ${mins}m left`;
-}
-
-function statusBadgeClass(status: number) {
-  if (status === 0) return "badge badge-pulse";
-  if (status === 1) return "badge badge-warn";
-  if (status === 2) return "badge badge-gold";
-  return "badge badge-muted";
 }
 
 const FILTERS = ["All", "Tasks", "Tournaments"] as const;
@@ -140,8 +135,12 @@ export default function HomePage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {visibleJobs.slice(0, 20).map((task) => {
-              const status = statusLabel(task.status);
-              const statusColor = task.status === 0 ? "var(--pulse)" : task.status === 1 ? "var(--warn)" : "var(--arc)";
+              const statusLabel = task.status === 4
+                ? deriveTaskStatus(task.status, task.revealPhaseEnd ?? 0n).label
+                : getJobStatusLabel(task.status);
+              const statusColor = task.status === 4
+                ? deriveTaskStatus(task.status, task.revealPhaseEnd ?? 0n).color
+                : getJobStatusColor(task.status);
               return (
                 <Link key={task.jobId} href={`/job/${task.jobId}`} className="card-sharp group cursor-pointer overflow-hidden p-0">
                   <div className="h-[2px]" style={{ background: statusColor }} />
@@ -150,7 +149,18 @@ export default function HomePage() {
                       <span className="mono text-xs text-[var(--text-muted)]">#{task.jobId}</span>
                       <div className="flex items-center gap-2">
                         <span className="badge badge-gold mono">{formatUsdc(task.rewardUSDC)} USDC</span>
-                        <span className={statusBadgeClass(task.status)}>{status}</span>
+                        <span
+                          className="badge mono"
+                          style={{
+                            color: statusColor,
+                            borderColor: statusColor,
+                            background: "transparent",
+                            borderWidth: "1px",
+                            borderStyle: "solid"
+                          }}
+                        >
+                          {statusLabel}
+                        </span>
                       </div>
                     </div>
 
