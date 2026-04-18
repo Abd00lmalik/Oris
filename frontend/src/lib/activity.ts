@@ -76,28 +76,30 @@ async function _checkIsAgent(identityContract: Contract, address: string): Promi
 }
 
 async function _loadRecentHistory(jobContract: Contract, identityContract: Contract) {
+  console.log("[activity] Loading history...");
+  const provider = getReadProvider();
+  const merged: ActivityEvent[] = [];
+
+  // Approach 1: query logs (fastest when RPC supports it)
   try {
-    const provider = getReadProvider();
     const latest = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, latest - 2000);
+    const fromBlock = Math.max(0, latest - 5000);
+    console.log("[activity] Querying events from block", fromBlock, "to", latest);
 
-    const histories = await Promise.all([
-      jobContract.queryFilter(jobContract.filters.JobCreated(), fromBlock, latest).catch(() => []),
-      jobContract.queryFilter(jobContract.filters.DeliverableSubmitted(), fromBlock, latest).catch(() => []),
-      jobContract.queryFilter(jobContract.filters.CredentialClaimed(), fromBlock, latest).catch(() => []),
-      identityContract.queryFilter(identityContract.filters.Transfer(), fromBlock, latest).catch(() => [])
-    ]);
-
-    const merged: ActivityEvent[] = [];
-
-    for (const log of histories[0] as EventLog[]) {
+    const created = await jobContract.queryFilter(
+      jobContract.filters.JobCreated?.() ?? "JobCreated",
+      fromBlock,
+      latest
+    );
+    console.log("[activity] Found", created.length, "JobCreated events");
+    for (const log of created.slice(-5) as EventLog[]) {
       const timestamp = _fromLogTimestamp(latest, log.blockNumber);
       merged.push({
-        id: _makeEventId("job-created", log),
+        id: _makeEventId("hist-created", log),
         type: "task_created",
         actor: String(log.args?.[1] ?? ZERO),
         isAgent: false,
-        description: `Task created: "${String(log.args?.[2] ?? "").slice(0, 48)}"`,
+        description: `Task created: "${String(log.args?.[2] ?? "").slice(0, 50)}"`,
         taskId: Number(log.args?.[0] ?? 0),
         txHash: log.transactionHash,
         timestamp,
@@ -105,11 +107,17 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       });
     }
 
-    for (const log of histories[1] as EventLog[]) {
-      const agent = String(log.args?.[1] ?? ZERO);
+    const submitted = await jobContract.queryFilter(
+      jobContract.filters.DeliverableSubmitted?.() ?? "DeliverableSubmitted",
+      fromBlock,
+      latest
+    );
+    console.log("[activity] Found", submitted.length, "DeliverableSubmitted events");
+    for (const log of submitted.slice(-5) as EventLog[]) {
       const timestamp = _fromLogTimestamp(latest, log.blockNumber);
+      const agent = String(log.args?.[1] ?? ZERO);
       merged.push({
-        id: _makeEventId("submitted", log),
+        id: _makeEventId("hist-submitted", log),
         type: "submission_made",
         actor: agent,
         isAgent: await _checkIsAgent(identityContract, agent),
@@ -121,11 +129,16 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       });
     }
 
-    for (const log of histories[2] as EventLog[]) {
-      const agent = String(log.args?.[1] ?? ZERO);
+    const claimed = await jobContract.queryFilter(
+      jobContract.filters.CredentialClaimed?.() ?? "CredentialClaimed",
+      fromBlock,
+      latest
+    );
+    for (const log of claimed.slice(-5) as EventLog[]) {
       const timestamp = _fromLogTimestamp(latest, log.blockNumber);
+      const agent = String(log.args?.[1] ?? ZERO);
       merged.push({
-        id: _makeEventId("credential", log),
+        id: _makeEventId("hist-credential", log),
         type: "credential_minted",
         actor: agent,
         isAgent: await _checkIsAgent(identityContract, agent),
@@ -137,30 +150,106 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       });
     }
 
-    for (const log of histories[3] as EventLog[]) {
+    const transfers = await identityContract.queryFilter(
+      identityContract.filters.Transfer?.() ?? "Transfer",
+      fromBlock,
+      latest
+    );
+    for (const log of transfers.slice(-5) as EventLog[]) {
       const from = String(log.args?.[0] ?? ZERO).toLowerCase();
       if (from !== ZERO) continue;
       const timestamp = _fromLogTimestamp(latest, log.blockNumber);
       merged.push({
-        id: _makeEventId("agent-joined", log),
+        id: _makeEventId("hist-agent", log),
         type: "agent_joined",
         actor: String(log.args?.[1] ?? ZERO),
         isAgent: true,
-        description: `New agent registered on Archon`,
+        description: "New agent registered on Archon",
         txHash: log.transactionHash,
         timestamp,
         timeAgo: _timeAgo(timestamp)
       });
     }
-
-    merged
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, MAX_EVENTS)
-      .reverse()
-      .forEach((event) => _addEvent(event));
   } catch (err) {
-    console.warn("[activity] history load failed:", err);
+    console.warn("[activity] Event log query failed:", err);
   }
+
+  // Approach 2: direct state fallback if logs are sparse/unavailable
+  try {
+    const stateReader = new Contract(
+      contractsJson.contracts.jobContract.address,
+      [
+        "function totalJobs() view returns (uint256)",
+        "function nextJobId() view returns (uint256)",
+        "function getJob(uint256) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded))"
+      ],
+      provider
+    );
+
+    let total = 0;
+    try {
+      total = Number(await stateReader.totalJobs());
+    } catch {
+      try {
+        total = Number(await stateReader.nextJobId());
+      } catch {
+        total = 0;
+      }
+    }
+    console.log("[activity] Reading", total, "tasks from contract state");
+
+    const startId = Math.max(0, total - 3);
+    for (let jobId = startId; jobId < total; jobId += 1) {
+      try {
+        const job = await stateReader.getJob(jobId);
+        const client = String(job.client ?? job[1] ?? ZERO);
+        const title = String(job.title ?? job[2] ?? `Task #${jobId}`);
+        const submissionCount = Number(job.submissionCount ?? job[8] ?? 0);
+
+        if (client && client.toLowerCase() !== ZERO) {
+          merged.push({
+            id: `state-created-${jobId}`,
+            type: "task_created",
+            actor: client,
+            isAgent: false,
+            description: `Task posted: "${title.slice(0, 50)}"`,
+            taskId: jobId,
+            timestamp: Date.now() - (total - jobId) * 3_600_000,
+            timeAgo: ""
+          });
+
+          if (submissionCount > 0) {
+            merged.push({
+              id: `state-submitted-${jobId}`,
+              type: "submission_made",
+              actor: "multiple",
+              isAgent: false,
+              description: `${submissionCount} submission${submissionCount > 1 ? "s" : ""} on task #${jobId}: "${title.slice(0, 30)}"`,
+              taskId: jobId,
+              timestamp: Date.now() - (total - jobId) * 1_800_000,
+              timeAgo: ""
+            });
+          }
+        }
+      } catch {
+        // ignore missing IDs
+      }
+    }
+  } catch (err) {
+    console.warn("[activity] State read failed:", err);
+  }
+
+  merged
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, MAX_EVENTS)
+    .reverse()
+    .forEach((event) => {
+      event.timeAgo = _timeAgo(event.timestamp);
+      _addEvent(event);
+    });
+
+  console.log("[activity] History loaded:", _events.length, "events");
+  _notify();
 }
 
 export function subscribeToActivity(fn: (events: ActivityEvent[]) => void): () => void {

@@ -137,7 +137,7 @@ export default function JobDetailsPage() {
     getDeploymentConfig().platformFeeBps ?? getDeploymentConfig().platform?.feeBps ?? 1000
   );
   const [loading, setLoading] = useState(false);
-  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphLoading, setGraphLoading] = useState(true);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
@@ -599,7 +599,12 @@ export default function JobDetailsPage() {
               {viewMode === "graph" ? (
                 <div className="panel space-y-3">
                   {isTaskOpen ? <div className="mb-3 flex items-center gap-2"><span className="live-dot" /><span className="text-xs font-mono tracking-wider text-[var(--pulse)]">LIVE — updates as submissions arrive</span></div> : null}
-                  {graphLoading ? <p className="text-sm text-[var(--text-secondary)]">Rendering graph...</p> : <SubmissionGraph graph={graphData} onNodeClick={(node) => setSelectedNodeId(node.id)} selectedNodeId={selectedNodeId} />}
+                  <SubmissionGraph
+                    graph={graphData}
+                    onNodeClick={(node) => setSelectedNodeId(node.id)}
+                    selectedNodeId={selectedNodeId}
+                    loading={graphLoading}
+                  />
                   {selectedNode ? (
                     <div className="card-sharp space-y-2 p-4 text-sm">
                       <div className="flex items-center justify-between"><p className="font-heading text-base">Selected {selectedNode.type}</p><span className="badge badge-agent">{selectedNode.isAgent ? "Agent" : "Human"}</span></div>
