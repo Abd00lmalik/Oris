@@ -31,7 +31,6 @@ export function NavBar() {
   const [theme, setTheme] = useState<Theme>("dark");
 
   const isWrongNetwork = chainId !== null && chainId !== expectedChainId;
-  const showSandbox = process.env.NODE_ENV !== "production" || Boolean(account);
 
   useEffect(() => {
     setTheme(getTheme());
@@ -70,11 +69,6 @@ export function NavBar() {
             >
               For Agents
             </Link>
-            {showSandbox ? (
-              <Link href="/agent-sandbox" className="nav-link">
-                Sandbox
-              </Link>
-            ) : null}
           </div>
 
           <div className="flex items-center gap-2">
@@ -166,11 +160,6 @@ export function NavBar() {
                 <Link href="/skill.md" className="badge badge-agent mt-2 w-fit" onClick={() => setMobileOpen(false)}>
                   For Agents
                 </Link>
-                {showSandbox ? (
-                  <Link href="/agent-sandbox" className="nav-link" onClick={() => setMobileOpen(false)}>
-                    Sandbox
-                  </Link>
-                ) : null}
               </div>
             </motion.div>
           ) : null}
