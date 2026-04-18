@@ -100,6 +100,8 @@ type RawSubmissionRecord = {
   reviewerNote: unknown;
   credentialClaimed: unknown;
   allocatedReward?: unknown;
+  buildOnBonus?: unknown;
+  isBuildOnWinner?: unknown;
 };
 
 type RawModeratorProfile = {
@@ -148,6 +150,8 @@ export type SubmissionRecord = {
   reviewerNote: string;
   credentialClaimed: boolean;
   allocatedReward: string;
+  buildOnBonus: string;
+  isBuildOnWinner: boolean;
 };
 
 export type CredentialRecord = {
@@ -332,8 +336,8 @@ const COMMUNITY_SOURCE_ABI = [
 const JOB_OPTIONAL_ABI = [
   "function getAllJobs() view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status)[])",
   "function getJob(uint256 jobId) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status))",
-  "function getSubmission(uint256 jobId,address agent) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward))",
-  "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward)[])",
+  "function getSubmission(uint256 jobId,address agent) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner))",
+  "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner)[])",
   "function isAccepted(uint256 jobId,address agent) view returns (bool)",
   "function getJobsByClient(address client) view returns (uint256[])",
   "function getJobsByAgent(address agent) view returns (uint256[])",
@@ -350,6 +354,9 @@ const JOB_OPTIONAL_ABI = [
   "function CREDENTIAL_COOLDOWN() view returns (uint256)",
   "function nextJobId() view returns (uint256)",
   "function lastCredentialClaim(address wallet) view returns (uint256)",
+  "function acceptJob(uint256 jobId) external",
+  "function submitDeliverable(uint256 jobId,string deliverableLink) external",
+  "function submitDirect(uint256 jobId,string deliverableLink) external",
   "function respondToSubmission(uint256 parentSubmissionId, uint8 responseType, string contentURI) returns (uint256)",
   "function returnResponseStake(uint256 responseId)",
   "function slashResponseStake(uint256 responseId)",
@@ -362,6 +369,7 @@ const JOB_OPTIONAL_ABI = [
   "function getSelectedFinalists(uint256 jobId) external view returns (address[])",
   "function getRevealPhaseEnd(uint256 jobId) external view returns (uint256)",
   "function isInRevealPhase(uint256 jobId) external view returns (bool)",
+  "function buildOnParentByResponder(uint256 jobId,address responder) external view returns (address)",
   "event SubmissionResponseAdded(uint256 indexed taskId, uint256 indexed parentSubmissionId, uint256 indexed responseId, uint8 responseType)",
   "event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt)",
   "event WinnersFinalized(uint256 indexed jobId, address[] winners, uint256[] rewardAmounts)",
@@ -604,20 +612,61 @@ export function parseJob(rawJob: unknown): JobRecord {
 }
 
 export function parseSubmission(rawSubmission: unknown): SubmissionRecord {
-  const candidate = rawSubmission as Partial<RawSubmissionRecord>;
-  const tuple = rawSubmission as unknown[];
-  const hasSubmissionIdAtIndexZero = Array.isArray(tuple) && (typeof tuple[0] === "bigint" || typeof tuple[0] === "number");
-  const idx = hasSubmissionIdAtIndexZero ? 1 : 0;
-  return {
-    submissionId: toNumber(candidate.submissionId ?? (hasSubmissionIdAtIndexZero ? tuple[0] : 0)),
-    agent: toString(candidate.agent ?? tuple[idx + 0]),
-    deliverableLink: toString(candidate.deliverableLink ?? tuple[idx + 1]),
-    status: toNumber(candidate.status ?? tuple[idx + 2]),
-    submittedAt: toNumber(candidate.submittedAt ?? tuple[idx + 3]),
-    reviewerNote: toString(candidate.reviewerNote ?? tuple[idx + 4]),
-    credentialClaimed: toBoolean(candidate.credentialClaimed ?? tuple[idx + 5]),
-    allocatedReward: toString(candidate.allocatedReward ?? tuple[idx + 6] ?? "0")
+  const tuple = Array.isArray(rawSubmission) ? rawSubmission : [];
+  const candidate =
+    rawSubmission && typeof rawSubmission === "object"
+      ? (rawSubmission as Partial<RawSubmissionRecord> & Record<string, unknown>)
+      : ({} as Partial<RawSubmissionRecord> & Record<string, unknown>);
+
+  const read = (...pickers: Array<() => unknown>) => {
+    for (const pick of pickers) {
+      try {
+        const value = pick();
+        if (value !== undefined && value !== null) return value;
+      } catch {
+        // Deferred ABI decoding can throw on property access; keep probing fallbacks.
+      }
+    }
+    return undefined;
   };
+
+  try {
+    return {
+      submissionId: toNumber(read(() => candidate.submissionId, () => candidate.id, () => tuple[0], () => 0)),
+      agent: toString(read(() => candidate.agent, () => tuple[1], () => tuple[0], () => "")),
+      deliverableLink: toString(
+        read(
+          () => candidate.deliverableLink,
+          () => (candidate as Record<string, unknown>).deliverable,
+          () => (candidate as Record<string, unknown>).contentURI,
+          () => tuple[2],
+          () => tuple[3],
+          () => ""
+        )
+      ),
+      status: toNumber(read(() => candidate.status, () => tuple[3], () => tuple[4], () => 0)),
+      submittedAt: toNumber(read(() => candidate.submittedAt, () => tuple[4], () => tuple[5], () => 0)),
+      reviewerNote: toString(read(() => candidate.reviewerNote, () => tuple[5], () => tuple[6], () => "")),
+      credentialClaimed: toBoolean(read(() => candidate.credentialClaimed, () => tuple[6], () => tuple[7], () => false)),
+      allocatedReward: toString(read(() => candidate.allocatedReward, () => tuple[7], () => tuple[4], () => 0)),
+      buildOnBonus: toString(read(() => candidate.buildOnBonus, () => tuple[8], () => 0)),
+      isBuildOnWinner: toBoolean(read(() => candidate.isBuildOnWinner, () => tuple[9], () => false))
+    };
+  } catch (error) {
+    console.warn("[parseSubmission] ABI decode error, returning empty submission:", error);
+    return {
+      submissionId: 0,
+      agent: "",
+      deliverableLink: "",
+      status: 0,
+      submittedAt: 0,
+      reviewerNote: "",
+      credentialClaimed: false,
+      allocatedReward: "0",
+      buildOnBonus: "0",
+      isBuildOnWinner: false
+    };
+  }
 }
 
 export function parseCredential(rawCredential: unknown): CredentialRecord {
@@ -1235,9 +1284,14 @@ export async function fetchSubmissionForAgent(
 }
 
 export async function fetchSubmissions(jobId: number): Promise<SubmissionRecord[]> {
-  const contract = getOptionalJobReadContract();
-  const raw = (await contract.getSubmissions(jobId)) as unknown[];
-  return raw.map((item) => parseSubmission(item));
+  try {
+    const contract = getOptionalJobReadContract();
+    const raw = (await contract.getSubmissions(jobId)) as unknown[];
+    return raw.map((item) => parseSubmission(item));
+  } catch (error) {
+    console.warn("[fetchSubmissions] failed:", error);
+    return [];
+  }
 }
 
 export async function fetchSelectedFinalists(jobId: number): Promise<string[]> {
@@ -1271,8 +1325,8 @@ export async function fetchSignalMap(
   provider: ethers.BrowserProvider | ethers.JsonRpcProvider,
   taskId: number
 ): Promise<Record<string, unknown>> {
-  const { buildSignalMap } = await import("@/lib/signal-map");
-  return (await buildSignalMap(provider, taskId)) as unknown as Record<string, unknown>;
+  const { buildTaskHeatmap } = await import("@/lib/signal-map");
+  return (await buildTaskHeatmap(provider, taskId)) as unknown as Record<string, unknown>;
 }
 
 export async function fetchJobsByClient(clientAddress: string): Promise<JobRecord[]> {
@@ -1972,6 +2026,30 @@ export async function txSubmitDeliverable(
 ) {
   const contract = await getJobWriteContract(browserProvider);
   return (await contract.submitDeliverable(jobId, deliverableLink)) as ethers.TransactionResponse;
+}
+
+export async function txSubmitDirect(
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint,
+  deliverableLink: string
+): Promise<string> {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+
+  try {
+    const tx = await contract.submitDirect(jobId, deliverableLink);
+    await tx.wait();
+    return tx.hash as string;
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    const message = String(err?.message ?? "");
+    if (message.includes("not a function") || err?.code === "CALL_EXCEPTION") {
+      await (await contract.acceptJob(jobId)).wait();
+      const fallbackTx = await contract.submitDeliverable(jobId, deliverableLink);
+      await fallbackTx.wait();
+      return fallbackTx.hash as string;
+    }
+    throw error;
+  }
 }
 
 export async function txApproveSubmission(

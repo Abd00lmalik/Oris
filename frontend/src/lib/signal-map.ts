@@ -1,74 +1,173 @@
 import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
 import { contractAddresses, getReadProvider, ZERO_ADDRESS } from "@/lib/contracts";
+import { fetchUserProfile } from "@/lib/user-profiles";
 
-export type ResponseType = "builds_on" | "critiques";
-
-export interface SignalResponse {
-  responseId: string;
-  responder: string;
-  responseType: ResponseType;
-  contentURI: string;
-  createdAt: number;
-  stakeSlashed: boolean;
-}
-
-export interface SubmissionSignal {
-  submissionId: string;
-  agent: string;
-  deliverableLink: string;
-  isFinalist: boolean;
-  isSelected: boolean;
-  buildsOnCount: number;
-  critiquesCount: number;
-  totalInteractions: number;
-  interactionWeight: number;
+export interface PersonSignal {
+  address: string;
+  username: string | null;
+  avatarUrl: string | null;
+  blockieUrl: string;
+  role: "submitter" | "responder" | "both";
+  submissionCount: number;
+  buildsOnGiven: number;
+  buildsOnReceived: number;
+  critiquesGiven: number;
+  critiquesReceived: number;
+  totalActivity: number;
+  activityWeight: number;
+  dominantSignal: "builds_on" | "critiques" | "neutral";
   colorRatio: number;
-  responses: SignalResponse[];
 }
 
-export interface TaskSignalMap {
-  submissions: SubmissionSignal[];
-  totalInteractions: number;
+export interface TaskHeatmap {
+  people: PersonSignal[];
+  totalActivity: number;
   revealPhaseEnd: number;
   isRevealPhase: boolean;
 }
 
-export async function buildSignalMap(
+function addressToColor(address: string): string {
+  const normalized = address.replace(/^0x/i, "").padEnd(6, "0");
+  const hash = normalized.slice(0, 6);
+  const r = parseInt(hash.slice(0, 2), 16);
+  const g = parseInt(hash.slice(2, 4), 16);
+  const b = parseInt(hash.slice(4, 6), 16);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function generateBlockie(address: string): string {
+  const mirror = `${address.slice(0, 20)}${address
+    .slice(20)
+    .split("")
+    .reverse()
+    .join("")}`;
+  return addressToColor(address || mirror);
+}
+
+export async function buildTaskHeatmap(
   provider: BrowserProvider | JsonRpcProvider,
   taskId: number
-): Promise<TaskSignalMap> {
-  console.log("[signalMap] Building for task:", taskId);
-  const graphProvider = provider ?? getReadProvider();
+): Promise<TaskHeatmap> {
+  console.log("[heatmap] Building for task:", taskId);
+  const readProvider = provider ?? getReadProvider();
   const jobContract = new Contract(
     contractAddresses.job,
     [
-      "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward)[])",
+      "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner)[])",
       "function getSubmissionResponses(uint256 submissionId) view returns (uint256[])",
-      "function getResponse(uint256 responseId) view returns (tuple(uint256 responseId, uint256 parentSubmissionId, uint256 taskId, address responder, uint8 responseType, string contentURI, uint256 stakedAmount, uint256 createdAt, bool stakeSlashed, bool stakeReturned))",
-      "function getSelectedFinalists(uint256 jobId) view returns (address[])",
+      "function getResponse(uint256 responseId) view returns (tuple(uint256 responseId,uint256 parentSubmissionId,uint256 taskId,address responder,uint8 responseType,string contentURI,uint256 stakedAmount,uint256 createdAt,bool stakeSlashed,bool stakeReturned))",
       "function getRevealPhaseEnd(uint256 jobId) view returns (uint256)",
       "function isInRevealPhase(uint256 jobId) view returns (bool)"
     ],
-    graphProvider
+    readProvider
   );
+
+  const peopleMap = new Map<string, PersonSignal>();
+
+  const getOrCreate = (address: string): PersonSignal => {
+    const key = address.toLowerCase();
+    const existing = peopleMap.get(key);
+    if (existing) return existing;
+    const created: PersonSignal = {
+      address,
+      username: null,
+      avatarUrl: null,
+      blockieUrl: generateBlockie(address),
+      role: "submitter",
+      submissionCount: 0,
+      buildsOnGiven: 0,
+      buildsOnReceived: 0,
+      critiquesGiven: 0,
+      critiquesReceived: 0,
+      totalActivity: 0,
+      activityWeight: 0,
+      dominantSignal: "neutral",
+      colorRatio: 0.5
+    };
+    peopleMap.set(key, created);
+    return created;
+  };
 
   let rawSubmissions: unknown[] = [];
   try {
-    const result = await jobContract.getSubmissions(taskId);
-    rawSubmissions = Array.from(result);
-    console.log("[signalMap] getSubmissions:", rawSubmissions.length);
+    rawSubmissions = Array.from(await jobContract.getSubmissions(taskId));
   } catch (error) {
-    console.warn("[signalMap] getSubmissions failed:", error);
-    return { submissions: [], totalInteractions: 0, revealPhaseEnd: 0, isRevealPhase: false };
+    console.warn("[heatmap] getSubmissions failed:", error);
+    return { people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false };
   }
 
-  let finalists: string[] = [];
-  try {
-    finalists = (await jobContract.getSelectedFinalists(taskId)) as string[];
-  } catch {
-    finalists = [];
+  for (let i = 0; i < rawSubmissions.length; i += 1) {
+    const submission = rawSubmissions[i] as Record<string, unknown> & unknown[];
+    const agent = String(submission.agent ?? submission[1] ?? "");
+    if (!agent || agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) continue;
+
+    const submitter = getOrCreate(agent);
+    submitter.submissionCount += 1;
+
+    try {
+      const profile = await fetchUserProfile(readProvider, agent);
+      if (profile) {
+        submitter.username = profile.username || null;
+        submitter.avatarUrl = profile.avatarUrl || null;
+      }
+    } catch {
+      // Non-blocking profile read.
+    }
+
+    const rawId = submission.submissionId ?? submission.id ?? submission[0] ?? BigInt(i + 1);
+    const submissionId = rawId && rawId !== 0n ? rawId : BigInt(i + 1);
+
+    try {
+      const responseIds = await jobContract.getSubmissionResponses(submissionId);
+      for (const responseId of responseIds as Array<bigint | number>) {
+        try {
+          const response = (await jobContract.getResponse(responseId)) as Record<string, unknown> & unknown[];
+          const responder = String(response.responder ?? response[3] ?? "");
+          const stakeSlashed = Boolean(response.stakeSlashed ?? response[8] ?? false);
+          const responseType = Number(response.responseType ?? response[4] ?? 0);
+          if (!responder || responder.toLowerCase() === ZERO_ADDRESS.toLowerCase() || stakeSlashed) continue;
+
+          const responderPerson = getOrCreate(responder);
+          responderPerson.role = responderPerson.submissionCount > 0 ? "both" : "responder";
+
+          if (responseType === 0) {
+            submitter.buildsOnReceived += 1;
+            responderPerson.buildsOnGiven += 1;
+          } else {
+            submitter.critiquesReceived += 1;
+            responderPerson.critiquesGiven += 1;
+          }
+        } catch {
+          // Skip malformed response rows.
+        }
+      }
+    } catch {
+      // Submission has no responses.
+    }
   }
-  const finalistSet = new Set(finalists.map((address) => address.toLowerCase()));
+
+  const people = Array.from(peopleMap.values());
+  let globalActivity = 0;
+  for (const person of people) {
+    person.totalActivity =
+      person.submissionCount +
+      person.buildsOnGiven +
+      person.buildsOnReceived +
+      person.critiquesGiven +
+      person.critiquesReceived;
+    globalActivity += person.totalActivity;
+  }
+
+  for (const person of people) {
+    person.activityWeight =
+      globalActivity > 0 ? Math.round((person.totalActivity / globalActivity) * 100) : 0;
+    const totalSignals = person.buildsOnGiven + person.critiquesGiven;
+    person.colorRatio = totalSignals === 0 ? 0.5 : person.buildsOnGiven / totalSignals;
+    person.dominantSignal =
+      person.colorRatio > 0.6 ? "builds_on" : person.colorRatio < 0.4 ? "critiques" : "neutral";
+  }
+
+  people.sort((a, b) => b.activityWeight - a.activityWeight);
 
   let revealPhaseEnd = 0;
   let isRevealPhase = false;
@@ -80,81 +179,9 @@ export async function buildSignalMap(
     isRevealPhase = false;
   }
 
-  const signals: SubmissionSignal[] = [];
-  let totalInteractions = 0;
-
-  for (let i = 0; i < rawSubmissions.length; i += 1) {
-    const sub = rawSubmissions[i] as Record<string, unknown> & unknown[];
-    const agent = String(sub.agent ?? sub[0] ?? "");
-    const deliverableLink = String(sub.deliverableLink ?? sub[2] ?? sub[1] ?? "");
-    const status = Number(sub.status ?? sub[3] ?? 0);
-    const rawId = sub.submissionId ?? sub.id ?? sub[7] ?? BigInt(i + 1);
-    const submissionId = String(rawId && rawId !== 0n ? rawId : BigInt(i + 1));
-
-    if (!agent || agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) continue;
-
-    const responses: SignalResponse[] = [];
-    let buildsOnCount = 0;
-    let critiquesCount = 0;
-
-    try {
-      const responseIds = (await jobContract.getSubmissionResponses(submissionId)) as Array<bigint | number>;
-      for (const responseId of responseIds) {
-        try {
-          const response = await jobContract.getResponse(responseId);
-          const responseTypeNumber = Number(response.responseType ?? response[4] ?? 0);
-          const mappedType: ResponseType = responseTypeNumber === 0 ? "builds_on" : "critiques";
-          if (mappedType === "builds_on") buildsOnCount += 1;
-          else critiquesCount += 1;
-
-          responses.push({
-            responseId: String(response.responseId ?? response[0] ?? responseId),
-            responder: String(response.responder ?? response[3] ?? ""),
-            responseType: mappedType,
-            contentURI: String(response.contentURI ?? response[5] ?? ""),
-            createdAt: Number(response.createdAt ?? response[7] ?? 0),
-            stakeSlashed: Boolean(response.stakeSlashed ?? response[8] ?? false)
-          });
-        } catch {
-          // Ignore malformed response rows.
-        }
-      }
-    } catch {
-      // Submission may have no responses yet.
-    }
-
-    const submissionInteractions = buildsOnCount + critiquesCount;
-    totalInteractions += submissionInteractions;
-
-    if (submissionInteractions === 0) continue;
-
-    signals.push({
-      submissionId,
-      agent,
-      deliverableLink,
-      isFinalist: finalistSet.has(agent.toLowerCase()),
-      isSelected: status === 2,
-      buildsOnCount,
-      critiquesCount,
-      totalInteractions: submissionInteractions,
-      interactionWeight: 0,
-      colorRatio: submissionInteractions > 0 ? buildsOnCount / submissionInteractions : 0.5,
-      responses
-    });
-  }
-
-  if (totalInteractions > 0) {
-    for (const signal of signals) {
-      signal.interactionWeight = Math.round((signal.totalInteractions / totalInteractions) * 100);
-    }
-  }
-
-  signals.sort((left, right) => right.interactionWeight - left.interactionWeight);
-  console.log("[signalMap] Result:", signals.length, "submissions with interactions");
-
   return {
-    submissions: signals,
-    totalInteractions,
+    people,
+    totalActivity: globalActivity,
     revealPhaseEnd,
     isRevealPhase
   };

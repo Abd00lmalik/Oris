@@ -56,6 +56,8 @@ contract ERC8183Job is ICredentialSource {
         string reviewerNote;
         bool credentialClaimed;
         uint256 allocatedReward;
+        uint256 buildOnBonus;
+        bool isBuildOnWinner;
     }
 
     struct SubmissionView {
@@ -67,6 +69,8 @@ contract ERC8183Job is ICredentialSource {
         string reviewerNote;
         bool credentialClaimed;
         uint256 allocatedReward;
+        uint256 buildOnBonus;
+        bool isBuildOnWinner;
     }
 
     struct SubmissionResponse {
@@ -112,6 +116,7 @@ contract ERC8183Job is ICredentialSource {
     mapping(address => uint256[]) private jobsByAgent;
     mapping(uint256 => mapping(address => bool)) public isAccepted;
     mapping(uint256 => address[]) private submissionAgentsByJob;
+    mapping(uint256 => address[]) public submittedAgents;
     mapping(uint256 => mapping(address => Submission)) private submissions;
     mapping(uint256 => SubmissionResponse) public responses;
     mapping(uint256 => uint256[]) public submissionResponses;
@@ -119,6 +124,8 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(address => bool)) public hasResponded;
     mapping(uint256 => uint256) public submissionIdToTaskId;
     mapping(uint256 => address) public submissionIdToAgent;
+    mapping(uint256 => address) public buildOnParent;
+    mapping(uint256 => mapping(address => address)) public buildOnParentByResponder;
     mapping(uint256 => address[]) public selectedFinalists;
     mapping(uint256 => mapping(address => bool)) public isFinalist;
     mapping(uint256 => uint256) public revealPhaseStart;
@@ -165,6 +172,13 @@ contract ERC8183Job is ICredentialSource {
         uint256 indexed parentSubmissionId,
         uint256 indexed responseId,
         ResponseType responseType
+    );
+    event ResponseAdded(
+        uint256 indexed taskId,
+        uint256 indexed parentSubmissionId,
+        uint256 indexed responseId,
+        address responder,
+        uint8 responseType
     );
     event StakeSlashed(uint256 indexed responseId, address indexed responder, uint256 amount);
     event StakeReturned(uint256 indexed responseId, address indexed responder, uint256 amount);
@@ -357,6 +371,7 @@ contract ERC8183Job is ICredentialSource {
             submission.agent = msg.sender;
             submission.submissionId = sid;
             submissionAgentsByJob[jobId].push(msg.sender);
+            submittedAgents[jobId].push(msg.sender);
             job.submissionCount += 1;
             submissionIdToTaskId[sid] = jobId;
             submissionIdToAgent[sid] = msg.sender;
@@ -371,6 +386,68 @@ contract ERC8183Job is ICredentialSource {
         submission.submittedAt = block.timestamp;
         submission.reviewerNote = "";
         job.status = JobStatus.Submitted;
+
+        emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
+    }
+
+    /**
+     * @dev submitDirect — agent autonomy shortcut.
+     * Combines acceptJob + submitDeliverable in one transaction.
+     * Agent does not need to call acceptJob first.
+     */
+    function submitDirect(
+        uint256 jobId,
+        string calldata deliverableLink
+    ) external nonReentrant {
+        Job storage job = _getExistingJob(jobId);
+
+        require(msg.sender != job.client, "creator cannot submit");
+        require(
+            uint8(job.status) == uint8(JobStatus.Open) ||
+                uint8(job.status) == uint8(JobStatus.InProgress) ||
+                uint8(job.status) == uint8(JobStatus.Submitted),
+            "job not accepting submissions"
+        );
+        require(block.timestamp <= job.deadline, "deadline passed");
+        require(bytes(deliverableLink).length > 0, "link required");
+
+        if (!isAccepted[jobId][msg.sender]) {
+            isAccepted[jobId][msg.sender] = true;
+            acceptedAgentsByJob[jobId].push(msg.sender);
+            jobsByAgent[msg.sender].push(jobId);
+            job.acceptedCount += 1;
+            if (uint8(job.status) == uint8(JobStatus.Open)) {
+                job.status = JobStatus.InProgress;
+            }
+            emit JobAccepted(jobId, msg.sender);
+        }
+
+        Submission storage submission = submissions[jobId][msg.sender];
+        require(submission.status == SubmissionStatus.None, "already submitted");
+        require(!submission.credentialClaimed, "credential already claimed");
+
+        uint256 sid = nextSubmissionId;
+        nextSubmissionId += 1;
+        submission.submissionId = sid;
+        submission.agent = msg.sender;
+        submission.deliverableLink = deliverableLink;
+        submission.status = SubmissionStatus.Submitted;
+        submission.submittedAt = block.timestamp;
+        submission.reviewerNote = "";
+        submission.credentialClaimed = false;
+        submission.allocatedReward = 0;
+        submission.buildOnBonus = 0;
+        submission.isBuildOnWinner = false;
+
+        submissionAgentsByJob[jobId].push(msg.sender);
+        submittedAgents[jobId].push(msg.sender);
+        submissionIdToTaskId[sid] = jobId;
+        submissionIdToAgent[sid] = msg.sender;
+        job.submissionCount += 1;
+
+        if (uint8(job.status) < uint8(JobStatus.Submitted)) {
+            job.status = JobStatus.Submitted;
+        }
 
         emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
     }
@@ -404,6 +481,7 @@ contract ERC8183Job is ICredentialSource {
         submission.status = SubmissionStatus.Approved;
         submission.reviewerNote = "";
         submission.allocatedReward = rewardAmount;
+        submission.isBuildOnWinner = false;
         approvedAgentCount[jobId] += 1;
         job.approvedCount += 1;
 
@@ -516,8 +594,22 @@ contract ERC8183Job is ICredentialSource {
                 job.approvedCount += 1;
             }
             sub.status = SubmissionStatus.Approved;
-            sub.allocatedReward = rewardAmounts[i];
             sub.reviewerNote = "";
+            sub.isBuildOnWinner = false;
+
+            address parentAuthor = buildOnParentByResponder[jobId][winners[i]];
+            if (parentAuthor != address(0) && parentAuthor != winners[i]) {
+                uint256 buildOnShare = (rewardAmounts[i] * 3_000) / BASIS_POINTS;
+                uint256 parentShare = rewardAmounts[i] - buildOnShare;
+                sub.allocatedReward = buildOnShare;
+                sub.isBuildOnWinner = true;
+
+                Submission storage parentSubmission = submissions[jobId][parentAuthor];
+                require(parentSubmission.agent != address(0), "parent submission missing");
+                parentSubmission.buildOnBonus += parentShare;
+            } else {
+                sub.allocatedReward = rewardAmounts[i];
+            }
         }
 
         job.status = JobStatus.Approved;
@@ -528,19 +620,23 @@ contract ERC8183Job is ICredentialSource {
         Job storage job = _getExistingJob(jobId);
         Submission storage submission = submissions[jobId][msg.sender];
 
-        require(submission.status == SubmissionStatus.Approved, "submission not approved");
+        require(
+            submission.status == SubmissionStatus.Approved || submission.buildOnBonus > 0,
+            "submission not approved"
+        );
         require(!submission.credentialClaimed, "credential already claimed");
         require(
             block.timestamp >= lastCredentialClaim[msg.sender] + CREDENTIAL_COOLDOWN,
             "credential cooldown active"
         );
 
-        uint256 grossReward = submission.allocatedReward;
+        uint256 grossReward = submission.allocatedReward + submission.buildOnBonus;
         require(grossReward > 0, "no reward allocated");
         uint256 available = job.rewardUSDC - job.paidOutUSDC;
         require(available >= grossReward, "insufficient escrow");
 
         submission.credentialClaimed = true;
+        submission.buildOnBonus = 0;
         job.claimedCount += 1;
         job.paidOutUSDC += grossReward;
         jobsCompletedByWallet[msg.sender] += 1;
@@ -601,13 +697,35 @@ contract ERC8183Job is ICredentialSource {
     }
 
     function getSubmissions(uint256 jobId) external view returns (SubmissionView[] memory allSubmissions) {
-        _getExistingJob(jobId);
-        address[] storage agents = submissionAgentsByJob[jobId];
-        allSubmissions = new SubmissionView[](agents.length);
+        Job storage job = _getExistingJob(jobId);
+        bool isCreator = msg.sender == job.client;
+        bool isReveal = uint8(job.status) >= uint8(JobStatus.RevealPhase);
+        address[] storage agents = submittedAgents[jobId];
 
+        uint256 visibleCount = 0;
         for (uint256 i = 0; i < agents.length; i++) {
             Submission storage submission = submissions[jobId][agents[i]];
-            allSubmissions[i] = SubmissionView({
+            if (submission.agent == address(0) || submission.status == SubmissionStatus.None) {
+                continue;
+            }
+            bool isFinalistSub = isFinalist[jobId][agents[i]];
+            if (isCreator || (isReveal && isFinalistSub)) {
+                visibleCount += 1;
+            }
+        }
+
+        allSubmissions = new SubmissionView[](visibleCount);
+        uint256 idx = 0;
+        for (uint256 i = 0; i < agents.length; i++) {
+            Submission storage submission = submissions[jobId][agents[i]];
+            if (submission.agent == address(0) || submission.status == SubmissionStatus.None) {
+                continue;
+            }
+            bool isFinalistSub = isFinalist[jobId][agents[i]];
+            if (!(isCreator || (isReveal && isFinalistSub))) {
+                continue;
+            }
+            allSubmissions[idx] = SubmissionView({
                 submissionId: submission.submissionId,
                 agent: submission.agent,
                 deliverableLink: submission.deliverableLink,
@@ -615,8 +733,11 @@ contract ERC8183Job is ICredentialSource {
                 submittedAt: submission.submittedAt,
                 reviewerNote: submission.reviewerNote,
                 credentialClaimed: submission.credentialClaimed,
-                allocatedReward: submission.allocatedReward
+                allocatedReward: submission.allocatedReward,
+                buildOnBonus: submission.buildOnBonus,
+                isBuildOnWinner: submission.isBuildOnWinner
             });
+            idx += 1;
         }
     }
 
@@ -709,7 +830,13 @@ contract ERC8183Job is ICredentialSource {
         submissionResponseCount[parentSubmissionId] += 1;
         hasResponded[parentSubmissionId][msg.sender] = true;
 
+        if (responseType == ResponseType.BuildsOn) {
+            buildOnParent[responseId] = parentAgent;
+            buildOnParentByResponder[taskId][msg.sender] = parentAgent;
+        }
+
         emit SubmissionResponseAdded(taskId, parentSubmissionId, responseId, responseType);
+        emit ResponseAdded(taskId, parentSubmissionId, responseId, msg.sender, uint8(responseType));
         return responseId;
     }
 
@@ -783,6 +910,9 @@ contract ERC8183Job is ICredentialSource {
             if (sub.status == SubmissionStatus.Approved || sub.credentialClaimed) {
                 total += sub.allocatedReward;
             }
+            if (sub.buildOnBonus > 0) {
+                total += sub.buildOnBonus;
+            }
         }
     }
 
@@ -792,6 +922,9 @@ contract ERC8183Job is ICredentialSource {
             Submission storage sub = submissions[jobId][agents[i]];
             if (sub.status == SubmissionStatus.Approved && !sub.credentialClaimed) {
                 total += sub.allocatedReward;
+            }
+            if (sub.buildOnBonus > 0 && !sub.credentialClaimed) {
+                total += sub.buildOnBonus;
             }
         }
     }

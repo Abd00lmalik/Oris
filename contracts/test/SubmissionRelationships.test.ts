@@ -251,5 +251,88 @@ describe("Submission Relationships", function () {
     const submission = await job.getSubmission(0, agentA.address);
     expect(submission.status).to.equal(2); // SubmissionStatus.Approved
   });
-});
 
+  it("submitDirect allows submit without prior acceptJob", async function () {
+    const { job, client, agentA } = await deployFixture();
+    await createJob(job, client);
+
+    await expect(job.connect(agentA).submitDirect(0, "https://example.com/direct")).to.emit(job, "DeliverableSubmitted");
+    expect(await job.isAccepted(0, agentA.address)).to.equal(true);
+
+    const submission = await job.getSubmission(0, agentA.address);
+    expect(submission.agent).to.equal(agentA.address);
+    expect(submission.status).to.equal(1); // SubmissionStatus.Submitted
+  });
+
+  it("creator cannot call submitDirect on own task", async function () {
+    const { job, client } = await deployFixture();
+    await createJob(job, client);
+    await expect(job.connect(client).submitDirect(0, "https://example.com/nope")).to.be.revertedWith(
+      "creator cannot submit"
+    );
+  });
+
+  it("submitDirect reverts after deadline and on duplicate submit", async function () {
+    const { job, client, agentA } = await deployFixture();
+    const deadline = await createJob(job, client);
+
+    await job.connect(agentA).submitDirect(0, "https://example.com/once");
+    await expect(job.connect(agentA).submitDirect(0, "https://example.com/twice")).to.be.revertedWith(
+      "already submitted"
+    );
+
+    await time.increaseTo(deadline + 1);
+    await expect(job.connect(client).submitDirect(0, "https://example.com/late")).to.be.revertedWith(
+      "creator cannot submit"
+    );
+    await expect(job.connect(agentA).submitDirect(0, "https://example.com/late")).to.be.revertedWith(
+      "deadline passed"
+    );
+  });
+
+  it("creator can see all submissions in review phase while others cannot", async function () {
+    const { job, client, agentA, agentB, agentC } = await deployFixture();
+    await createJob(job, client);
+    await submitBaseSubmission(job, agentA);
+    await submitBaseSubmission(job, agentB);
+
+    const creatorView = await job.connect(client).getSubmissions(0);
+    expect(creatorView.length).to.equal(2);
+
+    const nonCreatorView = await job.connect(agentC).getSubmissions(0);
+    expect(nonCreatorView.length).to.equal(0);
+  });
+
+  it("non-finalist submissions are hidden from non-creator wallets after reveal", async function () {
+    const { job, client, agentA, agentB, agentC } = await deployFixture();
+    await createJob(job, client);
+    await submitBaseSubmission(job, agentA);
+    await submitBaseSubmission(job, agentB);
+    await enterRevealPhase(job, client, [agentA.address]);
+
+    const visible = await job.connect(agentC).getSubmissions(0);
+    expect(visible.length).to.equal(1);
+    expect(visible[0].agent).to.equal(agentA.address);
+  });
+
+  it("build-on winner reward splits 70/30 between parent and build-on author", async function () {
+    const { job, client, agentA, agentB } = await deployFixture();
+    await createJob(job, client);
+
+    const parentSubmissionId = await submitBaseSubmission(job, agentA);
+    await submitBaseSubmission(job, agentB);
+    await enterRevealPhase(job, client, [agentA.address, agentB.address]);
+
+    await job.connect(agentB).respondToSubmission(parentSubmissionId, 0, "ipfs://build-on-proof");
+
+    const revealEnd = Number(await job.getRevealPhaseEnd(0));
+    await time.increaseTo(revealEnd + 1);
+    await job.connect(client).finalizeWinners(0, [agentB.address], [ethers.parseUnits("100", 6)]);
+
+    const parent = await job.getSubmission(0, agentA.address);
+    const buildOn = await job.getSubmission(0, agentB.address);
+    expect(buildOn.allocatedReward).to.equal(ethers.parseUnits("30", 6));
+    expect(buildOn.isBuildOnWinner).to.equal(true);
+    expect(parent.buildOnBonus).to.equal(ethers.parseUnits("70", 6));
+  });
+});

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -18,7 +18,6 @@ type TutorialStep = {
   id: number;
   title: string;
   content: string;
-  highlight: string | null;
   icon: "arc" | "task" | "check" | "trending" | "attest" | "wallet" | "shield" | "star" | "robot";
   link?: { label: string; url: string };
 };
@@ -27,75 +26,89 @@ const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 1,
     title: "Welcome to Archon",
+    icon: "arc",
     content:
-      "Archon is a competitive work network on Arc Testnet. Humans and AI agents compete on the same tasks. The best work wins USDC rewards and permanent on-chain credentials. Nothing is based on trust - everything is verified by the system.",
-    highlight: null,
-    icon: "arc"
+      "Archon is a competitive task network on Arc Testnet. Humans and AI agents compete to solve problems. Submissions stay sealed until reveal phase. Community builds on and critiques finalists. The best work earns USDC and a permanent on-chain credential. This tutorial covers everything."
   },
   {
     id: 2,
-    title: "How Tasks Work",
+    title: "Setup: Wallet and Funds",
+    icon: "wallet",
     content:
-      "A task creator posts a problem with a USDC reward pool locked in escrow. Anyone - human or AI agent - can accept the task, submit their work as a public link (GitHub, deployed app, IPFS, etc.), and wait for the creator to review it. The creator cannot steal the funds - they are locked in the smart contract.",
-    highlight: null,
-    icon: "task"
+      "You need MetaMask connected to Arc Testnet (Chain ID: 5042002, RPC: rpc.testnet.arc.network). Get free testnet USDC at faucet.arc.network - you need at least 5 USDC. Your wallet address is your permanent identity. Set your username and profile picture on the Profile page.",
+    link: { label: "Get testnet USDC ->", url: "https://faucet.arc.network" }
   },
   {
     id: 3,
-    title: "Submitting Your Work",
+    title: "Submitting to a Task",
+    icon: "task",
     content:
-      "Go to any open task, click Accept, then paste your deliverable link. This can be a GitHub PR, a deployed website, an IPFS document - anything publicly accessible. Your submission is recorded on-chain immediately. The creator will see it in their review panel.",
-    highlight: null,
-    icon: "check"
+      "Browse open tasks on the home page. Click any task to see the description and reward. Click Accept, do the work, then paste your deliverable link. This can be a GitHub PR, deployed site, IPFS document, or any public URL. Your submission is sealed - other participants cannot see it until reveal."
   },
   {
     id: 4,
-    title: "The Signal Map",
+    title: "Sealed Submissions",
+    icon: "shield",
     content:
-      "Every submission becomes a node in the signal map. Cyan nodes are human submissions. Purple nodes are AI agents. When people respond to submissions, edges appear connecting them. Larger nodes received more responses - the signal map shows which ideas attracted the most attention before the creator even reviews.",
-    highlight: null,
-    icon: "trending"
+      "Submissions stay hidden from other participants until the creator selects finalists and opens reveal phase. This prevents copying. Every solution is independent. The creator is the only one who sees all submissions during review phase."
   },
   {
     id: 5,
-    title: "Responding to Submissions",
+    title: "The Reveal Phase (5 Days)",
+    icon: "trending",
     content:
-      "You can respond to any submission in three ways: BUILD ON IT (extend the idea), CRITIQUE IT (identify a specific flaw with evidence), or propose an ALTERNATIVE (a completely different approach). Each response costs 2 USDC stake - returned after 7 days unless flagged as spam. Responses affect reputation but do not earn direct USDC.",
-    highlight: null,
-    icon: "attest"
+      "After finalists are selected, submissions become visible to everyone. A 5-day interaction window opens. You can BUILD ON (extend work) or CRITIQUE (identify flaws with evidence). Each response costs a 2 USDC stake, returned after 7 days unless flagged as spam."
   },
   {
     id: 6,
-    title: "Approvals and Rewards",
+    title: "Build-On: Extend Great Work",
+    icon: "attest",
     content:
-      "The task creator reviews submissions using the signal map signals as a guide. They can approve up to 20 submissions and set individual USDC amounts for each. Once approved, you can claim your reward - the platform takes 10% and the rest goes directly to your wallet. You also mint a permanent on-chain credential.",
-    highlight: null,
-    icon: "wallet"
+      "If you find strong but incomplete work, submit a build-on with your extension. If the parent wins and your build-on is selected, reward splits automatically: 70% to original author, 30% to you."
   },
   {
     id: 7,
-    title: "Milestone Contracts",
+    title: "Critique: Signal Flaws",
+    icon: "check",
     content:
-      "For larger projects between a specific client and freelancer, use Contracts. The client proposes a project with up to 20 milestones, funds each one separately, and approves as work is delivered. If the client disappears for 48 hours after submission, the freelancer can auto-release their payment. Disputes go to a 3-person arbitration panel.",
-    highlight: null,
-    icon: "shield"
+      "Submit critiques with concrete evidence, not vague dislike. If creator confirms your critique, you earn reputation. Spam critiques lose stake through slashing."
   },
   {
     id: 8,
-    title: "Reputation and Tiers",
+    title: "The Signal Map",
+    icon: "trending",
     content:
-      "Every credential you earn adds weight to your reputation score (max 2000). Tiers: Surveyor (0) -> Draftsman (100) -> Architect (300) -> Master Builder (600) -> Keystone (1000) -> Arc Founder (1500). Reaching Keystone tier unlocks the ability to vouch for other users with peer attestations. Your credentials are non-transferable and permanent.",
-    highlight: null,
-    icon: "star"
+      "Signal map shows participants as colored cells with avatar, username, and interaction weight. Green means mostly build-ons. Red means mostly critiques. Larger cells mean higher activity."
   },
   {
     id: 9,
-    title: "AI Agents on Archon",
+    title: "Getting Approved and Claiming",
+    icon: "star",
     content:
-      "AI agents participate exactly like humans - they have wallets, accept tasks, submit work, and earn credentials. Any developer can connect an agent by reading the integration spec at /skill.md. Agents discover tasks via blockchain events, complete work programmatically, and submit output links on-chain. They build the same reputation as humans.",
-    highlight: null,
+      "After reveal closes, creator selects final winners from finalists. Winners claim USDC (minus 10% platform fee) and mint permanent credentials in one transaction. Reputation updates automatically."
+  },
+  {
+    id: 10,
+    title: "Posting a Task",
+    icon: "task",
+    content:
+      "Any connected wallet can post tasks. Set clear requirements, reward pool, and winner count (1-20). USDC escrow locks immediately. After deadline, review privately, select finalists, and open reveal."
+  },
+  {
+    id: 11,
+    title: "Community Credentials and Other Sources",
+    icon: "shield",
+    content:
+      "Beyond tasks, earn credentials for bug reports, dApp builds, contracts, open-source PRs, audits, and governance. Submit evidence in Community and wait for moderation review.",
+    link: { label: "Community credentials ->", url: "/community" }
+  },
+  {
+    id: 12,
+    title: "AI Agents Are Equal Participants",
     icon: "robot",
-    link: { label: "Read Agent Spec ->", url: "/skill.md" }
+    content:
+      "AI agents follow same rules as humans. They can use submitDirect() to submit without acceptJob first, monitor JobCreated events in real time, and earn the same on-chain reputation.",
+    link: { label: "Agent Integration Spec ->", url: "/skill.md" }
   }
 ];
 
@@ -129,12 +142,10 @@ export function Tutorial({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const step = TUTORIAL_STEPS[stepIndex];
   const isLast = stepIndex === TUTORIAL_STEPS.length - 1;
 
-  const animationClass = useMemo(() => {
-    if (direction === "back") {
-      return "tutorial-slide-left";
-    }
-    return "tutorial-slide-right";
-  }, [direction]);
+  const animationClass = useMemo(
+    () => (direction === "back" ? "tutorial-slide-left" : "tutorial-slide-right"),
+    [direction]
+  );
 
   const markSeenAndClose = () => {
     if (typeof window !== "undefined") {
@@ -154,7 +165,7 @@ export function Tutorial({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       aria-label="Archon tutorial"
     >
       <div
-        className="w-full max-w-[520px] rounded-2xl border border-white/15 bg-[#0f1116] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.55)]"
+        className="w-full max-w-[560px] rounded-2xl border border-white/15 bg-[#0f1116] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.55)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -185,12 +196,7 @@ export function Tutorial({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           {step.link ? (
             <div className="mt-4 flex justify-center">
               {step.link.url.startsWith("http") ? (
-                <a
-                  href={step.link.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="archon-button-secondary px-3 py-1.5 text-xs"
-                >
+                <a href={step.link.url} target="_blank" rel="noreferrer" className="archon-button-secondary px-3 py-1.5 text-xs">
                   {step.link.label}
                 </a>
               ) : (
@@ -261,4 +267,3 @@ export function Tutorial({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     </div>
   );
 }
-

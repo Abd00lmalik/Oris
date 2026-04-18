@@ -1,12 +1,13 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import SignalMap from "@/components/signal-map";
-import { SubmissionSignal, TaskSignalMap } from "@/lib/signal-map";
+import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
 import {
   deriveTaskStatus,
+  DerivedTaskStatus,
   expectedChainId,
   fetchApprovedAgentCount,
   fetchIsInRevealPhase,
@@ -18,14 +19,14 @@ import {
   fetchMaxApprovalsForJob,
   fetchRevealPhaseEnd,
   fetchSelectedFinalists,
-  fetchSignalMap,
   fetchSubmissionForAgent,
   fetchSubmissions,
   formatTimestamp,
   formatUsdc,
   getJobReadContract,
-  getJobSignalsReadContract,
   getReadProvider,
+  getJobSignalsReadContract,
+  parseSubmission,
   JobRecord,
   RESPONSE_TYPE,
   SubmissionRecord,
@@ -35,7 +36,7 @@ import {
   txRespondToSubmission,
   txSelectFinalists,
   txSubmitDeliverable,
-  DerivedTaskStatus
+  ZERO_ADDRESS
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
 
@@ -60,19 +61,24 @@ function parseUsdcInput(value: string): bigint | null {
 
 function DeadlineCountdown({ deadline }: { deadline: number }) {
   const [remaining, setRemaining] = useState("");
+
   useEffect(() => {
     const update = () => {
       const diff = deadline - Date.now() / 1000;
-      if (diff <= 0) return setRemaining("EXPIRED");
+      if (diff <= 0) {
+        setRemaining("EXPIRED");
+        return;
+      }
       const h = Math.floor(diff / 3600);
       const m = Math.floor((diff % 3600) / 60);
       const s = Math.floor(diff % 60);
       setRemaining(h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`);
     };
     update();
-    const t = window.setInterval(update, 1000);
-    return () => window.clearInterval(t);
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
   }, [deadline]);
+
   return <span className="text-data">{remaining}</span>;
 }
 
@@ -81,15 +87,18 @@ function RevealCountdown({ end }: { end: number }) {
   useEffect(() => {
     const update = () => {
       const diff = end - Date.now() / 1000;
-      if (diff <= 0) return setLabel("Ended");
+      if (diff <= 0) {
+        setLabel("Ended");
+        return;
+      }
       const d = Math.floor(diff / 86400);
       const h = Math.floor((diff % 86400) / 3600);
       const m = Math.floor((diff % 3600) / 60);
       setLabel(d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`);
     };
     update();
-    const t = window.setInterval(update, 10000);
-    return () => window.clearInterval(t);
+    const timer = window.setInterval(update, 10000);
+    return () => window.clearInterval(timer);
   }, [end]);
   return <span>{label}</span>;
 }
@@ -112,29 +121,45 @@ function PhaseBanner({
     { status: 5, label: "APPROVED", desc: "Winners selected", color: "var(--pulse)" },
     { status: 6, label: "REJECTED", desc: "Task closed", color: "var(--danger)" }
   ];
+
   const derived = deriveTaskStatus(job.status, revealEnd) as DerivedTaskStatus;
-  const current = phases.find((p) => p.status === job.status) ?? phases[0];
-  const phaseLabel = derived.revealEnded ? "REVEAL ENDED" : current.label;
-  const phaseDesc = awaitingSelection
-    ? "Submission deadline passed · awaiting creator finalist selection"
+  const current = phases.find((phase) => phase.status === job.status) ?? phases[0];
+  const label = derived.revealEnded ? "REVEAL ENDED" : current.label;
+  const description = awaitingSelection
+    ? "Submission deadline passed - awaiting creator finalist selection"
     : derived.revealEnded
-      ? "Reveal window closed · awaiting winner finalization"
+      ? "Reveal window closed - awaiting winner finalization"
       : current.desc;
   const progress = Math.min(job.status, 5);
+
   return (
     <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] p-4">
       <div className="flex items-center gap-4">
-        {phases.slice(0, 6).map((p, i) => (
-          <div key={p.status} className="flex items-center gap-1">
-            <div className="h-2 w-2 rounded-full" style={{ background: i <= progress ? derived.color : "var(--border-bright)" }} />
-            {i < 5 ? <div className="h-px w-8" style={{ background: i < progress ? derived.color : "var(--border)" }} /> : null}
+        {phases.slice(0, 6).map((phase, index) => (
+          <div key={phase.status} className="flex items-center gap-1">
+            <div
+              className="h-2 w-2 rounded-full"
+              style={{ background: index <= progress ? derived.color : "var(--border-bright)" }}
+            />
+            {index < 5 ? (
+              <div
+                className="h-px w-8"
+                style={{ background: index < progress ? derived.color : "var(--border)" }}
+              />
+            ) : null}
           </div>
         ))}
       </div>
       <div className="text-right">
-        <div className="font-mono text-xs font-bold tracking-wider" style={{ color: derived.color }}>{phaseLabel}</div>
-        <div className="text-xs text-[var(--text-secondary)]">{phaseDesc}</div>
-        {derived.revealActive && revealEnd > 0 ? <div className="mt-1 text-xs font-mono text-[var(--warn)]">Ends: <RevealCountdown end={revealEnd} /></div> : null}
+        <div className="font-mono text-xs font-bold tracking-wider" style={{ color: derived.color }}>
+          {label}
+        </div>
+        <div className="text-xs text-[var(--text-secondary)]">{description}</div>
+        {derived.revealActive && revealEnd > 0 ? (
+          <div className="mt-1 text-xs font-mono text-[var(--warn)]">
+            Ends: <RevealCountdown end={revealEnd} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -151,6 +176,7 @@ export default function JobDetailsPage() {
   const [jobError, setJobError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [mySubmission, setMySubmission] = useState<SubmissionRecord | null>(null);
+  const [selectedSubmission, setSelectedSubmission] = useState<SubmissionRecord | null>(null);
   const [isAccepted, setIsAccepted] = useState(false);
   const [maxApprovals, setMaxApprovals] = useState(1);
   const [approvalsUsed, setApprovalsUsed] = useState(0);
@@ -159,12 +185,17 @@ export default function JobDetailsPage() {
 
   const [selectedFinalists, setSelectedFinalists] = useState<string[]>([]);
   const [finalistDraft, setFinalistDraft] = useState<string[]>([]);
+  const [buildOnParents, setBuildOnParents] = useState<Record<string, string>>({});
   const [revealPhaseEnd, setRevealPhaseEnd] = useState(0);
   const [isRevealPhase, setIsRevealPhase] = useState(false);
 
-  const [signalMap, setSignalMap] = useState<TaskSignalMap>({ submissions: [], totalInteractions: 0, revealPhaseEnd: 0, isRevealPhase: false });
-  const [signalMapLoading, setSignalMapLoading] = useState(true);
-  const [selectedSignal, setSelectedSignal] = useState<SubmissionSignal | null>(null);
+  const [heatmap, setHeatmap] = useState<TaskHeatmap>({
+    people: [],
+    totalActivity: 0,
+    revealPhaseEnd: 0,
+    isRevealPhase: false
+  });
+  const [heatmapLoading, setHeatmapLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("signal");
 
   const [deliverableLink, setDeliverableLink] = useState("");
@@ -182,15 +213,42 @@ export default function JobDetailsPage() {
 
   const isConnected = Boolean(account);
   const isCreator = Boolean(account && job && account.toLowerCase() === job.client.toLowerCase());
-  const finalistSet = useMemo(() => new Set(selectedFinalists.map((a) => a.toLowerCase())), [selectedFinalists]);
-  const pendingSubmissions = useMemo(() => submissions.filter((s) => s.status === 1), [submissions]);
+
+  const safeSubmissions = useMemo(
+    () =>
+      (submissions ?? [])
+        .map((submission) => {
+          try {
+            return parseSubmission(submission as unknown);
+          } catch {
+            return null;
+          }
+        })
+        .filter(
+          (submission): submission is SubmissionRecord =>
+            Boolean(submission && submission.agent && submission.agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase())
+        ),
+    [submissions]
+  );
+
+  const pendingSubmissions = useMemo(
+    () => safeSubmissions.filter((submission) => submission.status === 1),
+    [safeSubmissions]
+  );
+
+  const finalistSet = useMemo(
+    () => new Set(selectedFinalists.map((address) => address.toLowerCase())),
+    [selectedFinalists]
+  );
 
   const withProvider = async () => {
-    const p = browserProvider ?? (await connect());
-    if (!p) throw new Error("Wallet connection was not established.");
-    const net = await p.getNetwork();
-    if (Number(net.chainId) !== expectedChainId) throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
-    return p;
+    const provider = browserProvider ?? (await connect());
+    if (!provider) throw new Error("Wallet connection was not established.");
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) !== expectedChainId) {
+      throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
+    }
+    return provider;
   };
 
   const loadTask = useCallback(async () => {
@@ -203,26 +261,40 @@ export default function JobDetailsPage() {
 
     setJobLoading(true);
     setJobError(null);
+
     try {
-      const [jobData, subs, escrow, used, maxAllowed, finals, revealEnd, revealOpen] = await Promise.all([
-        fetchJob(jobId),
-        fetchSubmissions(jobId),
-        fetchJobEscrow(jobId),
-        fetchApprovedAgentCount(jobId),
-        fetchMaxApprovalsForJob(jobId),
-        fetchSelectedFinalists(jobId),
-        fetchRevealPhaseEnd(jobId),
-        fetchIsInRevealPhase(jobId)
-      ]);
+      const [jobData, rawSubmissions, escrow, used, maxAllowed, finals, revealEnd, revealOpen] =
+        await Promise.all([
+          fetchJob(jobId),
+          fetchSubmissions(jobId),
+          fetchJobEscrow(jobId),
+          fetchApprovedAgentCount(jobId),
+          fetchMaxApprovalsForJob(jobId),
+          fetchSelectedFinalists(jobId),
+          fetchRevealPhaseEnd(jobId),
+          fetchIsInRevealPhase(jobId)
+        ]);
 
       if (!jobData) {
-        setJob(null);
         setJobError(`Task #${jobId} not found`);
+        setJob(null);
         return;
       }
 
+      const contract = getJobSignalsReadContract();
+      const parentEntries = await Promise.all(
+        finals.map(async (finalist) => {
+          try {
+            const parent = String(await contract.buildOnParentByResponder(jobId, finalist));
+            return [finalist.toLowerCase(), parent] as const;
+          } catch {
+            return [finalist.toLowerCase(), ZERO_ADDRESS] as const;
+          }
+        })
+      );
+
       setJob({ ...jobData, revealPhaseEnd: BigInt(revealEnd || 0) });
-      setSubmissions(subs);
+      setSubmissions(rawSubmissions);
       setEscrowLocked(escrow);
       setApprovalsUsed(used);
       setMaxApprovals(Math.max(1, maxAllowed || 1));
@@ -230,11 +302,17 @@ export default function JobDetailsPage() {
       setRevealPhaseEnd(revealEnd);
       setIsRevealPhase(revealOpen);
       setCreatorPostedCount(await fetchJobsCreatedCount(jobData.client));
+      setBuildOnParents(
+        parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
+          acc[key] = value;
+          return acc;
+        }, {})
+      );
 
       if (account) {
-        const contract = getJobReadContract();
+        const readContract = getJobReadContract();
         const [accepted, mine, lastClaim, cooldown] = await Promise.all([
-          contract.isAccepted(jobId, account).catch(() => false),
+          readContract.isAccepted(jobId, account).catch(() => false),
           fetchSubmissionForAgent(jobId, account),
           fetchLastJobCredentialClaim(account),
           fetchJobCredentialCooldownSeconds()
@@ -247,7 +325,7 @@ export default function JobDetailsPage() {
         setMySubmission(null);
         setClaimReadyAt(null);
       }
-    } catch (error: unknown) {
+    } catch (error) {
       console.error("[task] load error:", error);
       setJob(null);
       setJobError(errorText(error, "Failed to load task"));
@@ -256,68 +334,147 @@ export default function JobDetailsPage() {
     }
   }, [account, jobId, params.jobId]);
 
-  const loadSignalMap = useCallback(async () => {
+  const loadHeatmap = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0) return;
-    setSignalMapLoading(true);
+    setHeatmapLoading(true);
     try {
-      const p = browserProvider ?? getReadProvider();
-      const data = (await fetchSignalMap(p, jobId)) as unknown as TaskSignalMap;
-      setSignalMap({ submissions: data.submissions ?? [], totalInteractions: data.totalInteractions ?? 0, revealPhaseEnd: data.revealPhaseEnd ?? 0, isRevealPhase: Boolean(data.isRevealPhase) });
-    } catch (error: unknown) {
-      console.warn("[signalMap] load error:", error);
-      setSignalMap({ submissions: [], totalInteractions: 0, revealPhaseEnd: 0, isRevealPhase: false });
+      const provider = browserProvider ?? getReadProvider();
+      const data = await buildTaskHeatmap(provider, Number(jobId));
+      setHeatmap(data);
+    } catch (error) {
+      console.warn("[heatmap] load error:", error);
+      setHeatmap({ people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false });
     } finally {
-      setSignalMapLoading(false);
+      setHeatmapLoading(false);
     }
   }, [browserProvider, jobId]);
 
-  useEffect(() => { void loadTask(); void loadSignalMap(); }, [loadTask, loadSignalMap]);
+  useEffect(() => {
+    void loadTask();
+    void loadHeatmap();
+  }, [loadTask, loadHeatmap]);
 
   useEffect(() => {
     if (!claimReadyAt) return;
     const update = () => setClaimCountdown(Math.max(0, claimReadyAt - Math.floor(Date.now() / 1000)));
     update();
-    const t = window.setInterval(update, 1000);
-    return () => window.clearInterval(t);
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
   }, [claimReadyAt]);
 
   useEffect(() => {
     if (!Number.isInteger(jobId) || jobId < 0) return () => undefined;
     const contract = getJobSignalsReadContract();
-    const refresh = async (id: bigint | number) => { if (Number(id) === jobId) { await loadTask(); await loadSignalMap(); } };
-    const onSub = async (id: bigint) => refresh(id);
-    const onResp = async (id: bigint) => refresh(id);
-    const onFinals = async (id: bigint) => refresh(id);
-    const onWins = async (id: bigint) => refresh(id);
-    contract.on("DeliverableSubmitted", onSub);
-    contract.on("SubmissionResponseAdded", onResp);
-    contract.on("FinalistsSelected", onFinals);
-    contract.on("WinnersFinalized", onWins);
-    return () => {
-      contract.off("DeliverableSubmitted", onSub);
-      contract.off("SubmissionResponseAdded", onResp);
-      contract.off("FinalistsSelected", onFinals);
-      contract.off("WinnersFinalized", onWins);
+    const refresh = async (id: bigint | number) => {
+      if (Number(id) === jobId) {
+        await loadTask();
+        await loadHeatmap();
+      }
     };
-  }, [jobId, loadTask, loadSignalMap]);
+    const onSubmission = async (id: bigint) => refresh(id);
+    const onResponse = async (id: bigint) => refresh(id);
+    const onFinalists = async (id: bigint) => refresh(id);
+    const onWinners = async (id: bigint) => refresh(id);
+    contract.on("DeliverableSubmitted", onSubmission);
+    contract.on("SubmissionResponseAdded", onResponse);
+    contract.on("FinalistsSelected", onFinalists);
+    contract.on("WinnersFinalized", onWinners);
+    return () => {
+      contract.off("DeliverableSubmitted", onSubmission);
+      contract.off("SubmissionResponseAdded", onResponse);
+      contract.off("FinalistsSelected", onFinalists);
+      contract.off("WinnersFinalized", onWinners);
+    };
+  }, [jobId, loadTask, loadHeatmap]);
 
   const handleAccept = async () => {
-    try { setBusyAction("accept"); const p = await withProvider(); const tx = await txAcceptJob(p, jobId); setStatusMessage(`Accept tx: ${tx.hash}`); await tx.wait(); await loadTask(); }
-    catch (error: unknown) { setErrorMessage(errorText(error, "Failed to accept")); }
-    finally { setBusyAction(""); }
+    try {
+      setBusyAction("accept");
+      const provider = await withProvider();
+      const tx = await txAcceptJob(provider, jobId);
+      setStatusMessage(`Accept tx: ${tx.hash}`);
+      await tx.wait();
+      await loadTask();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to accept task"));
+    } finally {
+      setBusyAction("");
+    }
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    try { setBusyAction("submit"); const p = await withProvider(); const tx = await txSubmitDeliverable(p, jobId, deliverableLink.trim()); setStatusMessage(`Submit tx: ${tx.hash}`); await tx.wait(); setDeliverableLink(""); await loadTask(); await loadSignalMap(); }
-    catch (error: unknown) { setErrorMessage(errorText(error, "Failed to submit")); }
-    finally { setBusyAction(""); }
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      setBusyAction("submit");
+      const provider = await withProvider();
+      const tx = await txSubmitDeliverable(provider, jobId, deliverableLink.trim());
+      setStatusMessage(`Submit tx: ${tx.hash}`);
+      await tx.wait();
+      setDeliverableLink("");
+      await loadTask();
+      await loadHeatmap();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to submit work"));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const handleRespond = async () => {
+    if (!selectedSubmission) return;
+    try {
+      setBusyAction("respond");
+      const provider = await withProvider();
+      const signer = await provider.getSigner();
+      const payload = {
+        responseType:
+          responseType === RESPONSE_TYPE.BuildsOn
+            ? "builds_on"
+            : responseType === RESPONSE_TYPE.Critiques
+              ? "critiques"
+              : "alternative",
+        summary: responseContent.slice(0, 120),
+        content: responseContent
+      };
+      const contentUri = `data:application/json,${encodeURIComponent(JSON.stringify(payload))}`;
+      const txHash = await txRespondToSubmission(
+        signer,
+        BigInt(selectedSubmission.submissionId),
+        responseType,
+        contentUri
+      );
+      setStatusMessage(`Response tx: ${txHash}`);
+      setResponseContent("");
+      await loadHeatmap();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to submit response"));
+    } finally {
+      setBusyAction("");
+    }
   };
 
   const handleSelectFinalists = async () => {
-    try { setBusyAction("select"); const p = await withProvider(); const unique = [...new Set(finalistDraft.map((a) => a.toLowerCase()))].map((a) => submissions.find((s) => s.agent.toLowerCase() === a)?.agent).filter((a): a is string => Boolean(a)); const tx = await txSelectFinalists(p, jobId, unique); setStatusMessage(`Finalists tx: ${tx.hash}`); await tx.wait(); await loadTask(); await loadSignalMap(); }
-    catch (error: unknown) { setErrorMessage(errorText(error, "Failed selecting finalists")); }
-    finally { setBusyAction(""); }
+    try {
+      setBusyAction("select");
+      const provider = await withProvider();
+      const unique = [
+        ...new Set(
+          finalistDraft
+            .map((address) => address.toLowerCase())
+            .map((address) => safeSubmissions.find((submission) => submission.agent.toLowerCase() === address)?.agent)
+            .filter((value): value is string => Boolean(value))
+        )
+      ];
+      const tx = await txSelectFinalists(provider, jobId, unique);
+      setStatusMessage(`Finalists tx: ${tx.hash}`);
+      await tx.wait();
+      await loadTask();
+      await loadHeatmap();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed selecting finalists"));
+    } finally {
+      setBusyAction("");
+    }
   };
 
   const handleFinalizeWinners = async () => {
@@ -327,55 +484,60 @@ export default function JobDetailsPage() {
       const amounts: bigint[] = [];
       for (const finalist of selectedFinalists) {
         const parsed = parseUsdcInput(rewardInputs[finalist.toLowerCase()] ?? "");
-        if (parsed && parsed > 0n) { winners.push(finalist); amounts.push(parsed); }
+        if (parsed && parsed > 0n) {
+          winners.push(finalist);
+          amounts.push(parsed);
+        }
       }
-      const p = await withProvider();
-      const tx = await txFinalizeWinners(p, jobId, winners, amounts);
+      const provider = await withProvider();
+      const tx = await txFinalizeWinners(provider, jobId, winners, amounts);
       setStatusMessage(`Finalize tx: ${tx.hash}`);
       await tx.wait();
       await loadTask();
-      await loadSignalMap();
-    } catch (error: unknown) { setErrorMessage(errorText(error, "Failed to finalize")); }
-    finally { setBusyAction(""); }
+      await loadHeatmap();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to finalize winners"));
+    } finally {
+      setBusyAction("");
+    }
   };
 
   const handleClaim = async () => {
-    try { setBusyAction("claim"); const p = await withProvider(); const tx = await txClaimJobCredential(p, jobId); setStatusMessage(`Claim tx: ${tx.hash}`); await tx.wait(); await loadTask(); }
-    catch (error: unknown) { setErrorMessage(errorText(error, "Failed to claim")); }
-    finally { setBusyAction(""); }
-  };
-
-  const handleRespond = async () => {
-    if (!selectedSignal) return;
     try {
-      setBusyAction("respond");
-      const p = await withProvider();
-      const signer = await p.getSigner();
-      const payload = { responseType: responseType === 0 ? "builds_on" : responseType === 1 ? "critiques" : "alternative", summary: responseContent.slice(0, 120), content: responseContent, referencedElements: [] };
-      const contentUri = `data:application/json,${encodeURIComponent(JSON.stringify(payload))}`;
-      const txHash = await txRespondToSubmission(signer, BigInt(selectedSignal.submissionId), responseType, contentUri);
-      setStatusMessage(`Response tx: ${txHash}`);
-      setResponseContent("");
-      await loadSignalMap();
-    } catch (error: unknown) { setErrorMessage(errorText(error, "Failed to respond")); }
-    finally { setBusyAction(""); }
+      setBusyAction("claim");
+      const provider = await withProvider();
+      const tx = await txClaimJobCredential(provider, jobId);
+      setStatusMessage(`Claim tx: ${tx.hash}`);
+      await tx.wait();
+      await loadTask();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to claim reward"));
+    } finally {
+      setBusyAction("");
+    }
   };
 
   const hasSubmitted = Boolean(mySubmission && mySubmission.status !== 0);
   const isApproved = mySubmission?.status === 2;
   const isClaimed = Boolean(mySubmission?.credentialClaimed);
   const canClaim = isConnected && !isCreator && isApproved && !isClaimed && claimCountdown <= 0;
+
   const revealEndValue = revealPhaseEnd || Number(job?.revealPhaseEnd ?? 0n);
   const derivedStatus = job ? deriveTaskStatus(job.status, revealEndValue) : null;
+  const revealEnded = Boolean(derivedStatus?.revealEnded);
+  const submissionDeadlinePassed = Boolean(
+    job && job.deadline > 0 && BigInt(Math.floor(Date.now() / 1000)) > BigInt(job.deadline)
+  );
+  const awaitingSelection = Boolean(job && job.status === 2 && submissionDeadlinePassed);
+  const isRevealVisible = Boolean(job && job.status >= 4);
+
   const canInteract = Boolean(
     job &&
-      selectedSignal &&
-      derivedStatus?.revealActive &&
-      finalistSet.has(selectedSignal.agent.toLowerCase())
+      selectedSubmission &&
+      job.status === 4 &&
+      Date.now() / 1000 <= revealEndValue &&
+      finalistSet.has(selectedSubmission.agent.toLowerCase())
   );
-  const revealEnded = Boolean(derivedStatus?.revealEnded);
-  const submissionDeadlinePassed = Boolean(job && job.deadline > 0 && Math.floor(Date.now() / 1000) > job.deadline);
-  const awaitingSelection = Boolean(job && job.status === 2 && submissionDeadlinePassed);
 
   if (jobLoading) {
     return (
@@ -394,7 +556,7 @@ export default function JobDetailsPage() {
         <div className="text-center">
           <div className="mb-2 font-mono text-sm text-[var(--danger)]">{jobError ?? "Task not found"}</div>
           <button type="button" onClick={() => router.back()} className="btn-ghost text-xs">
-            ← Go back
+            {"<- Go back"}
           </button>
         </div>
       </div>
@@ -403,24 +565,33 @@ export default function JobDetailsPage() {
 
   return (
     <section className="page-container space-y-6">
-      {statusMessage ? <div className="panel border-[var(--pulse)] py-3 text-sm text-[var(--pulse)]">{statusMessage}</div> : null}
-      {errorMessage ? <div className="panel border-[var(--danger)] py-3 text-sm text-[var(--danger)]">{errorMessage}</div> : null}
+      {statusMessage ? (
+        <div className="panel border-[var(--pulse)] py-3 text-sm text-[var(--pulse)]">{statusMessage}</div>
+      ) : null}
+      {errorMessage ? (
+        <div className="panel border-[var(--danger)] py-3 text-sm text-[var(--danger)]">{errorMessage}</div>
+      ) : null}
 
       <PhaseBanner job={job} revealEnd={revealEndValue} awaitingSelection={awaitingSelection} />
 
       <div className="border-b border-[var(--border)] pb-6">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => router.back()} className="text-sm font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)]">
-              ? TASKS
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="text-sm font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            >
+              {"<- TASKS"}
             </button>
             <span className="text-sm font-mono text-[var(--border-bright)]">/</span>
             <span className="text-xs font-mono text-[var(--text-muted)]">#{job.jobId}</span>
           </div>
-          <span className="badge mono" style={{ color: derivedStatus?.color, borderColor: derivedStatus?.color, borderWidth: "1px", borderStyle: "solid", background: "transparent" }}>
+          <span className="badge mono border" style={{ color: derivedStatus?.color, borderColor: derivedStatus?.color, background: "transparent" }}>
             {derivedStatus?.label}
           </span>
         </div>
+
         <div className="flex items-start justify-between gap-6">
           <h1 className="text-heading-1 flex-1">{job.title}</h1>
           <div className="text-right">
@@ -430,6 +601,7 @@ export default function JobDetailsPage() {
             <div className="text-label mt-1 text-[var(--text-muted)]">Reward Pool</div>
           </div>
         </div>
+
         <div className="mt-4 flex flex-wrap items-center gap-6 border-t border-[var(--border)] pt-4">
           <div className="flex items-center gap-2"><span className="text-label">BY</span><span className="text-data text-[var(--arc)]">{shortAddress(job.client)}</span></div>
           <div className="flex items-center gap-2"><span className="text-label">DEADLINE</span><DeadlineCountdown deadline={job.deadline} /></div>
@@ -446,32 +618,93 @@ export default function JobDetailsPage() {
         </aside>
 
         <div className="space-y-4">
-          <div className="panel-elevated flex gap-2"><button type="button" className={viewMode === "signal" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("signal")}>SIGNAL MAP</button><button type="button" className={viewMode === "list" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("list")}>LIST</button><button type="button" className={viewMode === "timeline" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("timeline")}>TIMELINE</button></div>
-          {viewMode === "signal" ? <div className="panel">{derivedStatus?.revealActive && isRevealPhase ? <div className="mb-3 flex items-center gap-2"><span className="live-dot" /><span className="text-xs font-mono text-[var(--pulse)]">LIVE — updates as submissions arrive</span></div> : null}<SignalMap signalMap={signalMap} loading={signalMapLoading} onSubmissionClick={setSelectedSignal} /></div> : null}
-          {viewMode === "list" ? <div className="space-y-3">{submissions.map((s) => <article key={`${s.agent}-${s.submittedAt}`} className="card-sharp space-y-2 p-4"><div className="flex items-center justify-between"><span className="text-data text-xs">{shortAddress(s.agent)}</span><span className="badge badge-arc">{s.status === 2 ? "APPROVED" : s.status === 1 ? "SUBMITTED" : "PENDING"}</span></div><a href={s.deliverableLink} target="_blank" rel="noreferrer" className="break-all text-xs font-mono text-[var(--arc)] underline">{s.deliverableLink}</a></article>)}</div> : null}
-          {viewMode === "timeline" ? <div className="panel space-y-2">{submissions.map((s) => <div key={`tl-${s.submissionId}`} className="card-sharp flex items-center justify-between px-3 py-2 text-xs"><span>{shortAddress(s.agent)} submitted work</span><span className="font-mono text-[var(--text-muted)]">{formatTimestamp(s.submittedAt)}</span></div>)}</div> : null}
+          <div className="panel-elevated flex gap-2">
+            <button type="button" className={viewMode === "signal" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("signal")}>SIGNAL MAP</button>
+            <button type="button" className={viewMode === "list" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("list")}>LIST</button>
+            <button type="button" className={viewMode === "timeline" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"} onClick={() => setViewMode("timeline")}>TIMELINE</button>
+          </div>
+
+          {isCreator && job.status === 4 ? <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-secondary)]">Finalist submissions are now visible to all participants. The 5-day interaction window is open for critiques and build-ons. After it closes, select final winners - you can choose any finalist regardless of interaction signals.</div> : null}
+
+          {viewMode === "signal" ? <div className="panel">{derivedStatus?.revealActive && isRevealPhase ? <div className="mb-3 flex items-center gap-2"><span className="live-dot" /><span className="text-xs font-mono text-[var(--pulse)]">LIVE - updates as submissions arrive</span></div> : null}<SignalMap heatmap={heatmap} loading={heatmapLoading} /></div> : null}
+
+          {viewMode === "list" ? (!isCreator && !isRevealVisible ? <div className="flex h-48 flex-col items-center justify-center border border-[var(--border)] p-6 text-center"><div className="mb-3 font-mono text-2xl text-[var(--arc)]">?</div><div className="font-heading mb-2 text-base font-semibold">Submissions are sealed</div><div className="max-w-xs text-sm text-[var(--text-secondary)]">Submissions are hidden until the creator selects finalists and opens the 5-day reveal phase. This prevents copying and ensures independent solutions.</div>{submissionDeadlinePassed ? <div className="mt-3 text-xs font-mono text-[var(--warn)]">Submission deadline passed - Awaiting creator to select finalists</div> : null}</div> : <div className="space-y-3">{safeSubmissions.length === 0 ? <div className="p-4 text-xs font-mono text-[var(--text-muted)]">No submissions to display</div> : safeSubmissions.map((submission) => <article key={`${submission.agent}-${submission.submissionId}`} className="card-sharp space-y-2 p-4"><div className="flex items-center justify-between"><span className="text-data text-xs">{shortAddress(submission.agent)}</span><span className="badge badge-arc">{submission.status === 2 ? "APPROVED" : submission.status === 1 ? "SUBMITTED" : "PENDING"}</span></div>{submission.deliverableLink ? <a href={submission.deliverableLink} target="_blank" rel="noreferrer" className="break-all text-xs font-mono text-[var(--arc)] underline">{submission.deliverableLink}</a> : <div className="text-xs text-[var(--text-muted)]">No deliverable link provided</div>}{!isCreator && isRevealVisible ? <button type="button" className="btn-ghost w-full text-xs" onClick={() => setSelectedSubmission(submission)}>{selectedSubmission?.submissionId === submission.submissionId ? "Selected for Response" : "Select for Response"}</button> : null}</article>)}</div>) : null}
+
+          {viewMode === "timeline" ? <div className="panel space-y-2">{safeSubmissions.map((submission) => <div key={`timeline-${submission.submissionId}`} className="card-sharp flex items-center justify-between px-3 py-2 text-xs"><span>{shortAddress(submission.agent)} submitted work</span><span className="font-mono text-[var(--text-muted)]">{formatTimestamp(submission.submittedAt)}</span></div>)}</div> : null}
         </div>
 
         <aside className="panel h-fit space-y-4">
-          {!isConnected ? <><div className="section-header">CONNECT WALLET</div><button type="button" className="btn-primary w-full" onClick={() => void connect()}>Connect Wallet</button></> : null}
+          {!isConnected ? (<><div className="section-header">CONNECT WALLET</div><button type="button" className="btn-primary w-full" onClick={() => void connect()}>Connect Wallet</button></>) : null}
 
           {isConnected && !isCreator ? (
             <>
               <div className="section-header">YOUR ACTIONS</div>
               {!isAccepted ? <button type="button" className="btn-primary w-full" onClick={() => void handleAccept()} disabled={busyAction === "accept"}>{busyAction === "accept" ? "Accepting..." : "Accept Task"}</button> : null}
-              {isAccepted && !hasSubmitted ? <form className="space-y-3" onSubmit={handleSubmit}><input type="url" className="input-field" placeholder="https://..." value={deliverableLink} onChange={(e) => setDeliverableLink(e.target.value)} /><button type="submit" className="btn-primary w-full" disabled={busyAction === "submit" || !deliverableLink.trim()}>{busyAction === "submit" ? "Submitting..." : "Submit Work"}</button></form> : null}
+              {isAccepted && !hasSubmitted ? <form className="space-y-3" onSubmit={handleSubmit}><input type="url" className="input-field" placeholder="https://github.com/... or ipfs://..." value={deliverableLink} onChange={(event) => setDeliverableLink(event.target.value)} /><button type="submit" className="btn-primary w-full" disabled={busyAction === "submit" || !deliverableLink.trim()}>{busyAction === "submit" ? "Submitting..." : "Submit Work"}</button></form> : null}
               {canClaim ? <button type="button" className="btn-primary w-full" onClick={() => void handleClaim()} disabled={busyAction === "claim"}>{busyAction === "claim" ? "Claiming..." : `Claim ${formatUsdc(mySubmission?.allocatedReward ?? 0)} USDC`}</button> : null}
               {claimCountdown > 0 ? <p className="text-xs text-[var(--warn)]">Claim in {Math.floor(claimCountdown / 60)}m</p> : null}
 
-              {!derivedStatus?.revealActive ? <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">Critiques and build-ons open during the 5-day reveal phase after finalists are selected.</div> : null}
-              {selectedSignal ? <><button type="button" className="btn-ghost w-full" onClick={() => setShowResponsePanel((v) => !v)}>{showResponsePanel ? "Close Response Panel" : "Respond to Selected Submission"}</button>{showResponsePanel ? <div className="card-sharp space-y-3 p-4"><div className="grid grid-cols-3 gap-1">{[{ type: RESPONSE_TYPE.BuildsOn, label: "BUILDS ON", color: "var(--arc)" }, { type: RESPONSE_TYPE.Critiques, label: "CRITIQUES", color: "var(--warn)" }, { type: RESPONSE_TYPE.Alternative, label: "ALTERNATIVE", color: "var(--agent)" }].map((t) => <button key={t.type} type="button" onClick={() => setResponseType(t.type)} className="border p-2 text-[10px] font-mono" style={{ borderColor: responseType === t.type ? t.color : "var(--border)", color: responseType === t.type ? t.color : "var(--text-muted)", background: responseType === t.type ? `${t.color}12` : "transparent" }}>{t.label}</button>)}</div><textarea className="input-field resize-none" rows={4} value={responseContent} onChange={(e) => setResponseContent(e.target.value)} placeholder="Explain your response..." /><button type="button" className="btn-primary w-full" onClick={() => void handleRespond()} disabled={!canInteract || busyAction === "respond" || responseContent.trim().length < 20}>{busyAction === "respond" ? "Submitting..." : "Submit Response — Stake 2 USDC"}</button></div> : null}</> : null}
+              {!derivedStatus?.revealActive ? <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">Critiques and build-ons open during the 5-day reveal phase after the creator selects finalists.</div> : null}
+
+              {selectedSubmission ? (<><button type="button" className="btn-ghost w-full" onClick={() => setShowResponsePanel((value) => !value)}>{showResponsePanel ? "Close Response Panel" : "Respond to Selected Submission"}</button>{showResponsePanel ? <div className="card-sharp space-y-3 p-4"><div className="text-xs text-[var(--text-secondary)]">Target: <span className="font-mono">{shortAddress(selectedSubmission.agent)}</span></div><div className="grid grid-cols-3 gap-1">{[{ type: RESPONSE_TYPE.BuildsOn, label: "BUILDS ON", color: "var(--arc)" }, { type: RESPONSE_TYPE.Critiques, label: "CRITIQUES", color: "var(--warn)" }, { type: RESPONSE_TYPE.Alternative, label: "ALTERNATIVE", color: "var(--agent-primary)" }].map((option) => <button key={option.type} type="button" onClick={() => setResponseType(option.type)} className="border p-2 text-[10px] font-mono" style={{ borderColor: responseType === option.type ? option.color : "var(--border)", color: responseType === option.type ? option.color : "var(--text-muted)", background: responseType === option.type ? `${option.color}12` : "transparent" }}>{option.label}</button>)}</div><textarea className="input-field resize-none" rows={4} value={responseContent} onChange={(event) => setResponseContent(event.target.value)} placeholder="Explain your response..." /><button type="button" className="btn-primary w-full" onClick={() => void handleRespond()} disabled={!canInteract || busyAction === "respond" || responseContent.trim().length < 20}>{busyAction === "respond" ? "Submitting..." : "Submit Response - Stake 2 USDC"}</button></div> : null}</>) : null}
             </>
           ) : null}
 
           {isConnected && isCreator ? (
             <>
-              {(job.status === 2 || awaitingSelection) ? <div className="space-y-3"><div className="section-header">SELECT FINALISTS</div><p className="text-xs text-[var(--text-secondary)]">Choose up to {maxApprovals + 5} submissions for reveal phase.</p><div className="space-y-2">{pendingSubmissions.map((s) => { const checked = finalistDraft.some((a) => a.toLowerCase() === s.agent.toLowerCase()); return <label key={s.agent} className="flex items-center gap-2 border border-[var(--border)] p-2 text-xs"><input type="checkbox" checked={checked} onChange={() => setFinalistDraft((prev) => checked ? prev.filter((a) => a.toLowerCase() !== s.agent.toLowerCase()) : [...prev, s.agent])} /><span className="text-data">{shortAddress(s.agent)}</span></label>; })}</div><button type="button" className="btn-primary w-full" onClick={() => void handleSelectFinalists()} disabled={busyAction === "select"}>{busyAction === "select" ? "Selecting..." : "Start Reveal Phase"}</button></div> : null}
-              {job.status === 4 && revealEnded ? <div className="space-y-3"><div className="section-header">FINALIZE WINNERS</div>{selectedFinalists.map((agent) => <div key={agent} className="card-sharp p-3"><div className="mb-2 text-data text-xs">{shortAddress(agent)}</div><input type="number" min={0} step="0.000001" className="input-field text-sm" placeholder="Reward USDC" value={rewardInputs[agent.toLowerCase()] ?? ""} onChange={(e) => setRewardInputs((prev) => ({ ...prev, [agent.toLowerCase()]: e.target.value }))} /></div>)}<button type="button" className="btn-primary w-full" onClick={() => void handleFinalizeWinners()} disabled={busyAction === "finalize"}>{busyAction === "finalize" ? "Finalizing..." : "Finalize Winners"}</button></div> : null}
+              {job.status === 2 || awaitingSelection ? <div className="space-y-3"><div className="section-header">SELECT FINALISTS</div><p className="text-xs text-[var(--text-secondary)]">Choose up to {maxApprovals + 5} submissions to advance to reveal phase.</p><div className="space-y-2">{pendingSubmissions.map((submission) => { const checked = finalistDraft.some((address) => address.toLowerCase() === submission.agent.toLowerCase()); return <label key={submission.agent} className="flex items-center gap-2 border border-[var(--border)] p-2 text-xs"><input type="checkbox" checked={checked} onChange={() => setFinalistDraft((previous) => checked ? previous.filter((address) => address.toLowerCase() !== submission.agent.toLowerCase()) : [...previous, submission.agent])} /><span className="text-data">{shortAddress(submission.agent)}</span></label>; })}</div><button type="button" className="btn-primary w-full" onClick={() => void handleSelectFinalists()} disabled={busyAction === "select"}>{busyAction === "select" ? "Selecting..." : "Start Reveal Phase"}</button></div> : null}
+
+              {job.status === 4 && revealEnded ? (
+                <div className="space-y-3">
+                  <div className="section-header">FINALIZE WINNERS</div>
+                  {selectedFinalists.map((agent) => {
+                    const key = agent.toLowerCase();
+                    const parentAuthor = buildOnParents[key] ?? ZERO_ADDRESS;
+                    const isBuildOnWinner =
+                      parentAuthor &&
+                      parentAuthor.toLowerCase() !== ZERO_ADDRESS.toLowerCase() &&
+                      parentAuthor.toLowerCase() !== key;
+                    const amount = Number(rewardInputs[key] ?? "0");
+                    return (
+                      <div key={agent} className="card-sharp p-3">
+                        <div className="mb-2 text-data text-xs">{shortAddress(agent)}</div>
+                        {isBuildOnWinner && amount > 0 ? (
+                          <div className="mb-2 border border-[var(--arc)] bg-[var(--arc)]/5 p-2 text-xs">
+                            <div className="mb-1 font-mono text-[10px] text-[var(--arc)]">
+                              BUILD-ON SELECTED - REWARD SPLIT
+                            </div>
+                            <div className="text-[var(--text-secondary)]">
+                              {(amount * 0.7).toFixed(2)} USDC {"->"} {shortAddress(parentAuthor)} (70% - original)
+                              <br />
+                              {(amount * 0.3).toFixed(2)} USDC {"->"} {shortAddress(agent)} (30% - build-on)
+                            </div>
+                          </div>
+                        ) : null}
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.000001"
+                          className="input-field text-sm"
+                          placeholder="Reward USDC"
+                          value={rewardInputs[key] ?? ""}
+                          onChange={(event) =>
+                            setRewardInputs((previous) => ({ ...previous, [key]: event.target.value }))
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="btn-primary w-full"
+                    onClick={() => void handleFinalizeWinners()}
+                    disabled={busyAction === "finalize"}
+                  >
+                    {busyAction === "finalize" ? "Finalizing..." : "Finalize Winners"}
+                  </button>
+                </div>
+              ) : null}
+
               {job.status === 4 && !revealEnded ? <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">Reveal phase is active. Finalization opens after <RevealCountdown end={revealEndValue} />.</div> : null}
             </>
           ) : null}
@@ -482,4 +715,3 @@ export default function JobDetailsPage() {
     </section>
   );
 }
-
