@@ -71,7 +71,7 @@ export default function HomePage() {
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
 
   const visibleJobs = useMemo(() => {
-    if (selectedFilter === "Tournaments") return jobs.filter((job) => job.approvedCount > 1 || job.submissionCount > 4);
+    if (selectedFilter === "Tournaments") return jobs;
     return jobs;
   }, [jobs, selectedFilter]);
 
@@ -105,16 +105,32 @@ export default function HomePage() {
         </div>
 
         <div className="panel-elevated flex flex-wrap gap-2">
-          {FILTERS.map((filter) => (
-            <button
-              key={filter}
-              type="button"
-              onClick={() => setSelectedFilter(filter)}
-              className={selectedFilter === filter ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"}
-            >
-              {filter}
-            </button>
-          ))}
+          {FILTERS.map((filter) => {
+            if (filter === "Tournaments") {
+              return (
+                <button
+                  key={filter}
+                  type="button"
+                  disabled
+                  className="cursor-not-allowed border border-dashed border-[#162334] px-4 py-2 text-xs font-mono tracking-wider text-[#3D5A73] opacity-40"
+                >
+                  TOURNAMENTS
+                  <span className="ml-2 border border-[#3D5A73] px-1 text-[9px]">SOON</span>
+                </button>
+              );
+            }
+
+            return (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setSelectedFilter(filter)}
+                className={selectedFilter === filter ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"}
+              >
+                {filter}
+              </button>
+            );
+          })}
         </div>
 
         {loading ? (

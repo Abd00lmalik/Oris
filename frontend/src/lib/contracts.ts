@@ -1147,8 +1147,10 @@ export async function fetchSubmissionGraph(
   provider: ethers.BrowserProvider | ethers.JsonRpcProvider,
   taskId: number
 ): Promise<{ nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> }> {
+  console.log("[graph:start] taskId:", taskId);
   const { buildTaskGraph } = await import("@/lib/graph");
   const graph = await buildTaskGraph(provider, taskId);
+  console.log("[graph:result]", graph.nodes.length, "nodes,", graph.edges.length, "edges");
   return {
     nodes: graph.nodes as unknown as Array<Record<string, unknown>>,
     edges: graph.edges as unknown as Array<Record<string, unknown>>

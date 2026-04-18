@@ -8,6 +8,7 @@ interface SubmissionGraphProps {
   graph: TaskGraph;
   onNodeClick: (node: GraphNode) => void;
   selectedNodeId: string | null;
+  loading?: boolean;
 }
 
 type SimNode = GraphNode & d3.SimulationNodeDatum;
@@ -36,7 +37,7 @@ const edgeStyle = {
   alternative: { color: "#BF00FF", width: 1.5, dash: "2,6", opacity: 0.5 }
 };
 
-export default function SubmissionGraph({ graph, onNodeClick, selectedNodeId }: SubmissionGraphProps) {
+export default function SubmissionGraph({ graph, onNodeClick, selectedNodeId, loading = false }: SubmissionGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -47,6 +48,19 @@ export default function SubmissionGraph({ graph, onNodeClick, selectedNodeId }: 
     const height = svgRef.current.clientHeight;
 
     svg.selectAll("*").remove();
+
+    if (loading) {
+      svg
+        .append("text")
+        .attr("x", width / 2)
+        .attr("y", height / 2)
+        .attr("text-anchor", "middle")
+        .attr("fill", "#7A9BB5")
+        .attr("font-family", "JetBrains Mono, monospace")
+        .attr("font-size", "13px")
+        .text("Loading graph...");
+      return;
+    }
 
     if (graph.nodes.length === 0) {
       svg
@@ -179,7 +193,7 @@ export default function SubmissionGraph({ graph, onNodeClick, selectedNodeId }: 
     return () => {
       simulation.stop();
     };
-  }, [graph, onNodeClick, selectedNodeId]);
+  }, [graph, loading, onNodeClick, selectedNodeId]);
 
   return <svg ref={svgRef} className="graph-container h-full w-full" style={{ minHeight: "520px", background: "#020608" }} />;
 }
