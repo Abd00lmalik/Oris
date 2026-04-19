@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { ActivityEvent } from "@/lib/activity";
+import { UserDisplay } from "@/components/ui/user-display";
 
 const EVENT_STYLES: Record<ActivityEvent["type"], { icon: string; color: string; label: string }> = {
   task_created: { icon: "*", color: "#00E5FF", label: "TASK" },
@@ -24,6 +25,7 @@ type Props = {
 
 export function LiveFeed({ events, maxVisible = 10, terminal = false }: Props) {
   const visible = events.slice(0, Math.min(10, maxVisible));
+  const isAddressLike = (value: string) => /^0x[a-fA-F0-9]{40}$/.test(value);
 
   if (visible.length === 0) {
     return (
@@ -73,6 +75,11 @@ export function LiveFeed({ events, maxVisible = 10, terminal = false }: Props) {
                       </span>
                     ) : null}
                   </div>
+                  {isAddressLike(eventItem.actor) ? (
+                    <div className="mb-1">
+                      <UserDisplay address={eventItem.actor} showAvatar={true} avatarSize={18} className="min-w-0" />
+                    </div>
+                  ) : null}
                   <p className="max-w-full truncate text-xs leading-snug text-[#7A9BB5]">{eventItem.description}</p>
                 </div>
 

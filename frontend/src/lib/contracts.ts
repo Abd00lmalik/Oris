@@ -6,19 +6,19 @@ export const JOB_STATUS_LABELS: Record<number, string> = {
   0: "Open",
   1: "In Progress",
   2: "Submitted",
-  3: "Selection Phase",
+  3: "Selection",
   4: "Reveal Phase",
   5: "Approved",
   6: "Rejected"
 };
 export const JOB_STATUS_COLORS: Record<number, string> = {
-  0: "var(--pulse)",
-  1: "var(--arc)",
-  2: "var(--warn)",
-  3: "var(--warn)",
-  4: "var(--arc)",
-  5: "var(--gold)",
-  6: "var(--danger)"
+  0: "#00FFA3",
+  1: "#00E5FF",
+  2: "#F5A623",
+  3: "#F5A623",
+  4: "#00E5FF",
+  5: "#F5A623",
+  6: "#FF3366"
 };
 export const SUBMISSION_STATUS_LABELS = ["Not Submitted", "Submitted", "Approved", "Rejected"] as const;
 
@@ -541,11 +541,11 @@ export function submissionStatusLabel(status: number) {
 }
 
 export function getJobStatusLabel(status: number): string {
-  return JOB_STATUS_LABELS[status] ?? `Status ${status}`;
+  return JOB_STATUS_LABELS[status] ?? "Unknown";
 }
 
 export function getJobStatusColor(status: number): string {
-  return JOB_STATUS_COLORS[status] ?? "var(--text-muted)";
+  return JOB_STATUS_COLORS[status] ?? "#7A9BB5";
 }
 
 export function deriveTaskStatus(
@@ -561,7 +561,7 @@ export function deriveTaskStatus(
   let color = getJobStatusColor(contractStatus);
   if (revealEnded) {
     label = "Reveal Ended";
-    color = "var(--warn)";
+    color = "#FF6B35";
   }
 
   return {
@@ -570,6 +570,38 @@ export function deriveTaskStatus(
     code: contractStatus,
     revealActive,
     revealEnded
+  };
+}
+
+export function deriveDisplayStatus(
+  contractStatus: number,
+  deadline: bigint | number,
+  revealPhaseEnd?: bigint | number
+): { label: string; color: string; code: number } {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const deadlineSec = Number(deadline ?? 0);
+  const revealEndSec = Number(revealPhaseEnd ?? 0);
+
+  if ((contractStatus === 0 || contractStatus === 1) && deadlineSec > 0 && nowSec > deadlineSec) {
+    return {
+      label: "Closed",
+      color: "#F5A623",
+      code: 2
+    };
+  }
+
+  if (contractStatus === 4 && revealEndSec > 0 && nowSec > revealEndSec) {
+    return {
+      label: "Reveal Ended",
+      color: "#FF6B35",
+      code: 4
+    };
+  }
+
+  return {
+    label: getJobStatusLabel(contractStatus),
+    color: getJobStatusColor(contractStatus),
+    code: contractStatus
   };
 }
 
@@ -600,9 +632,15 @@ export function formatTimestamp(ts: number) {
 export function parseJob(rawJob: unknown): JobRecord {
   const candidate = rawJob as Partial<RawJobRecord> & unknown[];
   const deadline = toNumber(candidate.deadline ?? candidate[4]);
-  const statusRaw = candidate.status ?? candidate[13];
-  const hasStatus = statusRaw !== undefined && statusRaw !== null;
-  const onChainStatus = hasStatus ? toNumber(statusRaw) : -1;
+  const statusCandidates = [
+    candidate.status,
+    candidate[13],
+    candidate[6],
+    candidate[7]
+  ]
+    .map((value) => toNumber(value))
+    .filter((value, index, list) => !Number.isNaN(value) && list.indexOf(value) === index);
+  const onChainStatus = statusCandidates.find((value) => value >= 0 && value <= 6) ?? -1;
   return {
     jobId: toNumber(candidate.jobId ?? candidate[0]),
     client: toString(candidate.client ?? candidate[1]),
@@ -678,6 +716,22 @@ export function parseSubmission(rawSubmission: unknown): SubmissionRecord {
       isBuildOnWinner: false
     };
   }
+}
+
+export function isValidSubmission(rawSubmission: unknown): boolean {
+  const submission =
+    rawSubmission && typeof rawSubmission === "object"
+      ? (rawSubmission as Record<string, unknown> & unknown[])
+      : ({} as Record<string, unknown> & unknown[]);
+
+  const tuple = Array.isArray(rawSubmission) ? rawSubmission : [];
+  const agent = toString(submission.agent ?? tuple[1] ?? tuple[0] ?? "");
+  const submittedAt = toNumber(submission.submittedAt ?? tuple[4] ?? tuple[5] ?? 0);
+
+  if (!agent || agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return false;
+  if (submittedAt < 1_577_836_800) return false;
+
+  return true;
 }
 
 export function parseCredential(rawCredential: unknown): CredentialRecord {
@@ -1262,6 +1316,11 @@ export async function fetchJob(jobId: number): Promise<JobRecord | null> {
   try {
     const contract = getOptionalJobReadContract();
     const raw = await contract.getJob(jobId);
+    if (process.env.NODE_ENV !== "production") {
+      const tuple = Array.from(raw as unknown as ArrayLike<unknown>);
+      console.log("[getJob] raw result:", tuple);
+      console.log("[getJob] index 6:", tuple[6], "index 7:", tuple[7], "index 13:", tuple[13]);
+    }
     const parsed = parseJob(raw);
     if (parsed.status === 4) {
       try {
@@ -1286,8 +1345,9 @@ export async function fetchSubmissionForAgent(
   try {
     const contract = getOptionalJobReadContract();
     const raw = await contract.getSubmission(jobId, agentAddress);
+    if (!isValidSubmission(raw)) return null;
     const parsed = parseSubmission(raw);
-    if (!parsed.agent || parsed.agent === ZERO_ADDRESS) return null;
+    if (!parsed.agent || parsed.agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) return null;
     return parsed;
   } catch {
     return null;
@@ -1298,7 +1358,7 @@ export async function fetchSubmissions(jobId: number): Promise<SubmissionRecord[
   try {
     const contract = getOptionalJobReadContract();
     const raw = (await contract.getSubmissions(jobId)) as unknown[];
-    return raw.map((item) => parseSubmission(item));
+    return raw.filter((item) => isValidSubmission(item)).map((item) => parseSubmission(item));
   } catch (error) {
     console.warn("[fetchSubmissions] failed:", error);
     return [];
@@ -2074,12 +2134,14 @@ export async function txApproveSubmission(
 }
 
 export async function txSelectFinalists(
-  browserProvider: ethers.BrowserProvider,
-  jobId: number,
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint,
   agents: string[]
-) {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, await browserProvider.getSigner());
-  return (await contract.selectFinalists(jobId, agents)) as ethers.TransactionResponse;
+) : Promise<string> {
+  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const tx = await contract.selectFinalists(jobId, agents);
+  await tx.wait();
+  return tx.hash as string;
 }
 
 export async function txFinalizeWinners(

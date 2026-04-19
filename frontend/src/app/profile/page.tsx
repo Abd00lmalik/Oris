@@ -69,6 +69,7 @@ function ProfileEditPanel({
   const [username, setUsername] = useState(existing?.username ?? "");
   const [avatarPreview, setAvatarPreview] = useState<string | null>(existing?.avatarUrl ?? null);
   const [dragOver, setDragOver] = useState(false);
+  const [saveError, setSaveError] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (file: File) => {
@@ -100,12 +101,17 @@ function ProfileEditPanel({
   };
 
   const handleSave = () => {
-    saveProfile({
+    const result = saveProfile({
       address,
-      username: username.trim().slice(0, 32) || "Anonymous",
+      username: username.trim().slice(0, 32),
       avatarUrl: avatarPreview ?? "",
       updatedAt: Date.now()
     });
+    if (!result.success) {
+      setSaveError(result.error ?? "Failed to save profile");
+      return;
+    }
+    setSaveError("");
     onSave();
   };
 
@@ -184,6 +190,7 @@ function ProfileEditPanel({
           Save Profile
         </button>
       </div>
+      {saveError ? <div className="text-xs text-[var(--danger)]">{saveError}</div> : null}
     </div>
   );
 }
@@ -385,4 +392,3 @@ export default function ProfilePage() {
     </section>
   );
 }
-

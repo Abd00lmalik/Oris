@@ -1,61 +1,40 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PersonSignal, TaskHeatmap } from "@/lib/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
+import { getProfile } from "@/lib/user-profiles";
 
-interface TreemapNode {
-  person: PersonSignal;
+type Rect = {
   x: number;
   y: number;
-  width: number;
-  height: number;
+  w: number;
+  h: number;
+};
+
+type TreemapItem = {
+  person: PersonSignal;
+  rect: Rect;
+};
+
+interface Props {
+  heatmap: TaskHeatmap;
+  loading?: boolean;
+  containerWidth?: number;
+  containerHeight?: number;
+  onViewSubmissions?: (address: string) => void;
 }
 
-function computeTreemap(
-  people: PersonSignal[],
-  containerWidth: number,
-  containerHeight: number
-): TreemapNode[] {
-  if (!people.length || containerWidth <= 0 || containerHeight <= 0) return [];
-  const total = people.reduce((sum, person) => sum + Math.max(0, person.activityWeight), 0);
-  if (total <= 0) return [];
-
-  const nodes: TreemapNode[] = [];
-  const sorted = [...people].sort((a, b) => b.activityWeight - a.activityWeight);
-  let remainingX = 0;
-  let remainingY = 0;
-  let remainingWidth = containerWidth;
-  let remainingHeight = containerHeight;
-
-  for (let i = 0; i < sorted.length; i += 1) {
-    const person = sorted[i];
-    const fraction = person.activityWeight / total;
-    if (i === sorted.length - 1) {
-      nodes.push({ person, x: remainingX, y: remainingY, width: remainingWidth, height: remainingHeight });
-      break;
-    }
-
-    if (remainingWidth >= remainingHeight) {
-      const width = Math.max(24, Math.round(remainingWidth * fraction * 2));
-      const clamped = Math.min(width, remainingWidth);
-      nodes.push({ person, x: remainingX, y: remainingY, width: clamped, height: remainingHeight });
-      remainingX += clamped;
-      remainingWidth -= clamped;
-    } else {
-      const height = Math.max(24, Math.round(remainingHeight * fraction * 2));
-      const clamped = Math.min(height, remainingHeight);
-      nodes.push({ person, x: remainingX, y: remainingY, width: remainingWidth, height: clamped });
-      remainingY += clamped;
-      remainingHeight -= clamped;
-    }
-  }
-
-  return nodes;
+function getColor(ratio: number): string {
+  if (ratio >= 0.75) return "#1a7a4a";
+  if (ratio >= 0.55) return "#1a5c3a";
+  if (ratio >= 0.45) return "#5c4a00";
+  if (ratio >= 0.25) return "#5c2a00";
+  return "#5c0a1a";
 }
 
-function interpolateColor(ratio: number): string {
+function getBorderColor(ratio: number): string {
   if (ratio >= 0.75) return "#00C851";
   if (ratio >= 0.55) return "#00875A";
   if (ratio >= 0.45) return "#CC7700";
@@ -63,173 +42,310 @@ function interpolateColor(ratio: number): string {
   return "#CC0033";
 }
 
-function MiniSparkline({
-  buildsOn,
-  critiques,
-  width
-}: {
-  buildsOn: number;
-  critiques: number;
-  width: number;
-}) {
+function getTextColor(ratio: number): string {
+  if (ratio >= 0.75) return "#00FF7A";
+  if (ratio >= 0.55) return "#00C851";
+  if (ratio >= 0.45) return "#FFB800";
+  if (ratio >= 0.25) return "#FF6B35";
+  return "#FF3366";
+}
+
+function worstAspectRatio(row: number[], sideLength: number): number {
+  if (!row.length) return Number.POSITIVE_INFINITY;
+  const sum = row.reduce((acc, value) => acc + value, 0);
+  const max = Math.max(...row);
+  const min = Math.min(...row);
+  const sideSquared = sideLength * sideLength;
+  return Math.max((sideSquared * max) / (sum * sum), (sum * sum) / (sideSquared * min));
+}
+
+function layoutRow(
+  rowItems: PersonSignal[],
+  rowAreas: number[],
+  rect: Rect,
+  horizontal: boolean
+): { placed: TreemapItem[]; rest: Rect } {
+  const totalRowArea = rowAreas.reduce((acc, value) => acc + value, 0);
+  const placed: TreemapItem[] = [];
+
+  if (horizontal) {
+    const rowWidth = totalRowArea / rect.h;
+    let offsetY = rect.y;
+    for (let i = 0; i < rowItems.length; i += 1) {
+      const itemHeight = rowAreas[i] / rowWidth;
+      placed.push({
+        person: rowItems[i],
+        rect: { x: rect.x, y: offsetY, w: rowWidth, h: itemHeight }
+      });
+      offsetY += itemHeight;
+    }
+    return {
+      placed,
+      rest: { x: rect.x + rowWidth, y: rect.y, w: rect.w - rowWidth, h: rect.h }
+    };
+  }
+
+  const rowHeight = totalRowArea / rect.w;
+  let offsetX = rect.x;
+  for (let i = 0; i < rowItems.length; i += 1) {
+    const itemWidth = rowAreas[i] / rowHeight;
+    placed.push({
+      person: rowItems[i],
+      rect: { x: offsetX, y: rect.y, w: itemWidth, h: rowHeight }
+    });
+    offsetX += itemWidth;
+  }
+  return {
+    placed,
+    rest: { x: rect.x, y: rect.y + rowHeight, w: rect.w, h: rect.h - rowHeight }
+  };
+}
+
+function squarify(items: PersonSignal[], x: number, y: number, w: number, h: number): TreemapItem[] {
+  if (!items.length || w <= 0 || h <= 0) return [];
+
+  const totalWeight = items.reduce((acc, item) => acc + Math.max(item.activityWeight, 1), 0);
+  if (totalWeight <= 0) return [];
+
+  const totalArea = w * h;
+  const weightedItems = items.map((item) => ({
+    person: item,
+    area: (Math.max(item.activityWeight, 1) / totalWeight) * totalArea
+  }));
+
+  const result: TreemapItem[] = [];
+  let rect: Rect = { x, y, w, h };
+  const remaining = [...weightedItems];
+
+  while (remaining.length > 0 && rect.w > 0 && rect.h > 0) {
+    const horizontal = rect.w >= rect.h;
+    const sideLength = horizontal ? rect.h : rect.w;
+
+    const row: typeof remaining = [];
+    let rowAreas: number[] = [];
+
+    while (remaining.length > 0) {
+      const next = remaining[0];
+      const nextRowAreas = [...rowAreas, next.area];
+      if (
+        rowAreas.length === 0 ||
+        worstAspectRatio(nextRowAreas, sideLength) <= worstAspectRatio(rowAreas, sideLength)
+      ) {
+        row.push(next);
+        rowAreas = nextRowAreas;
+        remaining.shift();
+      } else {
+        break;
+      }
+    }
+
+    if (row.length === 0) {
+      row.push(remaining.shift()!);
+      rowAreas = [row[0].area];
+    }
+
+    const placed = layoutRow(
+      row.map((entry) => entry.person),
+      rowAreas,
+      rect,
+      horizontal
+    );
+    result.push(...placed.placed);
+    rect = placed.rest;
+  }
+
+  return result;
+}
+
+function MiniSignalBar({ buildsOn, critiques }: { buildsOn: number; critiques: number }) {
   const total = buildsOn + critiques;
-  if (total === 0) return null;
-  const greenWidth = (buildsOn / total) * width;
-  const redWidth = (critiques / total) * width;
+  if (total <= 0) return null;
   return (
-    <div style={{ width, height: 8, display: "flex" }}>
-      {buildsOn > 0 ? <div style={{ width: greenWidth, height: 8, background: "#00C851", opacity: 0.7 }} /> : null}
-      {critiques > 0 ? <div style={{ width: redWidth, height: 8, background: "#CC0033", opacity: 0.7 }} /> : null}
+    <div className="mt-1 flex h-1.5 w-full overflow-hidden">
+      {buildsOn > 0 ? (
+        <div style={{ width: `${(buildsOn / total) * 100}%`, background: "#00C851", opacity: 0.8 }} />
+      ) : null}
+      {critiques > 0 ? (
+        <div style={{ width: `${(critiques / total) * 100}%`, background: "#FF3366", opacity: 0.8 }} />
+      ) : null}
     </div>
   );
 }
 
-function HeatmapBox({
-  node,
-  isSelected,
+function PersonBox({
+  item,
   isTop,
+  isSelected,
   onClick
 }: {
-  node: TreemapNode;
-  isSelected: boolean;
+  item: TreemapItem;
   isTop: boolean;
+  isSelected: boolean;
   onClick: () => void;
 }) {
-  const { person, x, y, width, height } = node;
-  const color = interpolateColor(person.colorRatio);
-  const displayName = person.username ?? person.address.slice(2, 6);
-  const isTiny = width < 80 || height < 60;
+  const { person, rect } = item;
+  const profile = getProfile(person.address);
+  const displayName = profile?.username
+    ? profile.username
+    : `${person.address.slice(2, 6)}...${person.address.slice(-4)}`;
+  const bg = getColor(person.colorRatio);
+  const border = getBorderColor(person.colorRatio);
+  const textColor = getTextColor(person.colorRatio);
+  const isSmall = rect.w < 96 || rect.h < 72;
+  const isMicro = rect.w < 56 || rect.h < 40;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      whileHover={{ zIndex: 20, scale: 1.02 }}
-      transition={{ duration: 0.2 }}
+    <motion.button
+      type="button"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
       onClick={onClick}
-      className="absolute cursor-pointer select-none"
+      className="absolute overflow-hidden text-left"
       style={{
-        left: x + 1,
-        top: y + 1,
-        width: width - 2,
-        height: height - 2,
-        background: `${color}18`,
-        border: `1px solid ${isSelected ? color : `${color}60`}`,
-        boxShadow: isSelected ? `0 0 0 2px ${color}, inset 0 0 20px ${color}15` : "none",
-        overflow: "hidden"
+        left: rect.x + 1,
+        top: rect.y + 1,
+        width: Math.max(rect.w - 2, 0),
+        height: Math.max(rect.h - 2, 0),
+        background: bg,
+        border: `1px solid ${isSelected ? border : `${border}80`}`,
+        boxShadow: isSelected ? `inset 0 0 0 1px ${border}` : "none"
       }}
     >
-      {isTop ? (
-        <div className="absolute right-1 top-1 text-[10px]" style={{ color }}>
-          ♛
-        </div>
-      ) : null}
-
-      {isTiny ? (
+      {isMicro ? (
         <div className="flex h-full w-full items-center justify-center">
-          <span className="font-mono text-[10px] font-bold" style={{ color }}>
+          <span className="font-mono text-[10px] font-bold" style={{ color: textColor }}>
             {person.activityWeight}%
           </span>
         </div>
+      ) : isSmall ? (
+        <div className="flex h-full flex-col items-center justify-center p-1">
+          <span className="font-mono text-sm font-bold leading-none" style={{ color: textColor }}>
+            {person.activityWeight}%
+          </span>
+          <span className="mt-1 truncate font-mono text-[9px]" style={{ color: `${textColor}CC` }}>
+            {displayName}
+          </span>
+        </div>
       ) : (
-        <div className="flex h-full flex-col p-2">
+        <div className="relative flex h-full flex-col p-2">
+          {isTop ? (
+            <div className="absolute right-1 top-1 text-sm" style={{ color: textColor }}>
+              ♛
+            </div>
+          ) : null}
           <div className="mb-1 flex items-center gap-2">
             <div
-              className="flex shrink-0 items-center justify-center overflow-hidden border"
+              className="flex shrink-0 items-center justify-center overflow-hidden rounded-full border"
               style={{
-                width: Math.min(32, Math.floor(height * 0.25)),
-                height: Math.min(32, Math.floor(height * 0.25)),
-                borderColor: `${color}80`,
-                background: `${color}20`
+                width: Math.min(28, rect.h * 0.22),
+                height: Math.min(28, rect.h * 0.22),
+                borderColor: `${border}60`,
+                background: `${border}25`
               }}
             >
-              {person.avatarUrl ? (
-                <img src={person.avatarUrl} alt={displayName} className="h-full w-full object-cover" />
+              {profile?.avatarUrl ? (
+                <img
+                  src={profile.avatarUrl}
+                  alt={displayName}
+                  className="h-full w-full object-cover"
+                  onError={(event) => {
+                    (event.target as HTMLImageElement).style.display = "none";
+                  }}
+                />
               ) : (
-                <span className="font-mono font-bold" style={{ fontSize: Math.min(12, Math.floor(height * 0.1)), color }}>
+                <span className="font-mono text-[10px] font-bold" style={{ color: textColor }}>
                   {person.address.slice(2, 4).toUpperCase()}
                 </span>
               )}
             </div>
-            <div className="min-w-0">
-              <div
-                className="truncate font-mono font-bold"
-                style={{ fontSize: Math.min(12, Math.max(9, Math.floor(height * 0.08))), color }}
-              >
-                {displayName}
-              </div>
-            </div>
+            <span
+              className="truncate font-mono font-semibold"
+              style={{ color: textColor, fontSize: Math.min(12, Math.max(9, rect.h * 0.08)) }}
+            >
+              {displayName}
+            </span>
           </div>
 
           <div
-            className="font-mono font-bold leading-none"
-            style={{ fontSize: Math.min(28, Math.max(14, Math.floor(height * 0.2))), color }}
+            className="font-heading font-bold leading-none"
+            style={{ color: textColor, fontSize: Math.min(34, Math.max(16, rect.h * 0.22)) }}
           >
             {person.activityWeight}%
           </div>
 
-          {height > 80 ? (
-            <div className="mt-1 flex gap-2">
-              {person.buildsOnGiven > 0 ? (
-                <span className="text-[10px] font-mono" style={{ color: "#00C851" }}>
-                  +{person.buildsOnGiven}
-                </span>
-              ) : null}
-              {person.critiquesGiven > 0 ? (
-                <span className="text-[10px] font-mono" style={{ color: "#CC0033" }}>
-                  -{person.critiquesGiven}
-                </span>
-              ) : null}
+          {rect.h > 90 ? (
+            <div className="mt-auto flex gap-2 text-[10px] font-mono">
+              {person.buildsOnGiven > 0 ? <span style={{ color: "#00C851" }}>+{person.buildsOnGiven}</span> : null}
+              {person.critiquesGiven > 0 ? <span style={{ color: "#FF3366" }}>-{person.critiquesGiven}</span> : null}
+              {person.submissionCount > 0 ? <span style={{ color: `${textColor}CC` }}>^{person.submissionCount}</span> : null}
             </div>
           ) : null}
 
-          {height > 100 ? (
-            <div className="mt-auto pt-1">
-              <MiniSparkline
-                buildsOn={person.buildsOnGiven + person.buildsOnReceived}
-                critiques={person.critiquesGiven + person.critiquesReceived}
-                width={Math.max(10, width - 20)}
-              />
-            </div>
+          {rect.h > 112 ? (
+            <MiniSignalBar
+              buildsOn={person.buildsOnGiven + person.buildsOnReceived}
+              critiques={person.critiquesGiven + person.critiquesReceived}
+            />
           ) : null}
         </div>
       )}
-    </motion.div>
+    </motion.button>
   );
-}
-
-interface Props {
-  heatmap: TaskHeatmap;
-  loading?: boolean;
-  containerWidth?: number;
-  containerHeight?: number;
 }
 
 export default function SignalMap({
   heatmap,
   loading = false,
-  containerWidth = 500,
-  containerHeight = 400
+  containerWidth,
+  containerHeight,
+  onViewSubmissions
 }: Props) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState({ w: 640, h: 400 });
   const [selected, setSelected] = useState<PersonSignal | null>(null);
 
-  const treemapNodes = useMemo(
-    () => computeTreemap(heatmap.people, containerWidth, containerHeight),
-    [heatmap.people, containerWidth, containerHeight]
-  );
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      setMeasured({
+        w: Math.max(320, Math.floor(entry.contentRect.width)),
+        h: Math.max(320, Math.floor(entry.contentRect.height))
+      });
+    });
+    observer.observe(wrapRef.current);
+    return () => observer.disconnect();
+  }, []);
 
-  const topWeight = useMemo(
-    () => heatmap.people.reduce((max, person) => Math.max(max, person.activityWeight), 0),
+  const resolvedHeight = containerHeight ?? measured.h;
+  const resolvedWidth = containerWidth ?? measured.w;
+  const detailWidth = selected ? 260 : 0;
+  const mapWidth = Math.max(260, resolvedWidth - detailWidth);
+
+  const sortedPeople = useMemo(
+    () => [...heatmap.people].sort((a, b) => b.activityWeight - a.activityWeight),
     [heatmap.people]
   );
+
+  const items = useMemo(
+    () => squarify(sortedPeople, 0, 0, mapWidth, resolvedHeight),
+    [mapWidth, resolvedHeight, sortedPeople]
+  );
+
+  const topAddress = sortedPeople[0]?.address.toLowerCase() ?? "";
 
   if (loading) {
     return (
       <div
-        className="flex items-center justify-center font-mono text-xs text-[var(--text-muted)]"
-        style={{ width: containerWidth, height: containerHeight }}
+        ref={wrapRef}
+        className="flex w-full items-center justify-center"
+        style={{ minHeight: resolvedHeight, background: "#020608" }}
       >
-        Loading signal map...
+        <span style={{ color: "#3D5A73", fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
+          Loading signal map...
+        </span>
       </div>
     );
   }
@@ -237,48 +353,69 @@ export default function SignalMap({
   if (!heatmap.people.length) {
     return (
       <div
-        className="flex flex-col items-center justify-center p-8 text-center"
-        style={{ width: containerWidth, height: containerHeight }}
+        ref={wrapRef}
+        className="flex w-full flex-col items-center justify-center p-8 text-center"
+        style={{ minHeight: resolvedHeight, background: "#020608", border: "1px solid #162334" }}
       >
-        <div className="mb-2 font-mono text-xs text-[var(--text-muted)]">NO SIGNALS YET</div>
-        <div className="max-w-xs text-[10px] text-[var(--text-muted)]">
-          Interactions appear here during the reveal phase. Critiques show red, build-ons show green.
+        <div style={{ color: "#3D5A73", fontFamily: "JetBrains Mono, monospace", fontSize: 12, marginBottom: 8 }}>
+          NO SIGNALS YET
+        </div>
+        <div style={{ color: "#3D5A73", fontSize: 11, maxWidth: 300 }}>
+          The signal map activates during the reveal phase when participants begin building on and critiquing finalist
+          submissions.
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex gap-4">
-      <div>
-        <div className="mb-2 flex items-center gap-4 text-[10px] font-mono text-[var(--text-muted)]">
-          <div className="flex items-center gap-1">
-            <div className="h-2 w-2" style={{ background: "#00C851" }} />
+    <div className="flex gap-0">
+      <div className="flex-1">
+        <div
+          className="mb-2 flex items-center gap-4 px-1"
+          style={{ fontSize: 10, fontFamily: "JetBrains Mono, monospace", color: "#3D5A73" }}
+        >
+          <div className="flex items-center gap-1.5">
+            <div style={{ width: 10, height: 10, background: "#00C851" }} />
             BUILD-ONS
           </div>
-          <div className="flex items-center gap-1">
-            <div className="h-2 w-2" style={{ background: "#CC0033" }} />
+          <div className="flex items-center gap-1.5">
+            <div style={{ width: 10, height: 10, background: "#CC0033" }} />
             CRITIQUES
           </div>
+          <div className="flex items-center gap-1.5">
+            <div style={{ width: 10, height: 10, background: "#CC7700" }} />
+            MIXED
+          </div>
           <span className="ml-auto">
-            {heatmap.totalActivity} interactions · {heatmap.people.length} participants
+            {heatmap.totalActivity} interactions - {heatmap.people.length} participants
           </span>
         </div>
 
         <div
-          className="relative border border-[var(--border)] bg-[var(--void)]"
-          style={{ width: containerWidth, height: containerHeight }}
+          ref={wrapRef}
+          className="relative overflow-hidden"
+          style={{
+            width: mapWidth,
+            height: resolvedHeight,
+            background: "#020608",
+            border: "1px solid #162334"
+          }}
         >
-          {treemapNodes.map((node) => (
-            <HeatmapBox
-              key={node.person.address}
-              node={node}
-              isSelected={selected?.address.toLowerCase() === node.person.address.toLowerCase()}
-              isTop={node.person.activityWeight === topWeight && topWeight > 0}
+          {items.map((item) => (
+            <PersonBox
+              key={item.person.address.toLowerCase()}
+              item={item}
+              isTop={item.person.address.toLowerCase() === topAddress}
+              isSelected={selected?.address.toLowerCase() === item.person.address.toLowerCase()}
               onClick={() =>
-                setSelected((current) =>
-                  current?.address.toLowerCase() === node.person.address.toLowerCase() ? null : node.person
-                )
+                setSelected((previous) => {
+                  if (previous?.address.toLowerCase() === item.person.address.toLowerCase()) {
+                    onViewSubmissions?.(item.person.address);
+                    return previous;
+                  }
+                  return item.person;
+                })
               }
             />
           ))}
@@ -288,65 +425,95 @@ export default function SignalMap({
       <AnimatePresence>
         {selected ? (
           <motion.div
-            initial={{ opacity: 0, width: 0 }}
-            animate={{ opacity: 1, width: 260 }}
-            exit={{ opacity: 0, width: 0 }}
-            className="shrink-0 overflow-hidden border border-[var(--border)] bg-[var(--surface)]"
-            style={{ height: containerHeight + 26 }}
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 260, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="shrink-0 overflow-hidden"
+            style={{
+              background: "#0B1520",
+              borderTop: "1px solid #162334",
+              borderRight: "1px solid #162334",
+              borderBottom: "1px solid #162334",
+              marginTop: 22
+            }}
           >
-            <div className="h-full space-y-4 overflow-y-auto p-4">
+            <div className="p-4" style={{ width: 260 }}>
               <div className="mb-4 flex items-center justify-between">
-                <div className="section-header mb-0 text-[10px]">PARTICIPANT</div>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontFamily: "JetBrains Mono, monospace",
+                    color: "#3D5A73",
+                    fontWeight: 700,
+                    letterSpacing: "0.1em"
+                  }}
+                >
+                  PARTICIPANT
+                </span>
                 <button
                   type="button"
                   onClick={() => setSelected(null)}
-                  className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  style={{ color: "#3D5A73", fontSize: 14 }}
                 >
-                  ✕
+                  x
                 </button>
               </div>
 
-              <UserDisplay address={selected.address} showAvatar={true} avatarSize={40} className="mb-4" />
-              <div className="mb-3 break-all text-[10px] font-mono text-[var(--text-muted)]">{selected.address}</div>
-
-              <div className="mb-4">
-                <span
-                  className="badge text-[10px]"
-                  style={{
-                    color: interpolateColor(selected.colorRatio),
-                    borderColor: `${interpolateColor(selected.colorRatio)}60`,
-                    background: `${interpolateColor(selected.colorRatio)}10`
-                  }}
-                >
-                  {selected.role.toUpperCase()}
-                </span>
+              <UserDisplay address={selected.address} showAvatar={true} avatarSize={40} className="mb-3" />
+              <div
+                className="mb-4 break-all"
+                style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "#3D5A73" }}
+              >
+                {selected.address}
               </div>
 
-              <div className="space-y-2">
-                {[
-                  { label: "ACTIVITY WEIGHT", value: `${selected.activityWeight}%`, color: interpolateColor(selected.colorRatio) },
-                  { label: "SUBMISSIONS", value: selected.submissionCount, color: "var(--arc)" },
-                  { label: "BUILDS GIVEN", value: selected.buildsOnGiven, color: "#00C851" },
-                  { label: "BUILDS RECEIVED", value: selected.buildsOnReceived, color: "#00C851" },
-                  { label: "CRITIQUES GIVEN", value: selected.critiquesGiven, color: "#CC0033" },
-                  { label: "CRITIQUES REC.", value: selected.critiquesReceived, color: "#CC0033" }
-                ].map((stat) => (
-                  <div key={stat.label} className="flex items-center justify-between text-[10px]">
-                    <span className="font-mono text-[var(--text-muted)]">{stat.label}</span>
-                    <span className="font-mono font-bold" style={{ color: stat.color }}>
-                      {stat.value}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {[
+                {
+                  label: "ACTIVITY WEIGHT",
+                  value: `${selected.activityWeight}%`,
+                  color: getTextColor(selected.colorRatio)
+                },
+                { label: "SUBMISSIONS", value: selected.submissionCount, color: "#00E5FF" },
+                { label: "BUILDS GIVEN", value: selected.buildsOnGiven, color: "#00C851" },
+                { label: "BUILDS RECEIVED", value: selected.buildsOnReceived, color: "#00C851" },
+                { label: "CRITIQUES GIVEN", value: selected.critiquesGiven, color: "#CC0033" },
+                { label: "CRITIQUES REC.", value: selected.critiquesReceived, color: "#CC0033" }
+              ].map((stat) => (
+                <div key={stat.label} className="mb-2 flex items-center justify-between">
+                  <span
+                    style={{
+                      fontFamily: "JetBrains Mono, monospace",
+                      fontSize: 9,
+                      color: "#3D5A73",
+                      letterSpacing: "0.08em"
+                    }}
+                  >
+                    {stat.label}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "JetBrains Mono, monospace",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: String(stat.color)
+                    }}
+                  >
+                    {stat.value}
+                  </span>
+                </div>
+              ))}
 
               <button
                 type="button"
-                onClick={() => window.open(`/profile?address=${selected.address}`, "_blank")}
                 className="btn-ghost mt-4 w-full py-2 text-[10px]"
+                onClick={() => onViewSubmissions?.(selected.address)}
               >
-                View Full Profile ↗
+                View submissions by this participant
               </button>
+              <div className="mt-2 text-[9px] font-mono text-[#3D5A73]">
+                Tip: click the same tile again to jump directly to their submissions.
+              </div>
             </div>
           </motion.div>
         ) : null}

@@ -3,18 +3,17 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import LandingPage from "@/app/landing/page";
+import { UserDisplay } from "@/components/ui/user-display";
 import { LiveFeed } from "@/components/ui/live-feed";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatBlock } from "@/components/ui/stat";
 import { ActivityEvent, initActivityFeed, subscribeToActivity } from "@/lib/activity";
 import {
   CredentialRecord,
-  deriveTaskStatus,
+  deriveDisplayStatus,
   fetchAllJobs,
   fetchCredentialsForAgent,
   formatUsdc,
-  getJobStatusColor,
-  getJobStatusLabel,
   JobRecord,
 } from "@/lib/contracts";
 import { calculateWeightedScore, getReputationTier } from "@/lib/reputation";
@@ -34,6 +33,8 @@ const FILTERS = ["All", "Tasks", "Tournaments"] as const;
 
 export default function HomePage() {
   const { account } = useWallet();
+  const [hydrated, setHydrated] = useState(false);
+  const [restoreGraceElapsed, setRestoreGraceElapsed] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<(typeof FILTERS)[number]>("All");
@@ -53,6 +54,12 @@ export default function HomePage() {
   }, [account]);
 
   useEffect(() => {
+    setHydrated(true);
+    const timer = window.setTimeout(() => setRestoreGraceElapsed(true), 700);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     void loadFeed();
   }, [loadFeed]);
 
@@ -69,6 +76,20 @@ export default function HomePage() {
     if (selectedFilter === "Tournaments") return jobs;
     return jobs;
   }, [jobs, selectedFilter]);
+
+  const hasStoredWallet =
+    hydrated && typeof window !== "undefined" && Boolean(window.localStorage.getItem("archon_last_wallet"));
+
+  if (!hydrated || (!account && hasStoredWallet && !restoreGraceElapsed)) {
+    return (
+      <section className="page-container flex min-h-[40vh] items-center justify-center">
+        <div className="flex items-center gap-3 font-mono text-sm text-[var(--text-secondary)]">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--arc-dim)] border-t-[var(--arc)]" />
+          Loading Archon...
+        </div>
+      </section>
+    );
+  }
 
   if (!account) {
     return <LandingPage />;
@@ -89,7 +110,9 @@ export default function HomePage() {
 
         <div className="space-y-2 border-t border-[var(--border)] pt-4">
           <div className="mono text-xs text-[var(--text-secondary)]">Credentials: {myCredentials.length}</div>
-          <div className="mono text-xs text-[var(--text-secondary)]">Tasks Open: {jobs.filter((job) => job.status === 0).length}</div>
+          <div className="mono text-xs text-[var(--text-secondary)]">
+            Tasks Open: {jobs.filter((job) => deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd ?? 0n).code === 0).length}
+          </div>
         </div>
       </aside>
 
@@ -135,15 +158,14 @@ export default function HomePage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {visibleJobs.slice(0, 20).map((task) => {
-              const statusLabel = task.status === 4
-                ? deriveTaskStatus(task.status, task.revealPhaseEnd ?? 0n).label
-                : getJobStatusLabel(task.status);
-              const statusColor = task.status === 4
-                ? deriveTaskStatus(task.status, task.revealPhaseEnd ?? 0n).color
-                : getJobStatusColor(task.status);
+              const displayStatus = deriveDisplayStatus(
+                task.status,
+                task.deadline,
+                task.revealPhaseEnd ?? 0n
+              );
               return (
                 <Link key={task.jobId} href={`/job/${task.jobId}`} className="card-sharp group cursor-pointer overflow-hidden p-0">
-                  <div className="h-[2px]" style={{ background: statusColor }} />
+                  <div className="h-[2px]" style={{ background: displayStatus.color }} />
                   <div className="p-5">
                     <div className="mb-3 flex items-center justify-between">
                       <span className="mono text-xs text-[var(--text-muted)]">#{task.jobId}</span>
@@ -152,14 +174,14 @@ export default function HomePage() {
                         <span
                           className="badge mono"
                           style={{
-                            color: statusColor,
-                            borderColor: statusColor,
+                            color: displayStatus.color,
+                            borderColor: displayStatus.color,
                             background: "transparent",
                             borderWidth: "1px",
                             borderStyle: "solid"
                           }}
                         >
-                          {statusLabel}
+                          {displayStatus.label}
                         </span>
                       </div>
                     </div>
@@ -171,8 +193,8 @@ export default function HomePage() {
                     <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-[var(--text-secondary)]">{task.description}</p>
 
                     <div className="flex items-center justify-between border-t border-[var(--border)] pt-3">
-                      <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                        <span className="mono">{task.client.slice(0, 6)}...{task.client.slice(-4)}</span>
+                      <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] min-w-0">
+                        <UserDisplay address={task.client} showAvatar={true} avatarSize={22} className="min-w-0" />
                         <span>-</span>
                         <span>{formatDeadline(task.deadline)}</span>
                       </div>

@@ -8,6 +8,11 @@ export interface UserProfile {
   updatedAt: number;
 }
 
+type SaveProfileResult = {
+  success: boolean;
+  error?: string;
+};
+
 const STORAGE_KEY = "archon_profiles";
 
 function loadProfiles(): Record<string, UserProfile> {
@@ -35,14 +40,49 @@ export function getProfile(address: string): UserProfile | null {
   return profiles[address.toLowerCase()] ?? null;
 }
 
-export function saveProfile(profile: UserProfile): void {
-  if (!profile.address) return;
+export function isUsernameTaken(username: string, excludeAddress?: string): boolean {
+  if (!username.trim()) return false;
+  const profiles = loadProfiles();
+  const normalized = username.trim().toLowerCase();
+  const excluded = excludeAddress?.toLowerCase() ?? "";
+  return Object.values(profiles).some((profile) => {
+    return (
+      profile.username?.trim().toLowerCase() === normalized &&
+      profile.address.toLowerCase() !== excluded
+    );
+  });
+}
+
+export function saveProfile(profile: UserProfile): SaveProfileResult {
+  if (!profile.address) return { success: false, error: "Wallet address is required" };
+
+  const username = profile.username?.trim() ?? "";
+  if (username) {
+    if (username.length < 2) {
+      return { success: false, error: "Username must be at least 2 characters" };
+    }
+    if (username.length > 32) {
+      return { success: false, error: "Username must be 32 characters or less" };
+    }
+    if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
+      return {
+        success: false,
+        error: "Username can only contain letters, numbers, _, ., -"
+      };
+    }
+    if (isUsernameTaken(username, profile.address)) {
+      return { success: false, error: `Username "${username}" is already taken` };
+    }
+  }
+
   const profiles = loadProfiles();
   profiles[profile.address.toLowerCase()] = {
     ...profile,
+    username,
     updatedAt: Date.now()
   };
   saveProfiles(profiles);
+  return { success: true };
 }
 
 export function fileToDataUri(file: File): Promise<string> {

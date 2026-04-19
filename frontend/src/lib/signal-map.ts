@@ -1,5 +1,11 @@
 import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
-import { contractAddresses, getReadProvider, ZERO_ADDRESS } from "@/lib/contracts";
+import {
+  contractAddresses,
+  getReadProvider,
+  isValidSubmission,
+  parseSubmission,
+  ZERO_ADDRESS
+} from "@/lib/contracts";
 import { fetchUserProfile } from "@/lib/user-profiles";
 
 export interface PersonSignal {
@@ -96,9 +102,12 @@ export async function buildTaskHeatmap(
     return { people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false };
   }
 
-  for (let i = 0; i < rawSubmissions.length; i += 1) {
-    const submission = rawSubmissions[i] as Record<string, unknown> & unknown[];
-    const agent = String(submission.agent ?? submission[1] ?? "");
+  const validSubmissions = rawSubmissions.filter((submission) => isValidSubmission(submission));
+
+  for (let i = 0; i < validSubmissions.length; i += 1) {
+    const parsedSubmission = parseSubmission(validSubmissions[i]);
+    const submission = validSubmissions[i] as Record<string, unknown> & unknown[];
+    const agent = String(parsedSubmission.agent ?? submission.agent ?? submission[1] ?? "");
     if (!agent || agent.toLowerCase() === ZERO_ADDRESS.toLowerCase()) continue;
 
     const submitter = getOrCreate(agent);
@@ -114,7 +123,11 @@ export async function buildTaskHeatmap(
       // Non-blocking profile read.
     }
 
-    const rawId = submission.submissionId ?? submission.id ?? submission[0] ?? BigInt(i + 1);
+    const parsedSubmissionId = parsedSubmission.submissionId > 0 ? BigInt(parsedSubmission.submissionId) : 0n;
+    const rawId =
+      parsedSubmissionId !== 0n
+        ? parsedSubmissionId
+        : (submission.submissionId ?? submission.id ?? submission[0] ?? BigInt(i + 1));
     const submissionId = rawId && rawId !== 0n ? rawId : BigInt(i + 1);
 
     try {

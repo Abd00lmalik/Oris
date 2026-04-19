@@ -3,12 +3,12 @@ import { getReadProvider } from "./contracts";
 import contracts from "./generated/contracts.json";
 
 export interface PlatformStats {
-  totalCredentials: number;
-  totalUSDCEscrowed: string;
-  totalCreators: number;
-  totalAgents: number;
-  totalTasks: number;
-  totalSubmissions: number;
+  totalCredentials: number | null;
+  totalUSDCEscrowed: string | null;
+  totalCreators: number | null;
+  totalAgents: number | null;
+  totalTasks: number | null;
+  totalSubmissions: number | null;
   loading: boolean;
   error: string | null;
 }
@@ -33,6 +33,24 @@ function formatUsdcWhole(units: bigint): string {
   return (Number(units) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
+async function withRetry<T>(fn: () => Promise<T>, retries = 2, delayMs = 500): Promise<T> {
+  let attempt = 0;
+  let lastError: unknown;
+
+  while (attempt <= retries) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries) break;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+      attempt += 1;
+    }
+  }
+
+  throw lastError;
+}
+
 export async function fetchPlatformStats(): Promise<PlatformStats> {
   const provider = getReadProvider();
 
@@ -50,9 +68,9 @@ export async function fetchPlatformStats(): Promise<PlatformStats> {
     );
 
     const [totalCredentialsRaw, jobsRaw, totalAgentsRaw] = await Promise.all([
-      registry.totalCredentials().catch(() => 0n),
-      jobContract.getAllJobs().catch(() => [] as RawJob[]),
-      identityRegistry.totalSupply().catch(() => 0n)
+      withRetry(async () => (await registry.totalCredentials()) as bigint),
+      withRetry(async () => (await jobContract.getAllJobs()) as RawJob[]),
+      withRetry(async () => (await identityRegistry.totalSupply()) as bigint)
     ]);
 
     const creatorSet = new Set<string>();
@@ -88,12 +106,12 @@ export async function fetchPlatformStats(): Promise<PlatformStats> {
   } catch (err) {
     console.error("[platformStats] error:", err);
     return {
-      totalCredentials: 0,
-      totalUSDCEscrowed: "0",
-      totalCreators: 0,
-      totalAgents: 0,
-      totalTasks: 0,
-      totalSubmissions: 0,
+      totalCredentials: null,
+      totalUSDCEscrowed: null,
+      totalCreators: null,
+      totalAgents: null,
+      totalTasks: null,
+      totalSubmissions: null,
       loading: false,
       error: "Failed to load stats"
     };

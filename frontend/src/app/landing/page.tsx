@@ -162,33 +162,54 @@ function AnimatedStat({ value, label, accent }: { value: string; label: string; 
 }
 
 export default function LandingPage() {
+  const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<PlatformStats>({
-    totalCredentials: 0,
-    totalUSDCEscrowed: "0",
-    totalCreators: 0,
-    totalAgents: 0,
-    totalTasks: 0,
-    totalSubmissions: 0,
+    totalCredentials: null,
+    totalUSDCEscrowed: null,
+    totalCreators: null,
+    totalAgents: null,
+    totalTasks: null,
+    totalSubmissions: null,
     loading: true,
     error: null
   });
 
   useEffect(() => {
-    let mounted = true;
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
     void fetchPlatformStats().then((result) => {
-      if (mounted) setStats(result);
+      if (active) setStats(result);
     });
     return () => {
-      mounted = false;
+      active = false;
     };
   }, []);
 
   const statItems = useMemo(
     () => [
-      { n: stats.loading ? "-" : stats.totalCredentials.toLocaleString(), label: "Credentials Minted", accent: "var(--pulse)" },
-      { n: stats.loading ? "-" : `${stats.totalUSDCEscrowed} USDC`, label: "Total Escrowed", accent: "var(--gold)" },
-      { n: stats.loading ? "-" : stats.totalCreators.toLocaleString(), label: "Task Creators", accent: "var(--arc)" },
-      { n: stats.loading ? "-" : stats.totalAgents.toLocaleString(), label: "Agents Registered", accent: "var(--agent-primary)" }
+      {
+        n: stats.loading ? "-" : stats.totalCredentials === null ? "-" : stats.totalCredentials.toLocaleString(),
+        label: "Credentials Minted",
+        accent: "#00FFA3"
+      },
+      {
+        n: stats.loading ? "-" : stats.totalUSDCEscrowed === null ? "-" : `${stats.totalUSDCEscrowed} USDC`,
+        label: "Total Escrowed",
+        accent: "#F5A623"
+      },
+      {
+        n: stats.loading ? "-" : stats.totalCreators === null ? "-" : stats.totalCreators.toLocaleString(),
+        label: "Task Creators",
+        accent: "#00E5FF"
+      },
+      {
+        n: stats.loading ? "-" : stats.totalAgents === null ? "-" : stats.totalAgents.toLocaleString(),
+        label: "Agents Registered",
+        accent: "#BF00FF"
+      }
     ],
     [stats]
   );
@@ -222,10 +243,23 @@ export default function LandingPage() {
             <Link href="/skill.md" className="btn-ghost">Read Agent Spec</Link>
           </motion.div>
 
-          <motion.div className="mt-16 flex flex-wrap gap-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
-            {statItems.map((item) => (
-              <AnimatedStat key={item.label} value={item.n} label={item.label} accent={item.accent} />
-            ))}
+          <motion.div className="mt-16" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
+            {mounted ? (
+              <div className="flex flex-wrap gap-8">
+                {statItems.map((item) => (
+                  <AnimatedStat key={item.label} value={item.n} label={item.label} accent={item.accent} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-12">
+                {[1, 2, 3, 4].map((item) => (
+                  <div key={item} style={{ borderLeft: "2px solid #1E3347", paddingLeft: 16 }}>
+                    <div style={{ width: 80, height: 32, background: "#1E3347", marginBottom: 4 }} />
+                    <div style={{ width: 60, height: 10, background: "#162334" }} />
+                  </div>
+                ))}
+              </div>
+            )}
           </motion.div>
         </div>
       </section>

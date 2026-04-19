@@ -51,7 +51,13 @@ const WalletContext = createContext<WalletContextType>({
   disconnect: () => undefined
 });
 
-const LAST_WALLET_KEY = "archon.last_wallet_uuid";
+const STORAGE_KEY = "archon_last_wallet";
+
+interface PersistedWallet {
+  address: string;
+  rdns: string;
+  chainId: number;
+}
 
 type ProviderListenerState = {
   provider: RawWalletProvider;
@@ -124,6 +130,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [detachProviderListeners]);
 
   const disconnect = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
     clearConnection();
   }, [clearConnection]);
 
@@ -140,6 +149,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           : [];
 
         if (accounts.length === 0) {
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem(STORAGE_KEY);
+          }
           clearConnection();
           return;
         }
@@ -205,7 +217,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setShowWalletPicker(false);
 
       if (typeof window !== "undefined") {
-        window.localStorage.setItem(LAST_WALLET_KEY, wallet.info.uuid);
+        const payload: PersistedWallet = {
+          address: nextAddress,
+          rdns: wallet.info.rdns,
+          chainId: Number(network.chainId)
+        };
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       }
 
       attachProviderListeners(wallet);
@@ -268,10 +285,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     let selected = wallets[0];
 
     if (typeof window !== "undefined") {
-      const rememberedUuid = window.localStorage.getItem(LAST_WALLET_KEY);
-      const remembered = wallets.find((wallet) => wallet.info.uuid === rememberedUuid);
-      if (remembered) {
-        selected = remembered;
+      const rememberedRaw = window.localStorage.getItem(STORAGE_KEY);
+      if (rememberedRaw) {
+        try {
+          const rememberedWallet = JSON.parse(rememberedRaw) as PersistedWallet;
+          const remembered = wallets.find(
+            (wallet) => wallet.info.rdns === rememberedWallet.rdns
+          );
+          if (remembered) {
+            selected = remembered;
+          }
+        } catch {
+          window.localStorage.removeItem(STORAGE_KEY);
+        }
       }
     }
 
@@ -285,10 +311,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (availableWallets.length === 0) return;
 
       let selected = availableWallets[0];
+      let storedAddress = "";
       if (typeof window !== "undefined") {
-        const rememberedUuid = window.localStorage.getItem(LAST_WALLET_KEY);
-        const remembered = availableWallets.find((wallet) => wallet.info.uuid === rememberedUuid);
-        if (remembered) selected = remembered;
+        const rememberedRaw = window.localStorage.getItem(STORAGE_KEY);
+        if (!rememberedRaw) return;
+        try {
+          const rememberedWallet = JSON.parse(rememberedRaw) as PersistedWallet;
+          storedAddress = rememberedWallet.address;
+          const remembered = availableWallets.find(
+            (wallet) => wallet.info.rdns === rememberedWallet.rdns
+          );
+          if (!remembered) return;
+          selected = remembered;
+        } catch {
+          window.localStorage.removeItem(STORAGE_KEY);
+          return;
+        }
       }
 
       try {
@@ -297,7 +335,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           ? accounts.filter((value): value is string => typeof value === "string")
           : [];
 
-        if (!active || knownAccounts.length === 0) return;
+        if (!active || knownAccounts.length === 0) {
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem(STORAGE_KEY);
+          }
+          return;
+        }
+
+        if (storedAddress && knownAccounts[0].toLowerCase() !== storedAddress.toLowerCase()) {
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem(STORAGE_KEY);
+          }
+          return;
+        }
 
         await hydrateFromWallet(selected, {
           requestAccounts: false,
@@ -305,6 +355,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         });
       } catch {
         if (!active) return;
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(STORAGE_KEY);
+        }
         clearConnection();
       }
     };
