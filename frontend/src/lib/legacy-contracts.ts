@@ -9,6 +9,7 @@ export const LEGACY_ADDRESSES = {
 } as const;
 
 export type LegacyTaskRecord = JobRecord & { isLegacy: true };
+export type LegacySubmissionRecord = SubmissionRecord & { isLegacy: true };
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -134,6 +135,8 @@ export async function fetchLegacyJob(provider: JsonRpcProvider, jobId: number): 
 export async function fetchLegacyTaskCount(provider: JsonRpcProvider): Promise<number> {
   try {
     const contract = getLegacyJobContract(provider);
+    const all = await contract.getAllJobs().catch(() => null);
+    if (Array.isArray(all)) return all.length;
     const total = await contract.totalJobs().catch(() => contract.nextJobId().catch(() => 0n));
     return Number(total);
   } catch {
@@ -143,12 +146,12 @@ export async function fetchLegacyTaskCount(provider: JsonRpcProvider): Promise<n
 
 export const getLegacyTaskCount = fetchLegacyTaskCount;
 
-export async function fetchLegacySubmissions(provider: JsonRpcProvider, jobId: number): Promise<SubmissionRecord[]> {
+export async function fetchLegacySubmissions(provider: JsonRpcProvider, jobId: number): Promise<LegacySubmissionRecord[]> {
   try {
     const contract = getLegacyJobContract(provider);
     const raw = (await contract.getSubmissions(jobId).catch(() => [])) as unknown[];
     return Array.from(raw ?? [])
-      .map((item, index): SubmissionRecord | null => {
+      .map((item, index): LegacySubmissionRecord | null => {
         const tuple = Array.isArray(item) ? item : [];
         const candidate = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
         const agent = toString(candidate.agent ?? tuple[0]).trim();
@@ -163,10 +166,11 @@ export async function fetchLegacySubmissions(provider: JsonRpcProvider, jobId: n
           credentialClaimed: Boolean(candidate.credentialClaimed ?? tuple[5] ?? false),
           allocatedReward: toString(candidate.allocatedReward ?? tuple[6] ?? "0"),
           buildOnBonus: "0",
-          isBuildOnWinner: false
+          isBuildOnWinner: false,
+          isLegacy: true
         };
       })
-      .filter((submission): submission is SubmissionRecord => Boolean(submission));
+      .filter((submission): submission is LegacySubmissionRecord => Boolean(submission));
   } catch (error) {
     console.warn(`[legacy] Could not read legacy submissions for ${jobId}:`, error);
     return [];

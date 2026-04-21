@@ -18,8 +18,9 @@ import {
   getReadProvider,
   JobRecord
 } from "@/lib/contracts";
-import { fetchLegacyTaskCount, fetchLegacyTasks, LegacyTaskRecord } from "@/lib/legacy-contracts";
+import { fetchLegacyTasks, LegacyTaskRecord } from "@/lib/legacy-contracts";
 import { fetchUnifiedScore, getReputationTier } from "@/lib/reputation";
+import { getDisplayId, makeTaskUrl } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 function formatDeadline(deadline: number) {
@@ -54,7 +55,7 @@ export default function HomePage() {
   const [restoreGraceElapsed, setRestoreGraceElapsed] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [legacyTasks, setLegacyTasks] = useState<LegacyTaskRecord[]>([]);
-  const [legacyOffset, setLegacyOffset] = useState(0);
+  const [displayIds, setDisplayIds] = useState<Record<string, string>>({});
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [myScore, setMyScore] = useState(0);
   const [selectedFilter, setSelectedFilter] = useState<TaskFilter>("all");
@@ -92,11 +93,6 @@ export default function HomePage() {
       console.log("[legacy] Loaded", tasks.length, "legacy tasks");
       setLegacyTasks(tasks);
     });
-    fetchLegacyTaskCount(getReadProvider()).then((count) => {
-      if (!active) return;
-      console.log("[taskId] Legacy task count:", count);
-      setLegacyOffset(count);
-    });
     return () => {
       active = false;
     };
@@ -108,10 +104,6 @@ export default function HomePage() {
   }, []);
 
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
-  const getDisplayId = useCallback(
-    (task: DisplayJobRecord) => (task.isLegacy ? task.jobId : task.jobId + legacyOffset) + 1,
-    [legacyOffset]
-  );
   const allTasks = useMemo<DisplayJobRecord[]>(
     () =>
       [
@@ -124,6 +116,26 @@ export default function HomePage() {
       }),
     [jobs, legacyTasks]
   );
+
+  useEffect(() => {
+    let active = true;
+    const resolve = async () => {
+      const map: Record<string, string> = {};
+      for (const task of allTasks) {
+        const key = `${task.isLegacy ? "v1" : "v2"}-${task.jobId}`;
+        map[key] = await getDisplayId(task.jobId, task.isLegacy ?? false);
+      }
+      if (active) setDisplayIds(map);
+    };
+    if (allTasks.length > 0) {
+      void resolve();
+    } else {
+      setDisplayIds({});
+    }
+    return () => {
+      active = false;
+    };
+  }, [allTasks]);
 
   const visibleJobs = useMemo(() => {
     return allTasks.filter((job) => {
@@ -224,10 +236,11 @@ export default function HomePage() {
             <div className="grid gap-4 md:grid-cols-2">
               {visibleJobs.slice(0, visibleCount).map((task) => {
                 const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd ?? 0n);
+                const displayId = displayIds[`${task.isLegacy ? "v1" : "v2"}-${task.jobId}`] ?? `#${task.jobId}`;
                 return (
                   <Link
                     key={`${task.isLegacy ? "v1" : "v2"}-${task.jobId}`}
-                    href={task.isLegacy ? `/job/${task.jobId}?source=legacy` : `/job/${task.jobId}`}
+                    href={makeTaskUrl(task.jobId, task.isLegacy ?? false)}
                     className="card-sharp cursor-pointer overflow-hidden p-0"
                     style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
                   >
@@ -242,7 +255,7 @@ export default function HomePage() {
                             color: "var(--text-muted)",
                           }}
                         >
-                          #{getDisplayId(task)}
+                          {displayId}
                           {task.isLegacy ? (
                             <span
                               style={{

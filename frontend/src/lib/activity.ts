@@ -3,6 +3,7 @@
 import { Contract, EventLog, Log } from "ethers";
 import { formatTaskTitle, getReadProvider } from "./contracts";
 import { fetchLegacyTaskCount } from "./legacy-contracts";
+import { getDisplayId } from "./task-id";
 import contractsJson from "./generated/contracts.json";
 
 export interface ActivityEvent {
@@ -86,6 +87,14 @@ async function _checkIsAgent(identityContract: Contract, address: string): Promi
   }
 }
 
+async function _taskLabel(jobId: number, isLegacy = false): Promise<string> {
+  try {
+    return await getDisplayId(jobId, isLegacy);
+  } catch {
+    return `#${jobId}`;
+  }
+}
+
 async function _loadRecentHistory(jobContract: Contract, identityContract: Contract) {
   if (_historyLoading) return;
   _historyLoading = true;
@@ -135,7 +144,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         type: "submission_made",
         actor: agent,
         isAgent: await _checkIsAgent(identityContract, agent),
-        description: `Work submitted for task #${Number(log.args?.[0] ?? 0)}`,
+        description: `Work submitted for task ${await _taskLabel(Number(log.args?.[0] ?? 0))}`,
         taskId: Number(log.args?.[0] ?? 0),
         txHash: log.transactionHash,
         timestamp,
@@ -156,7 +165,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         type: "credential_minted",
         actor: agent,
         isAgent: await _checkIsAgent(identityContract, agent),
-        description: `Credential minted from task #${Number(log.args?.[0] ?? 0)}`,
+        description: `Credential minted from task ${await _taskLabel(Number(log.args?.[0] ?? 0))}`,
         taskId: Number(log.args?.[0] ?? 0),
         txHash: log.transactionHash,
         timestamp,
@@ -171,12 +180,14 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
     );
     for (const log of transfers.slice(-5) as EventLog[]) {
       const from = String(log.args?.[0] ?? ZERO).toLowerCase();
+      const to = String(log.args?.[1] ?? ZERO);
       if (from !== ZERO) continue;
+      if (!to || to.toLowerCase() === ZERO) continue;
       const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
       merged.push({
         id: _makeEventId("hist-agent", log),
         type: "agent_joined",
-        actor: String(log.args?.[1] ?? ZERO),
+        actor: to,
         isAgent: true,
         description: "New agent registered on Archon",
         txHash: log.transactionHash,
@@ -246,7 +257,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
               type: "submission_made",
               actor: "multiple",
               isAgent: false,
-              description: `${submissionCount} submission${submissionCount > 1 ? "s" : ""} on task #${jobId}: "${title.slice(0, 30)}"`,
+              description: `${submissionCount} submission${submissionCount > 1 ? "s" : ""} on task ${await _taskLabel(jobId)}: "${title.slice(0, 30)}"`,
               taskId: jobId,
               timestamp: createdAt ? createdAt + 10 * 60 * 1000 : Date.now(),
               timeAgo: ""
@@ -400,7 +411,7 @@ export function initActivityFeed() {
       type: "task_accepted",
       actor: agent,
       isAgent,
-      description: `${isAgent ? "Agent" : "User"} accepted task #${jobId}`,
+      description: `${isAgent ? "Agent" : "User"} accepted task ${await _taskLabel(jobId)}`,
       taskId: jobId,
       txHash: log.transactionHash,
       timestamp,
@@ -419,7 +430,7 @@ export function initActivityFeed() {
       type: "submission_made",
       actor: agent,
       isAgent,
-      description: `${isAgent ? "Agent" : "User"} submitted work for task #${jobId}`,
+      description: `${isAgent ? "Agent" : "User"} submitted work for task ${await _taskLabel(jobId)}`,
       taskId: jobId,
       txHash: log.transactionHash,
       timestamp,
@@ -438,7 +449,7 @@ export function initActivityFeed() {
       type: "submission_approved",
       actor: agent,
       isAgent,
-      description: `Submission approved on task #${jobId}`,
+      description: `Submission approved on task ${await _taskLabel(jobId)}`,
       taskId: jobId,
       txHash: log.transactionHash,
       timestamp,
@@ -457,7 +468,7 @@ export function initActivityFeed() {
       type: "credential_minted",
       actor: agent,
       isAgent,
-      description: `${isAgent ? "Agent" : "User"} minted credential from task #${jobId}`,
+      description: `${isAgent ? "Agent" : "User"} minted credential from task ${await _taskLabel(jobId)}`,
       taskId: jobId,
       txHash: log.transactionHash,
       timestamp,
@@ -477,7 +488,7 @@ export function initActivityFeed() {
       type: "reward_claimed",
       actor: agent,
       isAgent,
-      description: `${isAgent ? "Agent" : "User"} claimed reward from task #${jobId}`,
+      description: `${isAgent ? "Agent" : "User"} claimed reward from task ${await _taskLabel(jobId)}`,
       value: `${net.toFixed(2)} USDC`,
       taskId: jobId,
       txHash: log.transactionHash,
@@ -528,6 +539,7 @@ export function initActivityFeed() {
     const from = String(args[0] ?? ZERO).toLowerCase();
     const to = String(args[1] ?? ZERO);
     if (from !== ZERO) return;
+    if (!to || to.toLowerCase() === ZERO) return;
     const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("agent-joined", log),
@@ -596,7 +608,7 @@ export function initActivityFeed() {
           type: "submission_made",
           actor: String(args[1] ?? ZERO),
           isAgent: false,
-          description: `Submission for task #${String(args[0] ?? "0")}`,
+          description: `Submission for task ${await _taskLabel(Number(args[0] ?? 0))}`,
           taskId: Number(args[0] ?? 0),
           txHash: log.transactionHash,
           timestamp: Date.now(),

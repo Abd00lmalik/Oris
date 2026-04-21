@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   fetchAgentTasksByAddress,
   fetchJobsByAgent,
@@ -13,6 +13,7 @@ import {
   SubmissionRecord
 } from "@/lib/contracts";
 import { UserDisplay } from "@/components/ui/user-display";
+import { getDisplayId, makeTaskUrl } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type JobWithSubmission = {
@@ -29,13 +30,26 @@ function submissionActionLabel(submission: SubmissionRecord | null) {
   return "Open Job";
 }
 
+function taskDisplayKey(job: JobRecord & { isLegacy?: boolean }) {
+  return `${job.isLegacy ? "v1" : "v2"}-${job.jobId}`;
+}
+
 export default function MyWorkPage() {
   const { account } = useWallet();
   const [jobsPosted, setJobsPosted] = useState<JobRecord[]>([]);
   const [jobsWorking, setJobsWorking] = useState<JobWithSubmission[]>([]);
   const [agentTasks, setAgentTasks] = useState<Awaited<ReturnType<typeof fetchAgentTasksByAddress>>>([]);
+  const [displayIds, setDisplayIds] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const allTasks = useMemo(
+    () => [
+      ...jobsPosted.map((job) => ({ ...job, isLegacy: false })),
+      ...jobsWorking.map(({ job }) => ({ ...job, isLegacy: false }))
+    ],
+    [jobsPosted, jobsWorking]
+  );
 
   useEffect(() => {
     let active = true;
@@ -82,6 +96,25 @@ export default function MyWorkPage() {
     };
   }, [account]);
 
+  useEffect(() => {
+    let active = true;
+    const resolve = async () => {
+      const map: Record<string, string> = {};
+      for (const task of allTasks) {
+        map[taskDisplayKey(task)] = await getDisplayId(task.jobId, task.isLegacy ?? false);
+      }
+      if (active) setDisplayIds(map);
+    };
+    if (allTasks.length > 0) {
+      void resolve();
+    } else {
+      setDisplayIds({});
+    }
+    return () => {
+      active = false;
+    };
+  }, [allTasks]);
+
   return (
     <section className="space-y-5">
       <div className="archon-card p-6">
@@ -113,14 +146,16 @@ export default function MyWorkPage() {
                 {jobsPosted.map((job) => (
                   <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {formatTaskTitle(job.title)}</p>
+                      <p className="font-semibold text-[#EAEAF0]">
+                        {displayIds[taskDisplayKey(job)] ?? `#${job.jobId}`} {formatTaskTitle(job.title)}
+                      </p>
                       <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
                     </div>
                     <p className="mt-2 text-xs">Submissions: {job.submissionCount}</p>
                     <div className="mt-2">
                       <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
                     </div>
-                    <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                    <Link href={makeTaskUrl(job.jobId, false)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       Review Submissions
                     </Link>
                   </article>
@@ -137,13 +172,15 @@ export default function MyWorkPage() {
               <div className="mt-3 space-y-3">
                 {jobsWorking.map(({ job, submission }) => (
                   <article key={job.jobId} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
-                    <p className="font-semibold text-[#EAEAF0]">#{job.jobId} {formatTaskTitle(job.title)}</p>
+                    <p className="font-semibold text-[#EAEAF0]">
+                      {displayIds[taskDisplayKey(job)] ?? `#${job.jobId}`} {formatTaskTitle(job.title)}
+                    </p>
                     <p className="mt-1 text-xs">Status: {submission ? submissionActionLabel(submission) : "Accepted"}</p>
                     <div className="mt-2">
                       <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
                     </div>
                     {submission?.reviewerNote ? <p className="mt-1 text-xs">Reviewer note: {submission.reviewerNote}</p> : null}
-                    <Link href={`/job/${job.jobId}`} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                    <Link href={makeTaskUrl(job.jobId, false)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       {submissionActionLabel(submission)}
                     </Link>
                   </article>

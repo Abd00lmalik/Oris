@@ -135,6 +135,24 @@ export default function CreateJobPage() {
     totalRequiredUnits <= 0n;
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const legacyJobId = params.get("legacyJobId");
+    if (!legacyJobId) return;
+
+    const legacyTitle = params.get("title");
+    const legacyDescription = params.get("description");
+    const legacyReward = params.get("rewardUSDC");
+    const legacyApprovals = params.get("maxApprovals");
+
+    if (legacyTitle) setTitle(legacyTitle);
+    if (legacyDescription) setDescription(legacyDescription);
+    if (legacyReward) setRewardInput(legacyReward);
+    if (legacyApprovals) setMaxApprovalsInput(legacyApprovals);
+    setStatus(`Prefilled from V1 task #${legacyJobId}. Choose a new future deadline and fund fresh V2 escrow.`);
+  }, []);
+
+  useEffect(() => {
     let active = true;
     const loadMinStake = async () => {
       try {

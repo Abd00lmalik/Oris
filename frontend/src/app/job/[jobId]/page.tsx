@@ -44,14 +44,15 @@ import {
   txFinalizeWinners,
   txRespondToSubmission,
   txSelectFinalists,
+  txSubmitDirect,
   txSubmitDeliverable,
   ZERO_ADDRESS
 } from "@/lib/contracts";
 import {
   fetchLegacyJob,
-  fetchLegacySubmissions,
-  fetchLegacyTaskCount
+  fetchLegacySubmissions
 } from "@/lib/legacy-contracts";
+import { getDisplayId } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type ViewMode = "signal" | "list" | "timeline";
@@ -524,12 +525,17 @@ export default function JobDetailsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { account, browserProvider, connect, signer } = useWallet();
-  const jobId = useMemo(() => Number(params.jobId), [params.jobId]);
-  const forceLegacy = searchParams.get("source") === "legacy";
+  const rawJobParam = params.jobId ?? "";
+  const isLegacyRoute = rawJobParam.startsWith("v1-");
+  const jobId = useMemo(
+    () => (isLegacyRoute ? Number(rawJobParam.replace("v1-", "")) : Number(rawJobParam)),
+    [isLegacyRoute, rawJobParam]
+  );
+  const forceLegacy = isLegacyRoute || searchParams.get("source") === "legacy";
 
   const [job, setJob] = useState<JobRecord | null>(null);
   const [isLegacyTask, setIsLegacyTask] = useState(false);
-  const [legacyOffset, setLegacyOffset] = useState(0);
+  const [displayTaskId, setDisplayTaskId] = useState(`#${Number.isFinite(jobId) ? jobId : rawJobParam}`);
   const [jobLoading, setJobLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
@@ -624,21 +630,10 @@ export default function JobDetailsPage() {
     return provider;
   };
 
-  useEffect(() => {
-    let active = true;
-    fetchLegacyTaskCount(getReadProvider()).then((count) => {
-      if (!active) return;
-      setLegacyOffset(count);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
   const loadTask = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0) {
       setJobLoading(false);
-      setJobError(`Invalid task ID: ${params.jobId}`);
+      setJobError(`Invalid task ID: ${rawJobParam}`);
       setJob(null);
       return;
     }
@@ -806,7 +801,7 @@ export default function JobDetailsPage() {
     } finally {
       setJobLoading(false);
     }
-  }, [account, browserProvider, forceLegacy, jobId, params.jobId]);
+  }, [account, browserProvider, forceLegacy, jobId, rawJobParam]);
 
   const loadHeatmap = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0 || forceLegacy) {
@@ -856,7 +851,7 @@ export default function JobDetailsPage() {
   }, [claimReadyAt]);
 
   useEffect(() => {
-    if (!Number.isInteger(jobId) || jobId < 0) return () => undefined;
+    if (!Number.isInteger(jobId) || jobId < 0 || forceLegacy) return () => undefined;
     const contract = getJobSignalsReadContract();
     const refresh = async (id: bigint | number) => {
       if (Number(id) === jobId) {
@@ -878,7 +873,7 @@ export default function JobDetailsPage() {
       contract.off("FinalistsSelected", onFinalists);
       contract.off("WinnersFinalized", onWinners);
     };
-  }, [jobId, loadTask, loadHeatmap]);
+  }, [forceLegacy, jobId, loadTask, loadHeatmap]);
 
   useEffect(() => {
     if (!selectedFinalists.length) {
@@ -957,6 +952,40 @@ export default function JobDetailsPage() {
     }
   };
 
+  const handleLegacySubmitOnV2 = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!job || !isLegacyTask) return;
+    if (!signer) {
+      setErrorMessage("Connect wallet to submit through V2.");
+      return;
+    }
+    if (!deliverableLink.trim()) {
+      setErrorMessage("Enter a deliverable link before submitting.");
+      return;
+    }
+
+    try {
+      setBusyAction("legacySubmit");
+      const mirroredJob = await fetchJob(job.jobId);
+      const mirrorMatches =
+        mirroredJob && mirroredJob.title.trim().toLowerCase() === job.title.trim().toLowerCase();
+      if (!mirrorMatches) {
+        throw new Error(
+          "No matching V2 task exists for this V1 task yet. The creator needs to recreate it on V2 before new submissions can earn V2 credentials."
+        );
+      }
+
+      const txHash = await txSubmitDirect(signer, BigInt(job.jobId), deliverableLink.trim());
+      setStatusMessage(`V2 submission tx: ${txHash}`);
+      setDeliverableLink("");
+      await loadTask();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Failed to submit on V2"));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   const handleRespond = async () => {
     if (!selectedSubmission) return;
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -971,6 +1000,14 @@ export default function JobDetailsPage() {
 
     if (!signer) {
       alert("Wallet not connected");
+      return;
+    }
+    const caller = await signer.getAddress();
+    console.log("[respond] parentSubmissionId:", selectedSubmission.submissionId.toString());
+    console.log("[respond] caller:", caller);
+    console.log("[respond] known submitter:", selectedSubmission.agent);
+    if (caller.toLowerCase() === selectedSubmission.agent.toLowerCase()) {
+      setErrorMessage("You cannot respond to your own submission.");
       return;
     }
     if (!responseContent || responseContent.trim().length < 10) {
@@ -1117,7 +1154,6 @@ export default function JobDetailsPage() {
   const displayStatus = job
     ? deriveDisplayStatus(job.status, job.deadline, revealEndValue, account ?? undefined, hasSubmitted, isCreator)
     : null;
-  const displayJobId = job ? (isLegacyTask ? job.jobId : job.jobId + legacyOffset) + 1 : jobId + 1;
   const canClaim = Boolean(
     displayStatus?.canClaim && isConnected && !isCreator && isApproved && !isClaimed && claimCountdown <= 0
   );
@@ -1148,9 +1184,46 @@ export default function JobDetailsPage() {
   const isSelectedFinalist = Boolean(
     selectedSubmission && finalistSet.has(selectedSubmission.agent.toLowerCase())
   );
-  const canInteract = Boolean(
-    !isLegacyTask && displayStatus?.canInteract && isRevealActive && signer && isConnected && selectedSubmission && isSelectedFinalist
+  const isOwnSelectedSubmission = Boolean(
+    account && selectedSubmission && account.toLowerCase() === selectedSubmission.agent.toLowerCase()
   );
+  const canInteract = Boolean(
+    !isLegacyTask &&
+      displayStatus?.canInteract &&
+      isRevealActive &&
+      signer &&
+      isConnected &&
+      selectedSubmission &&
+      isSelectedFinalist &&
+      !isOwnSelectedSubmission
+  );
+  const legacyCompleted = Boolean(
+    isLegacyTask && job && (job.status === 4 || job.status === 5 || job.approvedCount > 0 || job.claimedCount > 0)
+  );
+  const legacyActive = Boolean(isLegacyTask && job && !submissionDeadlinePassed);
+  const legacyRecreateHref = job
+    ? `/create-job?legacyJobId=${job.jobId}&title=${encodeURIComponent(job.title)}&description=${encodeURIComponent(
+        job.description
+      )}&rewardUSDC=${encodeURIComponent(formatUsdc(job.rewardUSDC))}&maxApprovals=${Math.max(1, maxApprovals)}`
+    : "/create-job";
+
+  useEffect(() => {
+    let active = true;
+    if (!job) {
+      setDisplayTaskId(`#${Number.isFinite(jobId) ? jobId : rawJobParam}`);
+      return () => {
+        active = false;
+      };
+    }
+
+    getDisplayId(job.jobId, isLegacyTask).then((value) => {
+      if (active) setDisplayTaskId(value);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [isLegacyTask, job, jobId, rawJobParam]);
 
   useEffect(() => {
     console.log("[revealCheck]", {
@@ -1201,7 +1274,7 @@ export default function JobDetailsPage() {
       {isLegacyTask ? (
         <div
           style={{
-            padding: "8px 16px",
+            padding: "12px 16px",
             background: "rgba(245,166,35,0.06)",
             border: "1px solid rgba(245,166,35,0.2)",
             fontSize: 12,
@@ -1210,7 +1283,31 @@ export default function JobDetailsPage() {
             marginBottom: 16
           }}
         >
-          This task was created on the V1 contract. View-only mode - new interactions use the V2 system.
+          <div className="font-heading mb-1 text-sm font-semibold text-[var(--text-primary)]">
+            {legacyCompleted
+              ? "This task completed on V1."
+              : legacyActive
+                ? "This active task originated on V1."
+                : "This V1 task deadline has passed."}
+          </div>
+          {legacyCompleted ? (
+            <p>Credentials for completed work were minted on the V1 registry. Submissions remain visible below for continuity.</p>
+          ) : legacyActive ? (
+            <p>
+              Existing V1 submissions are preserved below. New V2 submissions require a matching recreated task on V2 so
+              credentials and interaction signals are issued by the current contract.
+            </p>
+          ) : (
+            <p>
+              The old contract cannot start V2 reveal interactions. Creators can recreate this task on V2 with fresh
+              escrow, using the V1 submissions below as reference.
+            </p>
+          )}
+          {!legacyCompleted && isCreator ? (
+            <Link href={legacyRecreateHref} className="btn-primary mt-3 inline-flex px-3 py-2 text-xs">
+              Recreate on V2
+            </Link>
+          ) : null}
         </div>
       ) : null}
 
@@ -1226,7 +1323,7 @@ export default function JobDetailsPage() {
             </button>
             <span className="text-sm font-mono text-[var(--border-bright)]">/</span>
             <span className="text-xs font-mono text-[var(--text-muted)]">
-              #{displayJobId}
+              {displayTaskId}
               {isLegacyTask ? <span className="ml-1 text-[var(--gold)]">V1</span> : null}
             </span>
           </div>
@@ -1373,7 +1470,7 @@ export default function JobDetailsPage() {
           ) : null}
 
           {viewMode === "list" ? (
-            !isCreator && !shouldShowSignalMap ? (
+            !isLegacyTask && !isCreator && !shouldShowSignalMap ? (
               <div className="flex h-48 flex-col items-center justify-center border border-[var(--border)] p-6 text-center">
                 <div className="mb-3 font-mono text-2xl text-[var(--arc)]">⬡</div>
                 <div className="font-heading mb-2 text-base font-semibold">Submissions are sealed</div>
@@ -1435,15 +1532,21 @@ export default function JobDetailsPage() {
                       )}
 
                       {!isCreator && isRevealActive ? (
-                        <button
-                          type="button"
-                          className="btn-ghost w-full text-xs"
-                          onClick={() => setSelectedSubmission(submission)}
-                        >
-                          {selectedSubmission?.submissionId === submission.submissionId
-                            ? "Selected for Response"
-                            : "Select for Response"}
-                        </button>
+                        account?.toLowerCase() === submission.agent.toLowerCase() ? (
+                          <div className="border border-[var(--border)] p-2 text-center text-xs text-[var(--text-muted)]">
+                            You cannot respond to your own submission.
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-ghost w-full text-xs"
+                            onClick={() => setSelectedSubmission(submission)}
+                          >
+                            {selectedSubmission?.submissionId === submission.submissionId
+                              ? "Selected for Response"
+                              : "Select for Response"}
+                          </button>
+                        )
                       ) : null}
                     </article>
                   ))
@@ -1475,6 +1578,39 @@ export default function JobDetailsPage() {
                 Connect Wallet
               </button>
             </>
+          ) : null}
+
+          {isLegacyTask && isConnected && !isCreator && legacyActive ? (
+            <div className="space-y-3">
+              <div className="section-header">V1 COMPATIBILITY</div>
+              <div className="border border-[var(--gold)]/30 bg-[var(--gold)]/5 p-3 text-xs text-[var(--text-secondary)]">
+                Submit on V2 only works after the creator recreates a matching V2 task. If no mirror exists, Archon
+                will stop before sending a transaction.
+              </div>
+              <form className="space-y-3" onSubmit={handleLegacySubmitOnV2}>
+                <input
+                  type="url"
+                  className="input-field"
+                  placeholder="https://github.com/... or ipfs://..."
+                  value={deliverableLink}
+                  onChange={(event) => setDeliverableLink(event.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="btn-primary w-full"
+                  disabled={busyAction === "legacySubmit" || !deliverableLink.trim() || !signer}
+                >
+                  {busyAction === "legacySubmit" ? "Checking V2 mirror..." : "Submit on V2"}
+                </button>
+              </form>
+            </div>
+          ) : null}
+
+          {isLegacyTask && !legacyActive ? (
+            <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">
+              V1 task actions are read-only here. Use the submission links for reference; V2 interactions require a
+              recreated V2 task.
+            </div>
           ) : null}
 
           {!isLegacyTask && canAutoReveal ? (
@@ -1588,6 +1724,11 @@ export default function JobDetailsPage() {
               ) : null}
 
               {displayStatus?.canInteract && job.status === 4 && selectedSubmission ? (
+                isOwnSelectedSubmission ? (
+                  <div className="border border-[var(--border)] p-3 text-xs text-[var(--text-muted)]">
+                    You cannot respond to your own submission. Select another finalist submission to critique or build on.
+                  </div>
+                ) : (
                 <>
                   <button
                     type="button"
@@ -1647,6 +1788,7 @@ export default function JobDetailsPage() {
                     </div>
                   ) : null}
                 </>
+                )
               ) : null}
             </>
           ) : null}

@@ -264,6 +264,7 @@ export async function fetchPlatformStats(): Promise<PlatformStats> {
     const identity = new Contract(
       IDENTITY_REGISTRY,
       [
+        "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
         "function totalSupply() view returns (uint256)",
         "function nextTokenId() view returns (uint256)",
         "function balanceOf(address) view returns (uint256)"
@@ -279,6 +280,28 @@ export async function fetchPlatformStats(): Promise<PlatformStats> {
         break;
       } catch (error) {
         console.warn(`[stats] ${fn} failed:`, error);
+      }
+    }
+
+    if (totalAgents === 0) {
+      try {
+        const latest = await provider.getBlockNumber();
+        const fromBlock = Math.max(0, latest - 10_000);
+        const logs = await identity.queryFilter(
+          identity.filters.Transfer(ZERO_ADDRESS),
+          fromBlock,
+          latest
+        );
+        const mintedAgents = new Set<string>();
+        for (const log of logs) {
+          const args = "args" in log ? log.args : undefined;
+          const to = String(args?.[1] ?? "").toLowerCase();
+          if (to && to !== ZERO_ADDRESS) mintedAgents.add(to);
+        }
+        totalAgents = mintedAgents.size;
+        console.log("[stats] agents via Transfer mints:", totalAgents);
+      } catch (error) {
+        console.warn("[stats] Transfer mint fallback failed:", error);
       }
     }
   } catch (error) {
