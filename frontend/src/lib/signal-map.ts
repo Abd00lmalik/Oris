@@ -113,12 +113,11 @@ export async function buildTaskHeatmap(
       // Non-blocking profile read.
     }
 
-    const parsedSubmissionId = parsedSubmission.submissionId > 0 ? BigInt(parsedSubmission.submissionId) : 0n;
-    const rawId =
-      parsedSubmissionId !== 0n
-        ? parsedSubmissionId
-        : (submission.submissionId ?? submission.id ?? submission[0] ?? BigInt(i + 1));
-    const submissionId = rawId && rawId !== 0n ? rawId : BigInt(i + 1);
+    const rawSubmissionId = submission.submissionId ?? submission.id ?? submission[0] ?? parsedSubmission.submissionId;
+    const submissionId =
+      rawSubmissionId !== undefined && rawSubmissionId !== null
+        ? BigInt(String(rawSubmissionId))
+        : BigInt(parsedSubmission.submissionId);
 
     try {
       const responseIds = await jobContract.getSubmissionResponses(submissionId);
