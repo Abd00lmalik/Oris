@@ -33,6 +33,7 @@ let _historyLoaded = false;
 let _historyLoading = false;
 let _cleanupFns: Array<() => void> = [];
 let _timeagoTimer: ReturnType<typeof setInterval> | null = null;
+let _lastKnownBlock = 0;
 const _events: ActivityEvent[] = [];
 const _listeners: Array<(events: ActivityEvent[]) => void> = [];
 const MAX_EVENTS = 10;
@@ -550,6 +551,69 @@ export function initActivityFeed() {
   jobContract.on("StakeSlashed", onStakeSlashed);
   identityContract.on("Transfer", onAgentJoined);
 
+  provider.getBlockNumber()
+    .then((block) => {
+      _lastKnownBlock = block;
+    })
+    .catch(() => {
+      _lastKnownBlock = 0;
+    });
+
+  const pollInterval = setInterval(async () => {
+    try {
+      const currentBlock = await provider.getBlockNumber();
+      if (_lastKnownBlock === 0) {
+        _lastKnownBlock = Math.max(0, currentBlock - 10);
+      }
+      if (currentBlock <= _lastKnownBlock) return;
+
+      console.log("[activity] Polling: blocks", _lastKnownBlock, "->", currentBlock);
+      const fromBlock = Math.max(_lastKnownBlock + 1, currentBlock - 10);
+      const [newCreated, newSubmitted] = await Promise.all([
+        jobContract.queryFilter(jobContract.filters.JobCreated?.() ?? "JobCreated", fromBlock, currentBlock).catch(() => []),
+        jobContract.queryFilter(jobContract.filters.DeliverableSubmitted?.() ?? "DeliverableSubmitted", fromBlock, currentBlock).catch(() => [])
+      ]);
+
+      for (const log of newCreated as EventLog[]) {
+        const args = log.args ?? [];
+        _addEvent({
+          id: `poll-created-${String(args[0] ?? "0")}-${log.blockNumber}`,
+          type: "task_created",
+          actor: String(args[1] ?? ZERO),
+          isAgent: false,
+          description: `Task: "${formatTaskTitle(String(args[2] ?? "")).slice(0, 50)}"`,
+          taskId: Number(args[0] ?? 0),
+          txHash: log.transactionHash,
+          timestamp: Date.now(),
+          timeAgo: "just now"
+        });
+      }
+
+      for (const log of newSubmitted as EventLog[]) {
+        const args = log.args ?? [];
+        _addEvent({
+          id: `poll-submitted-${String(args[0] ?? "0")}-${String(args[1] ?? ZERO)}-${log.blockNumber}`,
+          type: "submission_made",
+          actor: String(args[1] ?? ZERO),
+          isAgent: false,
+          description: `Submission for task #${String(args[0] ?? "0")}`,
+          taskId: Number(args[0] ?? 0),
+          txHash: log.transactionHash,
+          timestamp: Date.now(),
+          timeAgo: "just now"
+        });
+      }
+
+      _lastKnownBlock = currentBlock;
+      if (newCreated.length > 0 || newSubmitted.length > 0) {
+        _notify();
+      }
+    } catch (error) {
+      console.warn("[activity] Poll failed:", error);
+    }
+  }, 30_000);
+  _cleanupFns.push(() => clearInterval(pollInterval));
+
   _cleanupFns.push(() => jobContract.off("JobCreated", onJobCreated));
   _cleanupFns.push(() => jobContract.off("JobAccepted", onJobAccepted));
   _cleanupFns.push(() => jobContract.off("DeliverableSubmitted", onSubmitted));
@@ -585,4 +649,5 @@ export function stopActivityFeed() {
   _initialized = false;
   _historyLoaded = false;
   _historyLoading = false;
+  _lastKnownBlock = 0;
 }

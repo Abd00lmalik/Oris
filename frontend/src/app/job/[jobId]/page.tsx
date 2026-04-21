@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import SignalMap from "@/components/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
 import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
@@ -47,6 +47,11 @@ import {
   txSubmitDeliverable,
   ZERO_ADDRESS
 } from "@/lib/contracts";
+import {
+  fetchLegacyJob,
+  fetchLegacySubmissions,
+  fetchLegacyTaskCount
+} from "@/lib/legacy-contracts";
 import { useWallet } from "@/lib/wallet-context";
 
 type ViewMode = "signal" | "list" | "timeline";
@@ -88,7 +93,7 @@ function contentToURI(content: string): string {
 }
 
 async function loadSubmissionsFromContract(
-  contract: ReturnType<typeof getJobReadContract>,
+  contract: ReturnType<typeof getJobContract>,
   taskId: number
 ): Promise<SubmissionRecord[]> {
   console.log("[submissions] Loading for task:", taskId);
@@ -96,6 +101,26 @@ async function loadSubmissionsFromContract(
   try {
     const raw = await contract.getSubmissions(taskId);
     const arr = Array.from(raw ?? []);
+    console.log("[DIAG:getSubmissions] jobId:", taskId);
+    console.log("[DIAG:getSubmissions] raw length:", arr.length);
+    console.log("[DIAG:getSubmissions] first item:", arr?.[0]);
+    if (arr?.[0]) {
+      const first = arr[0] as Record<string, unknown> & unknown[];
+      console.log("[DIAG:getSubmissions] agent field:", first.agent ?? first[0] ?? first[1]);
+      console.log("[DIAG:getSubmissions] all keys:", Object.keys(first));
+    }
+    try {
+      const countJob = await contract.getJob(taskId);
+      console.log("[DIAG:submissionCount]:", String(countJob.submissionCount ?? countJob[8] ?? ""));
+    } catch (error) {
+      console.log("[DIAG:submissionCount] not readable:", error instanceof Error ? error.message.slice(0, 80) : String(error).slice(0, 80));
+    }
+    try {
+      const agent0 = await contract.submittedAgents(taskId, 0);
+      console.log("[DIAG:submittedAgents[0]]:", agent0);
+    } catch (error) {
+      console.log("[DIAG:submittedAgents] not readable:", error instanceof Error ? error.message.slice(0, 80) : String(error).slice(0, 80));
+    }
     console.log("[submissions] getSubmissions returned:", arr.length);
     const valid = arr.filter((submission) => isValidSubmission(submission)).map((submission) => parseSubmission(submission));
     if (valid.length > 0) {
@@ -104,6 +129,28 @@ async function loadSubmissionsFromContract(
     }
   } catch (error) {
     console.warn("[submissions] getSubmissions failed:", error);
+  }
+
+  try {
+    const agents = ((await contract.getAcceptedAgents(taskId)) as string[]) ?? [];
+    console.log("[submissions] accepted-agent fallback candidates:", agents.length);
+    const rows: SubmissionRecord[] = [];
+    for (const agent of agents) {
+      try {
+        const row = await contract.getSubmission(taskId, agent);
+        if (isValidSubmission(row)) {
+          rows.push(parseSubmission(row));
+        }
+      } catch {
+        // Skip unreadable rows.
+      }
+    }
+    if (rows.length > 0) {
+      console.log("[submissions] accepted-agent fallback count:", rows.length);
+      return rows;
+    }
+  } catch (error) {
+    console.warn("[submissions] accepted-agent fallback failed:", error);
   }
 
   try {
@@ -475,10 +522,14 @@ function FinalistSelectionPanel({
 export default function JobDetailsPage() {
   const params = useParams<{ jobId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { account, browserProvider, connect, signer } = useWallet();
   const jobId = useMemo(() => Number(params.jobId), [params.jobId]);
+  const forceLegacy = searchParams.get("source") === "legacy";
 
   const [job, setJob] = useState<JobRecord | null>(null);
+  const [isLegacyTask, setIsLegacyTask] = useState(false);
+  const [legacyOffset, setLegacyOffset] = useState(0);
   const [jobLoading, setJobLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
@@ -573,6 +624,17 @@ export default function JobDetailsPage() {
     return provider;
   };
 
+  useEffect(() => {
+    let active = true;
+    fetchLegacyTaskCount(getReadProvider()).then((count) => {
+      if (!active) return;
+      setLegacyOffset(count);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const loadTask = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0) {
       setJobLoading(false);
@@ -586,10 +648,102 @@ export default function JobDetailsPage() {
 
     try {
       const readProvider = browserProvider ?? getReadProvider();
-      const readContract = getJobContract(readProvider);
-      const [jobData, rawSubmissions, escrow, used, maxAllowed, finals, revealEnd, revealOpen, economy] =
+      if (forceLegacy) {
+        const [legacyJob, legacySubmissions] = await Promise.all([
+          fetchLegacyJob(getReadProvider(), jobId),
+          fetchLegacySubmissions(getReadProvider(), jobId)
+        ]);
+
+        if (!legacyJob) {
+          setJobError(`Legacy task #${jobId} not found`);
+          setJob(null);
+          return;
+        }
+
+        setIsLegacyTask(true);
+        setJob(legacyJob);
+        setSubmissions(legacySubmissions);
+        setEscrowLocked(BigInt(legacyJob.rewardUSDC || "0") - BigInt(legacyJob.paidOutUSDC || "0"));
+        setApprovalsUsed(legacyJob.approvedCount);
+        setMaxApprovals(Math.max(1, legacyJob.maxApprovals || legacyJob.approvedCount || 1));
+        setSelectedFinalists([]);
+        setRevealPhaseEnd(0);
+        setIsRevealPhase(false);
+        setTaskEconomy({
+          interactionStake: 2_000_000n,
+          interactionReward: 0n,
+          interactionPool: 0n,
+          interactionPoolFunded: false,
+          poolRemaining: 0n
+        });
+        setCreatorPostedCount(0);
+        setBuildOnParents({});
+        if (account) {
+          setMySubmission(
+            legacySubmissions.find((submission) => submission.agent.toLowerCase() === account.toLowerCase()) ?? null
+          );
+        } else {
+          setMySubmission(null);
+        }
+        setIsAccepted(false);
+        setClaimReadyAt(null);
+        return;
+      }
+
+      const jobData = await fetchJob(jobId);
+      if (!jobData) {
+        const [legacyJob, legacySubmissions] = await Promise.all([
+          fetchLegacyJob(getReadProvider(), jobId),
+          fetchLegacySubmissions(getReadProvider(), jobId)
+        ]);
+
+        if (!legacyJob) {
+          setJobError(`Task #${jobId} not found`);
+          setJob(null);
+          return;
+        }
+
+        setIsLegacyTask(true);
+        setJob(legacyJob);
+        setSubmissions(legacySubmissions);
+        setEscrowLocked(BigInt(legacyJob.rewardUSDC || "0") - BigInt(legacyJob.paidOutUSDC || "0"));
+        setApprovalsUsed(legacyJob.approvedCount);
+        setMaxApprovals(Math.max(1, legacyJob.maxApprovals || legacyJob.approvedCount || 1));
+        setSelectedFinalists([]);
+        setRevealPhaseEnd(0);
+        setIsRevealPhase(false);
+        setTaskEconomy({
+          interactionStake: 2_000_000n,
+          interactionReward: 0n,
+          interactionPool: 0n,
+          interactionPoolFunded: false,
+          poolRemaining: 0n
+        });
+        setCreatorPostedCount(0);
+        setBuildOnParents({});
+        if (account) {
+          setMySubmission(
+            legacySubmissions.find((submission) => submission.agent.toLowerCase() === account.toLowerCase()) ?? null
+          );
+        } else {
+          setMySubmission(null);
+        }
+        setIsAccepted(false);
+        setClaimReadyAt(null);
+        return;
+      }
+
+      setIsLegacyTask(false);
+      let readContract = getJobContract(readProvider);
+      if (account && browserProvider) {
+        try {
+          readContract = getJobContract(await browserProvider.getSigner());
+        } catch {
+          readContract = getJobContract(readProvider);
+        }
+      }
+      const [rawSubmissions, escrow, used, maxAllowed, finals, revealEnd, revealOpen, economy] =
         await Promise.all([
-          fetchJob(jobId),
           loadSubmissionsFromContract(readContract, jobId),
           fetchJobEscrow(jobId),
           fetchApprovedAgentCount(jobId),
@@ -599,12 +753,6 @@ export default function JobDetailsPage() {
           fetchIsInRevealPhase(jobId),
           fetchTaskEconomy(readProvider, jobId)
         ]);
-
-      if (!jobData) {
-        setJobError(`Task #${jobId} not found`);
-        setJob(null);
-        return;
-      }
 
       const contract = getJobSignalsReadContract();
       const parentEntries = await Promise.all(
@@ -658,10 +806,14 @@ export default function JobDetailsPage() {
     } finally {
       setJobLoading(false);
     }
-  }, [account, browserProvider, jobId, params.jobId]);
+  }, [account, browserProvider, forceLegacy, jobId, params.jobId]);
 
   const loadHeatmap = useCallback(async () => {
-    if (!Number.isInteger(jobId) || jobId < 0) return;
+    if (!Number.isInteger(jobId) || jobId < 0 || forceLegacy) {
+      setHeatmap({ people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false });
+      setHeatmapLoading(false);
+      return;
+    }
     setHeatmapLoading(true);
     try {
       const provider = browserProvider ?? getReadProvider();
@@ -673,7 +825,7 @@ export default function JobDetailsPage() {
     } finally {
       setHeatmapLoading(false);
     }
-  }, [browserProvider, jobId]);
+  }, [browserProvider, forceLegacy, jobId]);
 
   useEffect(() => {
     void loadTask();
@@ -960,23 +1112,31 @@ export default function JobDetailsPage() {
   const hasSubmitted = Boolean(mySubmission && mySubmission.status !== 0);
   const isApproved = mySubmission?.status === 2;
   const isClaimed = Boolean(mySubmission?.credentialClaimed);
-  const canClaim = isConnected && !isCreator && isApproved && !isClaimed && claimCountdown <= 0;
 
   const revealEndValue = revealPhaseEnd || Number(job?.revealPhaseEnd ?? 0n);
-  const displayStatus = job ? deriveDisplayStatus(job.status, job.deadline, revealEndValue) : null;
+  const displayStatus = job
+    ? deriveDisplayStatus(job.status, job.deadline, revealEndValue, account ?? undefined, hasSubmitted, isCreator)
+    : null;
+  const displayJobId = job ? (isLegacyTask ? job.jobId : job.jobId + legacyOffset) + 1 : jobId + 1;
+  const canClaim = Boolean(
+    displayStatus?.canClaim && isConnected && !isCreator && isApproved && !isClaimed && claimCountdown <= 0
+  );
   const revealEnded = Boolean(job?.status === 4 && revealEndValue > 0 && Math.floor(Date.now() / 1000) > revealEndValue);
   const submissionDeadlinePassed = Boolean(
     job && job.deadline > 0 && BigInt(Math.floor(Date.now() / 1000)) > BigInt(job.deadline)
   );
   const awaitingSelection = Boolean(job && submissionDeadlinePassed && (job.status === 2 || job.status === 0 || job.status === 1));
   const canAutoReveal = Boolean(
+    !isLegacyTask &&
     job &&
+      displayStatus?.canAutoReveal &&
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
       safeSubmissions.length > 0 &&
       safeSubmissions.length <= Number(maxApprovals) + 5
   );
   const canManualReveal = Boolean(
+    !isLegacyTask &&
     job &&
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
@@ -988,7 +1148,9 @@ export default function JobDetailsPage() {
   const isSelectedFinalist = Boolean(
     selectedSubmission && finalistSet.has(selectedSubmission.agent.toLowerCase())
   );
-  const canInteract = Boolean(isRevealActive && signer && isConnected && selectedSubmission && isSelectedFinalist);
+  const canInteract = Boolean(
+    !isLegacyTask && displayStatus?.canInteract && isRevealActive && signer && isConnected && selectedSubmission && isSelectedFinalist
+  );
 
   useEffect(() => {
     console.log("[revealCheck]", {
@@ -1036,6 +1198,22 @@ export default function JobDetailsPage() {
 
       <PhaseBanner job={job} revealEnd={revealEndValue} awaitingSelection={awaitingSelection} />
 
+      {isLegacyTask ? (
+        <div
+          style={{
+            padding: "8px 16px",
+            background: "rgba(245,166,35,0.06)",
+            border: "1px solid rgba(245,166,35,0.2)",
+            fontSize: 12,
+            fontFamily: "Inter, sans-serif",
+            color: "var(--text-secondary)",
+            marginBottom: 16
+          }}
+        >
+          This task was created on the V1 contract. View-only mode - new interactions use the V2 system.
+        </div>
+      ) : null}
+
       <div className="border-b border-[var(--border)] pb-6">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1047,7 +1225,10 @@ export default function JobDetailsPage() {
               {"<- TASKS"}
             </button>
             <span className="text-sm font-mono text-[var(--border-bright)]">/</span>
-            <span className="text-xs font-mono text-[var(--text-muted)]">#{job.jobId}</span>
+            <span className="text-xs font-mono text-[var(--text-muted)]">
+              #{displayJobId}
+              {isLegacyTask ? <span className="ml-1 text-[var(--gold)]">V1</span> : null}
+            </span>
           </div>
           <span className="badge mono border" style={{ color: displayStatus?.color, borderColor: displayStatus?.color, background: "transparent" }}>
             {displayStatus?.label}
@@ -1296,7 +1477,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {canAutoReveal ? (
+          {!isLegacyTask && canAutoReveal ? (
             <div
               className="border p-4"
               style={{
@@ -1344,11 +1525,11 @@ export default function JobDetailsPage() {
             </div>
           ) : null}
 
-          {isConnected && !isCreator ? (
+          {!isLegacyTask && isConnected && !isCreator ? (
             <>
               <div className="section-header">YOUR ACTIONS</div>
 
-              {!isAccepted ? (
+              {displayStatus?.canSubmit && !isAccepted ? (
                 <button
                   type="button"
                   className="btn-primary w-full"
@@ -1359,7 +1540,7 @@ export default function JobDetailsPage() {
                 </button>
               ) : null}
 
-              {isAccepted && !hasSubmitted ? (
+              {displayStatus?.canSubmit && isAccepted && !hasSubmitted ? (
                 <form className="space-y-3" onSubmit={handleSubmit}>
                   <input
                     type="url"
@@ -1406,7 +1587,7 @@ export default function JobDetailsPage() {
                 </div>
               ) : null}
 
-              {job.status === 4 && selectedSubmission ? (
+              {displayStatus?.canInteract && job.status === 4 && selectedSubmission ? (
                 <>
                   <button
                     type="button"
@@ -1470,7 +1651,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {isConnected && isCreator ? (
+          {!isLegacyTask && isConnected && isCreator ? (
             <>
               {canManualReveal ? (
                 <FinalistSelectionPanel

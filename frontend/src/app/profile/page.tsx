@@ -6,19 +6,17 @@ import { CredentialCard } from "@/components/credential-card";
 import {
   CredentialRecord,
   expectedChainId,
-  fetchCredentialsForAgent,
   getReadProvider
 } from "@/lib/contracts";
 import { generateDID } from "@/lib/did";
 import {
-  calculateWeightedScore,
+  fetchUnifiedScore,
   getNextTier,
   getPointsToNextTier,
   getReputationTier,
   getScoreBreakdown,
   getSourceLabel
 } from "@/lib/reputation";
-import { fetchLegacyScore } from "@/lib/legacy-contracts";
 import { getProfile, saveProfile, UserProfile } from "@/lib/user-profiles";
 import { useWallet } from "@/lib/wallet-context";
 
@@ -208,18 +206,24 @@ export default function ProfilePage() {
   const [activeFilter, setActiveFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [v2Score, setV2Score] = useState(0);
   const [legacyScore, setLegacyScore] = useState(0);
 
   const loadCredentials = useCallback(async () => {
     if (!profileAddress) {
       setCredentials([]);
+      setV2Score(0);
+      setLegacyScore(0);
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const list = await fetchCredentialsForAgent(profileAddress);
-      setCredentials(list);
+      const unified = await fetchUnifiedScore(getReadProvider(), profileAddress);
+      setCredentials([...unified.v2Credentials, ...unified.legacyCredentials]);
+      setV2Score(unified.v2Score);
+      setLegacyScore(unified.legacyScore);
+      if (unified.legacyScore > 0) console.log("[legacy] Legacy reputation:", unified.legacyScore);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load credentials.");
     } finally {
@@ -245,24 +249,6 @@ export default function ProfilePage() {
     setProfile(getProfile(profileAddress));
   }, [profileAddress, editOpen]);
 
-  useEffect(() => {
-    let active = true;
-    if (!profileAddress) {
-      setLegacyScore(0);
-      return;
-    }
-
-    fetchLegacyScore(getReadProvider(), profileAddress).then((score) => {
-      if (!active) return;
-      if (score > 0) console.log("[legacy] Legacy reputation:", score);
-      setLegacyScore(score);
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [profileAddress]);
-
   const refreshProfile = () => {
     setProfile(getProfile(profileAddress));
     setEditOpen(false);
@@ -270,7 +256,6 @@ export default function ProfilePage() {
 
   const profileChainId = chainId ?? expectedChainId;
   const did = profileAddress ? generateDID(profileAddress, profileChainId) : "";
-  const v2Score = useMemo(() => calculateWeightedScore(credentials), [credentials]);
   const score = useMemo(() => Math.min(v2Score + legacyScore, 2000), [legacyScore, v2Score]);
   const tier = useMemo(() => getReputationTier(score), [score]);
   const nextTier = useMemo(() => getNextTier(score), [score]);

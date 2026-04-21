@@ -1,5 +1,5 @@
 import { Contract, JsonRpcProvider } from "ethers";
-import type { JobRecord } from "@/lib/contracts";
+import type { CredentialRecord, JobRecord, SubmissionRecord } from "@/lib/contracts";
 
 export const LEGACY_ADDRESSES = {
   job: "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16",
@@ -22,8 +22,13 @@ const LEGACY_JOB_ABI = [
 
 const LEGACY_REGISTRY_ABI = [
   "function getWeightedScore(address) view returns (uint256)",
+  "function totalCredentials() view returns (uint256)",
   "function credentialCount(address) view returns (uint256)",
-  "function credentialsByAgent(address, uint256) view returns (uint256)"
+  "function credentialsByAgent(address, uint256) view returns (uint256)",
+  "function credentialId(address, uint256) view returns (uint256)",
+  "function getCredentials(address) view returns (uint256[])",
+  "function getCredential(uint256 credentialRecordId) view returns (tuple(uint256 credentialId,address agent,uint256 jobId,uint256 issuedAt,address issuedBy,bool valid,string sourceType,uint256 weight))",
+  "function credentials(uint256 credentialRecordId) view returns (uint256 credentialId,address agent,uint256 jobId,uint256 issuedAt,address issuedBy,bool valid,string sourceType,uint256 weight)"
 ] as const;
 
 function toNumber(value: unknown, fallback = 0): number {
@@ -116,6 +121,16 @@ export async function fetchLegacyTasks(provider: JsonRpcProvider): Promise<Legac
   return tasks;
 }
 
+export async function fetchLegacyJob(provider: JsonRpcProvider, jobId: number): Promise<LegacyTaskRecord | null> {
+  try {
+    const contract = getLegacyJobContract(provider);
+    return parseLegacyJob(await contract.getJob(jobId), jobId);
+  } catch (error) {
+    console.warn(`[legacy] Could not read legacy task ${jobId}:`, error);
+    return null;
+  }
+}
+
 export async function fetchLegacyTaskCount(provider: JsonRpcProvider): Promise<number> {
   try {
     const contract = getLegacyJobContract(provider);
@@ -123,6 +138,38 @@ export async function fetchLegacyTaskCount(provider: JsonRpcProvider): Promise<n
     return Number(total);
   } catch {
     return 0;
+  }
+}
+
+export const getLegacyTaskCount = fetchLegacyTaskCount;
+
+export async function fetchLegacySubmissions(provider: JsonRpcProvider, jobId: number): Promise<SubmissionRecord[]> {
+  try {
+    const contract = getLegacyJobContract(provider);
+    const raw = (await contract.getSubmissions(jobId).catch(() => [])) as unknown[];
+    return Array.from(raw ?? [])
+      .map((item, index): SubmissionRecord | null => {
+        const tuple = Array.isArray(item) ? item : [];
+        const candidate = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+        const agent = toString(candidate.agent ?? tuple[0]).trim();
+        if (!agent || agent.toLowerCase() === ZERO_ADDRESS) return null;
+        return {
+          submissionId: index,
+          agent,
+          deliverableLink: toString(candidate.deliverableLink ?? tuple[1]),
+          status: toNumber(candidate.status ?? tuple[2]),
+          submittedAt: toNumber(candidate.submittedAt ?? tuple[3]),
+          reviewerNote: toString(candidate.reviewerNote ?? tuple[4]),
+          credentialClaimed: Boolean(candidate.credentialClaimed ?? tuple[5] ?? false),
+          allocatedReward: toString(candidate.allocatedReward ?? tuple[6] ?? "0"),
+          buildOnBonus: "0",
+          isBuildOnWinner: false
+        };
+      })
+      .filter((submission): submission is SubmissionRecord => Boolean(submission));
+  } catch (error) {
+    console.warn(`[legacy] Could not read legacy submissions for ${jobId}:`, error);
+    return [];
   }
 }
 
@@ -134,4 +181,88 @@ export async function fetchLegacyScore(provider: JsonRpcProvider, address: strin
   } catch {
     return 0;
   }
+}
+
+function parseLegacyCredential(raw: unknown, fallbackId: number, fallbackAgent: string): CredentialRecord {
+  const tuple = Array.isArray(raw) ? raw : [];
+  const candidate = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    credentialId: toNumber(candidate.credentialId ?? tuple[0], fallbackId),
+    agent: toString(candidate.agent ?? tuple[1], fallbackAgent),
+    activityId: toNumber(candidate.jobId ?? tuple[2], 0),
+    issuedAt: toNumber(candidate.issuedAt ?? tuple[3], 0),
+    issuedBy: toString(candidate.issuedBy ?? tuple[4], LEGACY_ADDRESSES.registry),
+    valid: Boolean(candidate.valid ?? tuple[5] ?? true),
+    sourceType: toString(candidate.sourceType ?? tuple[6], "job"),
+    weight: toNumber(candidate.weight ?? tuple[7], 100),
+    metadata: {
+      deployment: "V1"
+    }
+  };
+}
+
+export async function fetchLegacyCredentials(
+  provider: JsonRpcProvider,
+  address: string
+): Promise<CredentialRecord[]> {
+  const credentials: CredentialRecord[] = [];
+  if (!address) return credentials;
+
+  try {
+    const reg = getLegacyRegistryContract(provider);
+    let ids: bigint[] = [];
+
+    try {
+      ids = Array.from((await reg.getCredentials(address)) as bigint[]);
+    } catch {
+      let count = 0;
+      try {
+        count = Number(await reg.credentialCount(address));
+      } catch {
+        count = 0;
+      }
+
+      for (let i = 0; i < Math.min(count, 50); i += 1) {
+        try {
+          const id = await reg.credentialsByAgent(address, i).catch(() => reg.credentialId(address, i));
+          ids.push(BigInt(id));
+        } catch {
+          // Skip sparse legacy entries.
+        }
+      }
+    }
+
+    for (const id of ids.slice(0, 50)) {
+      try {
+        const raw = await reg.getCredential(id).catch(() => reg.credentials(id));
+        credentials.push(parseLegacyCredential(raw, Number(id), address));
+      } catch {
+        // Skip unreadable legacy credential records.
+      }
+    }
+
+    if (credentials.length === 0) {
+      const score = await reg.getWeightedScore(address).catch(() => 0n);
+      if (Number(score) > 0) {
+        credentials.push({
+          credentialId: -1,
+          agent: address,
+          activityId: 0,
+          issuedAt: 0,
+          issuedBy: LEGACY_ADDRESSES.registry,
+          valid: true,
+          sourceType: "job",
+          weight: Number(score),
+          metadata: {
+            deployment: "V1",
+            synthetic: 1
+          }
+        });
+      }
+    }
+  } catch (error) {
+    console.warn("[legacy] credential fetch failed:", error);
+  }
+
+  return credentials;
 }

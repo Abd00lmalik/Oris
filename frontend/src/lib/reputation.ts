@@ -1,4 +1,10 @@
-﻿import { EnrichedCredential } from "@/lib/contracts";
+import type { BrowserProvider, JsonRpcProvider } from "ethers";
+import type { EnrichedCredential } from "@/lib/contracts";
+import { fetchCredentialsForAgent, getReadProvider } from "@/lib/contracts";
+import {
+  fetchLegacyCredentials,
+  fetchLegacyScore
+} from "@/lib/legacy-contracts";
 
 export const SOURCE_WEIGHTS = {
   job: 100,
@@ -94,6 +100,47 @@ export function getTierProgress(score: number) {
     progress: 100,
     remaining: 0,
     nextTier: "Arc Founder"
+  };
+}
+
+export async function fetchUnifiedScore(
+  provider: JsonRpcProvider | BrowserProvider,
+  address: string
+): Promise<{
+  v2Score: number;
+  legacyScore: number;
+  totalScore: number;
+  tier: string;
+  v2Credentials: EnrichedCredential[];
+  legacyCredentials: EnrichedCredential[];
+}> {
+  if (!address) {
+    return {
+      v2Score: 0,
+      legacyScore: 0,
+      totalScore: 0,
+      tier: getReputationTier(0),
+      v2Credentials: [],
+      legacyCredentials: []
+    };
+  }
+
+  const legacyProvider = "getBlockNumber" in provider ? (provider as JsonRpcProvider) : getReadProvider();
+  const [v2Credentials, legacyScore, legacyCredentials] = await Promise.all([
+    fetchCredentialsForAgent(address),
+    fetchLegacyScore(legacyProvider, address),
+    fetchLegacyCredentials(legacyProvider, address)
+  ]);
+  const v2Score = calculateWeightedScore(v2Credentials);
+  const totalScore = Math.min(v2Score + legacyScore, 2000);
+
+  return {
+    v2Score,
+    legacyScore,
+    totalScore,
+    tier: getReputationTier(totalScore),
+    v2Credentials,
+    legacyCredentials
   };
 }
 

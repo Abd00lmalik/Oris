@@ -1,5 +1,6 @@
 import { Contract } from "ethers";
 import { getReadProvider } from "./contracts";
+import { getLegacyJobContract, getLegacyRegistryContract } from "./legacy-contracts";
 import contractsJson from "./generated/contracts.json";
 
 export interface PlatformStats {
@@ -67,6 +68,53 @@ function clampPositive(value: bigint): bigint {
 
 function getJobConfig(addresses: AddressBook): DeploymentContract | undefined {
   return addresses.jobContract ?? addresses.erc8183Job ?? addresses.mockJob ?? addresses.job;
+}
+
+async function fetchLegacyStats(provider: ReturnType<typeof getReadProvider>) {
+  const job = getLegacyJobContract(provider);
+  const registry = getLegacyRegistryContract(provider);
+  const creatorSet = new Set<string>();
+  let tasks = 0;
+  let escrow = 0n;
+  let submissions = 0;
+  let credentials = 0;
+
+  try {
+    const total = Number(await job.totalJobs().catch(() => job.nextJobId().catch(() => 0n)));
+    tasks = total;
+
+    for (let jobId = 0; jobId < Math.min(total, 50); jobId += 1) {
+      try {
+        const row = await job.getJob(jobId);
+        const client = String(row.client ?? row[1] ?? "");
+        const reward = readBigint(row.rewardUSDC ?? row[5] ?? 0n);
+        const paidOut = readBigint(row.paidOutUSDC ?? row[11] ?? 0n);
+        const refunded = Boolean(row.refunded ?? row[12] ?? false);
+        const submissionCount = readNumber(row.submissionCount ?? row[8] ?? 0, 0);
+        if (client && client !== ZERO_ADDRESS) {
+          creatorSet.add(client.toLowerCase());
+        }
+        submissions += submissionCount;
+        if (!refunded) {
+          escrow += clampPositive(reward - paidOut);
+        }
+      } catch {
+        // Skip sparse legacy IDs.
+      }
+    }
+  } catch (error) {
+    console.warn("[stats] Legacy job stats failed:", error);
+  }
+
+  try {
+    if (typeof registry.totalCredentials === "function") {
+      credentials = readNumber(await registry.totalCredentials(), 0);
+    }
+  } catch (error) {
+    console.warn("[stats] Legacy credential count failed:", error);
+  }
+
+  return { tasks, escrow, submissions, credentials, creatorSet };
 }
 
 export async function fetchPlatformStats(): Promise<PlatformStats> {
@@ -151,11 +199,10 @@ export async function fetchPlatformStats(): Promise<PlatformStats> {
   let totalCreators = 0;
   let totalSubmissions = 0;
   let totalUSDCEscrowed = "0";
+  const creatorSet = new Set<string>();
+  let escrowTotal = 0n;
 
   try {
-    const creatorSet = new Set<string>();
-    let escrowTotal = 0n;
-
     for (let jobId = 0; jobId < totalTasks; jobId += 1) {
       try {
         const job = await jobContract.getJob(jobId);
@@ -191,12 +238,26 @@ export async function fetchPlatformStats(): Promise<PlatformStats> {
     totalUSDCEscrowed = (Number(escrowTotal) / 1_000_000).toLocaleString(undefined, {
       maximumFractionDigits: 0
     });
-    console.log("[stats] Total escrow USDC:", totalUSDCEscrowed);
+    console.log("[stats] V2 escrow USDC:", totalUSDCEscrowed);
     console.log("[stats] Total creators:", totalCreators);
     console.log("[stats] Total submissions:", totalSubmissions);
   } catch (error) {
     console.error("[stats] Job scan failed:", error);
   }
+
+  const legacyStats = await fetchLegacyStats(provider);
+  for (const creator of legacyStats.creatorSet) creatorSet.add(creator);
+  totalCredentials += legacyStats.credentials;
+  totalTasks += legacyStats.tasks;
+  totalSubmissions += legacyStats.submissions;
+  escrowTotal += legacyStats.escrow;
+  totalCreators = creatorSet.size;
+  totalUSDCEscrowed = (Number(escrowTotal) / 1_000_000).toLocaleString(undefined, {
+    maximumFractionDigits: 0
+  });
+  console.log("[stats] Legacy tasks:", legacyStats.tasks);
+  console.log("[stats] Legacy credentials:", legacyStats.credentials);
+  console.log("[stats] Combined escrow USDC:", totalUSDCEscrowed);
 
   let totalAgents = 0;
   try {

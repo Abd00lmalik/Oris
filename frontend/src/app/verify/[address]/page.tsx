@@ -6,9 +6,9 @@ import { ethers } from "ethers";
 import { useEffect, useMemo, useState } from "react";
 import { CredentialCard } from "@/components/credential-card";
 import { UserDisplay } from "@/components/ui/user-display";
-import { CredentialRecord, fetchCredentialsForAgent } from "@/lib/contracts";
+import { CredentialRecord, getReadProvider } from "@/lib/contracts";
 import {
-  calculateWeightedScore,
+  fetchUnifiedScore,
   getNextTier,
   getPointsToNextTier,
   getReputationTier,
@@ -26,6 +26,9 @@ export default function VerifyWalletPage() {
   const params = useParams<{ address: string }>();
   const address = params?.address ?? "";
   const [credentials, setCredentials] = useState<CredentialRecord[]>([]);
+  const [legacyScore, setLegacyScore] = useState(0);
+  const [legacyCredentials, setLegacyCredentials] = useState<CredentialRecord[]>([]);
+  const [score, setScore] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
@@ -36,14 +39,20 @@ export default function VerifyWalletPage() {
     const loadCredentials = async () => {
       if (!address || !ethers.isAddress(address)) {
         setCredentials([]);
+        setLegacyCredentials([]);
+        setLegacyScore(0);
+        setScore(0);
         return;
       }
       setLoading(true);
       setError("");
       try {
-        const result = await fetchCredentialsForAgent(address);
+        const result = await fetchUnifiedScore(getReadProvider(), address);
         if (!active) return;
-        setCredentials(result);
+        setCredentials([...result.v2Credentials, ...result.legacyCredentials]);
+        setLegacyScore(result.legacyScore);
+        setLegacyCredentials(result.legacyCredentials);
+        setScore(result.totalScore);
       } catch (loadError) {
         if (!active) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load credentials.");
@@ -59,7 +68,6 @@ export default function VerifyWalletPage() {
     };
   }, [address]);
 
-  const score = useMemo(() => calculateWeightedScore(credentials), [credentials]);
   const tier = useMemo(() => getReputationTier(score), [score]);
   const nextTier = useMemo(() => getNextTier(score), [score]);
   const pointsToNextTier = useMemo(() => getPointsToNextTier(score), [score]);
@@ -141,6 +149,22 @@ export default function VerifyWalletPage() {
           All credentials below are cryptographically verified on-chain and cannot be altered or deleted.
         </p>
       </div>
+
+      {legacyCredentials.length > 0 ? (
+        <div
+          style={{
+            padding: "8px 12px",
+            border: "1px solid rgba(245,166,35,0.3)",
+            background: "rgba(245,166,35,0.05)",
+            fontSize: 12,
+            fontFamily: "Inter, sans-serif",
+            color: "#7A9BB5",
+            marginBottom: 16
+          }}
+        >
+          Includes {legacyCredentials.length} credential{legacyCredentials.length > 1 ? "s" : ""} from V1 deployment ({legacyScore} pts)
+        </div>
+      ) : null}
 
       <div className="archon-card p-6">
         <div className="grid gap-3 text-sm text-[#9CA3AF] md:grid-cols-2 lg:grid-cols-4">

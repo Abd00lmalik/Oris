@@ -28,6 +28,12 @@ export interface DerivedTaskStatus {
   code: number;
   revealActive: boolean;
   revealEnded: boolean;
+  canSubmit: boolean;
+  canSelectFinalists: boolean;
+  canAutoReveal: boolean;
+  canFinalize: boolean;
+  canInteract: boolean;
+  canClaim: boolean;
 }
 
 type DeploymentContract = {
@@ -589,48 +595,94 @@ export function deriveTaskStatus(
     color,
     code: contractStatus,
     revealActive,
-    revealEnded
+    revealEnded,
+    canSubmit: false,
+    canSelectFinalists: false,
+    canAutoReveal: false,
+    canFinalize: false,
+    canInteract: false,
+    canClaim: false
   };
 }
 
 export function deriveDisplayStatus(
   contractStatus: number,
   deadline: bigint | number,
-  revealPhaseEnd?: bigint | number
-): { label: string; color: string; code: number } {
+  revealPhaseEnd?: bigint | number,
+  viewerAddress?: string,
+  viewerSubmitted?: boolean,
+  isCreator?: boolean
+): DerivedTaskStatus {
+  void viewerAddress;
   const nowSec = Math.floor(Date.now() / 1000);
   const deadlineSec = Number(deadline ?? 0);
   const revealEndSec = Number(revealPhaseEnd ?? 0);
   const deadlinePassed = deadlineSec > 0 && nowSec > deadlineSec;
+  const revealActive = contractStatus === 4 && revealEndSec > 0 && nowSec <= revealEndSec;
+  const revealEnded = contractStatus === 4 && revealEndSec > 0 && nowSec > revealEndSec;
 
-  if ((contractStatus === 0 || contractStatus === 1) && deadlinePassed) {
-    return {
-      label: "Closed",
-      color: "#7A9BB5",
-      code: 99
-    };
-  }
+  let label: string;
+  let color: string;
 
-  if (contractStatus === 1 && !deadlinePassed) {
-    return {
-      label: "Open",
-      color: "#00FFA3",
-      code: 1
-    };
-  }
-
-  if (contractStatus === 4 && revealEndSec > 0 && nowSec > revealEndSec) {
-    return {
-      label: "Reveal Ended",
-      color: "#FF6B35",
-      code: 4
-    };
+  if (contractStatus === 0 || contractStatus === 1) {
+    if (deadlinePassed) {
+      label = "Closed";
+      color = "#7A9BB5";
+    } else {
+      label = "Open";
+      color = "#00FFA3";
+    }
+  } else if (contractStatus === 2 || contractStatus === 3) {
+    if (deadlinePassed) {
+      label = isCreator ? "Awaiting Your Selection" : "Under Review";
+      color = "#F5A623";
+    } else {
+      label = "Open";
+      color = "#00FFA3";
+    }
+  } else if (contractStatus === 4) {
+    if (revealActive) {
+      label = "Reveal Phase";
+      color = "#00E5FF";
+    } else if (revealEnded) {
+      label = isCreator ? "Ready to Finalize" : "Reveal Ended";
+      color = "#FF6B35";
+    } else {
+      label = "Reveal Phase";
+      color = "#00E5FF";
+    }
+  } else if (contractStatus === 5) {
+    label = viewerSubmitted ? "Approved - Claim" : "Completed";
+    color = "#F5A623";
+  } else if (contractStatus === 6) {
+    label = "Rejected";
+    color = "#FF3366";
+  } else {
+    label = "Unknown";
+    color = "#7A9BB5";
   }
 
   return {
-    label: getJobStatusLabel(contractStatus),
-    color: getJobStatusColor(contractStatus),
-    code: contractStatus
+    label,
+    color,
+    code: contractStatus,
+    revealActive,
+    revealEnded,
+    canSubmit:
+      !deadlinePassed &&
+      (contractStatus === 0 || contractStatus === 1 || contractStatus === 2) &&
+      !viewerSubmitted &&
+      !isCreator,
+    canSelectFinalists:
+      isCreator === true &&
+      deadlinePassed &&
+      (contractStatus === 2 || contractStatus === 3),
+    canAutoReveal:
+      deadlinePassed &&
+      (contractStatus === 0 || contractStatus === 1 || contractStatus === 2),
+    canFinalize: isCreator === true && revealEnded,
+    canInteract: revealActive && !isCreator,
+    canClaim: contractStatus === 5 && viewerSubmitted === true
   };
 }
 
@@ -760,8 +812,8 @@ export function isValidSubmission(rawSubmission: unknown): boolean {
   const candidates = [
     submission.agent,
     submission.submitter,
-    tuple[1],
-    tuple[0]
+    tuple[0],
+    tuple[1]
   ]
     .map((value) => toString(value).toLowerCase().trim())
     .filter(Boolean);
@@ -770,7 +822,7 @@ export function isValidSubmission(rawSubmission: unknown): boolean {
     candidates.find((value) => value.startsWith("0x")) ??
     "";
 
-  if (!agent || agent === ZERO_ADDRESS.toLowerCase() || agent.length < 10) {
+  if (!agent || agent === ZERO_ADDRESS.toLowerCase() || agent.replace("0x", "").replace(/0/g, "") === "") {
     console.log("[filter] Skipping zero-address submission");
     return false;
   }

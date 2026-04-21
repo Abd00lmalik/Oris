@@ -12,15 +12,14 @@ import {
   CredentialRecord,
   deriveDisplayStatus,
   fetchAllJobs,
-  fetchCredentialsForAgent,
   formatTaskDescription,
   formatTaskTitle,
   formatUsdc,
   getReadProvider,
   JobRecord
 } from "@/lib/contracts";
-import { fetchLegacyTasks, LegacyTaskRecord } from "@/lib/legacy-contracts";
-import { calculateWeightedScore, getReputationTier } from "@/lib/reputation";
+import { fetchLegacyTaskCount, fetchLegacyTasks, LegacyTaskRecord } from "@/lib/legacy-contracts";
+import { fetchUnifiedScore, getReputationTier } from "@/lib/reputation";
 import { useWallet } from "@/lib/wallet-context";
 
 function formatDeadline(deadline: number) {
@@ -55,7 +54,9 @@ export default function HomePage() {
   const [restoreGraceElapsed, setRestoreGraceElapsed] = useState(false);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [legacyTasks, setLegacyTasks] = useState<LegacyTaskRecord[]>([]);
+  const [legacyOffset, setLegacyOffset] = useState(0);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
+  const [myScore, setMyScore] = useState(0);
   const [selectedFilter, setSelectedFilter] = useState<TaskFilter>("all");
   const [visibleCount, setVisibleCount] = useState(5);
   const [loading, setLoading] = useState(false);
@@ -65,9 +66,10 @@ export default function HomePage() {
     if (!account) return;
     setLoading(true);
     try {
-      const [jobRows, credentials] = await Promise.all([fetchAllJobs(), fetchCredentialsForAgent(account)]);
+      const [jobRows, unified] = await Promise.all([fetchAllJobs(), fetchUnifiedScore(getReadProvider(), account)]);
       setJobs(jobRows);
-      setMyCredentials(credentials);
+      setMyCredentials([...unified.v2Credentials, ...unified.legacyCredentials]);
+      setMyScore(unified.totalScore);
     } finally {
       setLoading(false);
     }
@@ -90,6 +92,11 @@ export default function HomePage() {
       console.log("[legacy] Loaded", tasks.length, "legacy tasks");
       setLegacyTasks(tasks);
     });
+    fetchLegacyTaskCount(getReadProvider()).then((count) => {
+      if (!active) return;
+      console.log("[taskId] Legacy task count:", count);
+      setLegacyOffset(count);
+    });
     return () => {
       active = false;
     };
@@ -100,8 +107,11 @@ export default function HomePage() {
     return unsubscribe;
   }, []);
 
-  const myScore = useMemo(() => calculateWeightedScore(myCredentials), [myCredentials]);
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
+  const getDisplayId = useCallback(
+    (task: DisplayJobRecord) => (task.isLegacy ? task.jobId : task.jobId + legacyOffset) + 1,
+    [legacyOffset]
+  );
   const allTasks = useMemo<DisplayJobRecord[]>(
     () =>
       [
@@ -217,7 +227,7 @@ export default function HomePage() {
                 return (
                   <Link
                     key={`${task.isLegacy ? "v1" : "v2"}-${task.jobId}`}
-                    href={task.isLegacy ? `/verify/${task.client}` : `/job/${task.jobId}`}
+                    href={task.isLegacy ? `/job/${task.jobId}?source=legacy` : `/job/${task.jobId}`}
                     className="card-sharp cursor-pointer overflow-hidden p-0"
                     style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
                   >
@@ -232,7 +242,7 @@ export default function HomePage() {
                             color: "var(--text-muted)",
                           }}
                         >
-                          #{task.jobId}
+                          #{getDisplayId(task)}
                           {task.isLegacy ? (
                             <span
                               style={{
