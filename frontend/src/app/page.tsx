@@ -52,6 +52,7 @@ export default function HomePage() {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [myCredentials, setMyCredentials] = useState<CredentialRecord[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<TaskFilter>("all");
+  const [visibleCount, setVisibleCount] = useState(5);
   const [loading, setLoading] = useState(false);
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
 
@@ -86,7 +87,8 @@ export default function HomePage() {
   const myTier = useMemo(() => getReputationTier(myScore), [myScore]);
 
   const visibleJobs = useMemo(() => {
-    return jobs.filter((job) => {
+    const sorted = [...jobs].sort((a, b) => Number(b.jobId) - Number(a.jobId));
+    return sorted.filter((job) => {
       if (selectedFilter === "all") return true;
       if (selectedFilter === "open") {
         return (job.status === 0 || job.status === 1) && !isDeadlinePassed(job.deadline);
@@ -103,6 +105,7 @@ export default function HomePage() {
       return true;
     });
   }, [jobs, selectedFilter]);
+  const hasMore = visibleJobs.length > visibleCount;
 
   const hasStoredWallet =
     hydrated && typeof window !== "undefined" && Boolean(window.localStorage.getItem("archon_last_wallet"));
@@ -179,118 +182,132 @@ export default function HomePage() {
         ) : visibleJobs.length === 0 ? (
           <div className="panel text-sm text-[var(--text-secondary)]">No tasks match this filter yet.</div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {visibleJobs.slice(0, 20).map((task) => {
-              const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd ?? 0n);
-              return (
-                <Link
-                  key={task.jobId}
-                  href={`/job/${task.jobId}`}
-                  className="card-sharp cursor-pointer overflow-hidden p-0"
-                  style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
-                >
-                  <div className="task-status-accent" style={{ height: 2, background: displayStatus.color }} />
+          <>
+            <div className="grid gap-4 md:grid-cols-2">
+              {visibleJobs.slice(0, visibleCount).map((task) => {
+                const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd ?? 0n);
+                return (
+                  <Link
+                    key={task.jobId}
+                    href={`/job/${task.jobId}`}
+                    className="card-sharp cursor-pointer overflow-hidden p-0"
+                    style={{ transition: "border-color 0.2s, box-shadow 0.2s" }}
+                  >
+                    <div className="task-status-accent" style={{ height: 2, background: displayStatus.color }} />
 
-                  <div style={{ padding: "16px 20px 20px" }}>
-                    <div className="mb-3 flex items-center justify-between">
-                      <span
-                        style={{
-                          fontFamily: "JetBrains Mono, monospace",
-                          fontSize: 11,
-                          color: "var(--text-muted)",
-                        }}
-                      >
-                        #{task.jobId}
-                      </span>
-                      <div className="flex items-center gap-2">
+                    <div style={{ padding: "16px 20px 20px" }}>
+                      <div className="mb-3 flex items-center justify-between">
                         <span
                           style={{
                             fontFamily: "JetBrains Mono, monospace",
                             fontSize: 11,
-                            fontWeight: 700,
-                            color: "var(--gold)",
-                            background: "color-mix(in srgb, var(--gold) 12%, transparent)",
-                            border: "1px solid color-mix(in srgb, var(--gold) 35%, transparent)",
-                            padding: "2px 8px",
+                            color: "var(--text-muted)",
                           }}
                         >
-                          {(Number(formatUsdc(task.rewardUSDC)) || 0).toFixed(1)} USDC
+                          #{task.jobId}
                         </span>
+                        <div className="flex items-center gap-2">
+                          <span
+                            style={{
+                              fontFamily: "JetBrains Mono, monospace",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "var(--gold)",
+                              background: "color-mix(in srgb, var(--gold) 12%, transparent)",
+                              border: "1px solid color-mix(in srgb, var(--gold) 35%, transparent)",
+                              padding: "2px 8px",
+                            }}
+                          >
+                            {(Number(formatUsdc(task.rewardUSDC)) || 0).toFixed(1)} USDC
+                          </span>
+                          <span
+                            style={{
+                              fontFamily: "JetBrains Mono, monospace",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: displayStatus.color,
+                              background: `${displayStatus.color}10`,
+                              border: `1px solid ${displayStatus.color}40`,
+                              padding: "2px 8px",
+                              letterSpacing: "0.05em",
+                            }}
+                          >
+                            {displayStatus.label.toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+
+                      <h3
+                        style={{
+                          fontFamily: "Space Grotesk, sans-serif",
+                          fontWeight: 600,
+                          fontSize: 15,
+                          color: "var(--text-primary)",
+                          lineHeight: 1.3,
+                          marginBottom: 8,
+                          textTransform: "none",
+                        }}
+                      >
+                        {formatTaskTitle(task.title)}
+                      </h3>
+
+                      <p
+                        style={{
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: 13,
+                          color: "var(--text-secondary)",
+                          lineHeight: 1.5,
+                          marginBottom: 16,
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {formatTaskDescription(task.description)}
+                      </p>
+
+                      <div className="flex items-center justify-between pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+                        <div
+                          style={{
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: 10,
+                            color: "var(--text-muted)",
+                          }}
+                          className="flex items-center gap-2"
+                        >
+                          <UserDisplay address={task.client} showAvatar={true} avatarSize={22} className="min-w-0" />
+                          <span>|</span>
+                          <span>{formatDeadline(task.deadline)}</span>
+                        </div>
                         <span
                           style={{
                             fontFamily: "JetBrains Mono, monospace",
                             fontSize: 10,
-                            fontWeight: 700,
-                            color: displayStatus.color,
-                            background: `${displayStatus.color}10`,
-                            border: `1px solid ${displayStatus.color}40`,
-                            padding: "2px 8px",
-                            letterSpacing: "0.05em",
+                            color: "var(--text-muted)",
                           }}
                         >
-                          {displayStatus.label.toUpperCase()}
+                          {task.submissionCount} submission{task.submissionCount !== 1 ? "s" : ""}
                         </span>
                       </div>
                     </div>
-
-                    <h3
-                      style={{
-                        fontFamily: "Space Grotesk, sans-serif",
-                        fontWeight: 600,
-                        fontSize: 15,
-                        color: "var(--text-primary)",
-                        lineHeight: 1.3,
-                        marginBottom: 8,
-                        textTransform: "none",
-                      }}
-                    >
-                      {formatTaskTitle(task.title)}
-                    </h3>
-
-                    <p
-                      style={{
-                        fontFamily: "Inter, sans-serif",
-                        fontSize: 13,
-                        color: "var(--text-secondary)",
-                        lineHeight: 1.5,
-                        marginBottom: 16,
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                        overflow: "hidden",
-                      }}
-                    >
-                      {formatTaskDescription(task.description)}
-                    </p>
-
-                    <div className="flex items-center justify-between pt-3" style={{ borderTop: "1px solid var(--border)" }}>
-                      <div
-                        style={{
-                          fontFamily: "JetBrains Mono, monospace",
-                          fontSize: 10,
-                          color: "var(--text-muted)",
-                        }}
-                        className="flex items-center gap-2"
-                      >
-                        <UserDisplay address={task.client} showAvatar={true} avatarSize={22} className="min-w-0" />
-                        <span>|</span>
-                        <span>{formatDeadline(task.deadline)}</span>
-                      </div>
-                      <span
-                        style={{
-                          fontFamily: "JetBrains Mono, monospace",
-                          fontSize: 10,
-                          color: "var(--text-muted)",
-                        }}
-                      >
-                        {task.submissionCount} submission{task.submissionCount !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
+                  </Link>
+                );
+              })}
+            </div>
+            {hasMore ? (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((previous) => previous + 5)}
+                  className="btn-ghost"
+                  style={{ minWidth: 200 }}
+                >
+                  Show More Tasks ({visibleJobs.length - visibleCount} remaining)
+                </button>
+              </div>
+            ) : null}
+          </>
         )}
       </main>
 

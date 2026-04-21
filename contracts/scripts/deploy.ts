@@ -10,6 +10,7 @@ type ContractConfig = {
 type DeploymentConfig = {
   network: string;
   chainId: number;
+  deployedAt: string;
   rpcUrl: string;
   usdcAddress: string;
   platformTreasury: string;
@@ -224,8 +225,9 @@ async function main() {
   console.log("Revoked owner direct issuance in ValidationRegistry.");
 
   const deploymentConfig: DeploymentConfig = {
-    network: isArcTestnet ? "arc-testnet" : network.name,
+    network: isArcTestnet ? "arc_testnet" : network.name,
     chainId,
+    deployedAt: new Date().toISOString(),
     rpcUrl,
     usdcAddress,
     platformTreasury,
@@ -249,7 +251,7 @@ async function main() {
       },
       usdc: {
         address: usdcAddress,
-        abi: usdcContractName === "MockUSDC" ? await getAbi("MockUSDC") : await getAbi("MockUSDC")
+        abi: usdcContractName === "MockUSDC" ? await getAbi("MockUSDC") : await getAbi("IERC20Minimal")
       },
       jobContract: {
         address: jobAddress,

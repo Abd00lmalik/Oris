@@ -8,6 +8,15 @@ async function main() {
   if (!jobAddress) {
     throw new Error("Missing job contract address in generated contracts.json");
   }
+  const expectedUsdc =
+    c.usdc?.address ??
+    contracts.usdcAddress ??
+    "0x3600000000000000000000000000000000000000";
+  const expectedTreasury =
+    contracts.platform?.treasury ??
+    contracts.platformTreasury ??
+    "0x25265b9dBEb6c653b0CA281110Bb0697a9685107";
+  const expectedFee = String(contracts.platform?.feeBps ?? contracts.platformFeeBps ?? 1000);
 
   const registry = await ethers.getContractAt(
     ["function totalCredentials() view returns (uint256)"],
@@ -50,22 +59,22 @@ async function main() {
       (await sourceReg.owner()) !== ethers.ZeroAddress],
     ["3. Job USDC = Arc USDC", 
       (await job.usdc()).toLowerCase() === 
-      "0x3600000000000000000000000000000000000000"],
+      expectedUsdc.toLowerCase()],
     ["4. Job treasury = Safe", 
       (await job.platformTreasury()).toLowerCase() === 
-      "0x25265b9dBEb6c653b0CA281110Bb0697a9685107".toLowerCase()],
+      expectedTreasury.toLowerCase()],
     ["5. Job fee = 1000bps", 
-      (await job.platformFeeBps()).toString() === "1000"],
+      (await job.platformFeeBps()).toString() === expectedFee],
     ["6. AgentTask USDC = Arc USDC", 
       (await agentTask.usdc()).toLowerCase() === 
-      "0x3600000000000000000000000000000000000000"],
+      expectedUsdc.toLowerCase()],
     ["7. Job registered in hook", 
       await hook.registeredSourceContracts(jobAddress)],
     ["8. AgentTask registered in hook", 
       await hook.registeredSourceContracts(c.agentTaskSource.address)],
     ["9. MilestoneEscrow USDC = Arc USDC",
       (await milestoneEscrow.usdc()).toLowerCase() ===
-      "0x3600000000000000000000000000000000000000"],
+      expectedUsdc.toLowerCase()],
     ["10. Community moderator seeded",
       Number(await communitySource.activeModeratorCount()) >= 1],
   ];

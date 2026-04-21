@@ -124,10 +124,10 @@ describe("MultiSource Integration", function () {
     await job
       .connect(client)
       .createJob("Landing", "Build page", jobDeadline, ethers.parseUnits("300", 6), 3);
-    await job.connect(agent).acceptJob(0);
-    await job.connect(agent).submitDeliverable(0, "https://github.com/org/repo/pull/1");
-    await time.increase(61 * 60);
-    await job.connect(client).approveSubmission(0, agent.address, ethers.parseUnits("100", 6));
+    await job.connect(agent).submitDirect(0, "https://github.com/org/repo/pull/1");
+    await job.connect(client).selectFinalists(0, [agent.address]);
+    await time.increase(5 * 24 * 60 * 60 + 1);
+    await job.connect(client).finalizeWinners(0, [agent.address], [ethers.parseUnits("100", 6)]);
     await job.connect(agent).claimCredential(0);
 
     // Source 2: GitHub

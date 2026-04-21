@@ -51,6 +51,8 @@ export default function CreateJobPage() {
   const [deadlineInput, setDeadlineInput] = useState("");
   const [rewardInput, setRewardInput] = useState("0");
   const [maxApprovalsInput, setMaxApprovalsInput] = useState("5");
+  const [interactionPoolPercent, setInteractionPoolPercent] = useState(0);
+  const [interactionStakeUSDC, setInteractionStakeUSDC] = useState("");
   const [createdJobId, setCreatedJobId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("");
@@ -84,8 +86,28 @@ export default function CreateJobPage() {
       return null;
     }
   }, [rewardInput]);
-  const rewardDisplay = rewardUnits !== null ? formatUsdcTwoDecimals(rewardUnits) : "0.00";
   const walletBalanceDisplay = formatUsdcTwoDecimals(walletUsdcBalance);
+  const interactionPoolBps = Math.max(0, Math.min(3000, Math.round(interactionPoolPercent * 100)));
+  const interactionStakeUnits = useMemo(() => {
+    try {
+      return interactionStakeUSDC.trim() ? parseRewardToUnits(interactionStakeUSDC) : 0n;
+    } catch {
+      return null;
+    }
+  }, [interactionStakeUSDC]);
+  const interactionPoolUnits = useMemo(() => {
+    if (rewardUnits === null) return null;
+    return (rewardUnits * BigInt(interactionPoolBps)) / 10_000n;
+  }, [interactionPoolBps, rewardUnits]);
+  const totalRequiredUnits = useMemo(() => {
+    if (rewardUnits === null) return null;
+    return rewardUnits + (interactionPoolUnits ?? 0n);
+  }, [interactionPoolUnits, rewardUnits]);
+  const totalRequiredDisplay = totalRequiredUnits !== null ? formatUsdcTwoDecimals(totalRequiredUnits) : "0.00";
+  const perInteractionDisplay =
+    interactionPoolUnits && interactionPoolUnits > 0n
+      ? (Number(ethers.formatUnits(interactionPoolUnits, 6)) / 20).toFixed(3)
+      : "0.000";
 
   const minRewardUnits = useMemo(() => parseRewardToUnits(minRewardUsdc), [minRewardUsdc]);
   const minPoolUnits = useMemo(
@@ -94,7 +116,7 @@ export default function CreateJobPage() {
   );
   const minPoolDisplay = useMemo(() => ethers.formatUnits(minPoolUnits, 6), [minPoolUnits]);
   const needsApproval = Boolean(
-    account && rewardUnits !== null && rewardUnits > 0n && currentUsdcAllowance < rewardUnits
+    account && totalRequiredUnits !== null && totalRequiredUnits > 0n && currentUsdcAllowance < totalRequiredUnits
   );
   const postTaskDisabled =
     submitting ||
@@ -109,8 +131,8 @@ export default function CreateJobPage() {
     approvingUsdc ||
     (gateEnabled && !arcGateAllowed) ||
     insufficientUsdcBalance ||
-    rewardUnits === null ||
-    rewardUnits <= 0n;
+    totalRequiredUnits === null ||
+    totalRequiredUnits <= 0n;
 
   useEffect(() => {
     let active = true;
@@ -167,7 +189,7 @@ export default function CreateJobPage() {
     let active = true;
 
     const checkUsdcState = async () => {
-      if (!account || rewardUnits === null) {
+      if (!account || totalRequiredUnits === null) {
         if (!active) return;
         setCheckingUsdcBalance(false);
         setCheckingUsdcAllowance(false);
@@ -185,7 +207,7 @@ export default function CreateJobPage() {
         if (!active) return;
         setWalletUsdcBalance(balance);
         setCurrentUsdcAllowance(allowance);
-        setInsufficientUsdcBalance(balance < rewardUnits);
+        setInsufficientUsdcBalance(balance < totalRequiredUnits);
       } catch {
         if (!active) return;
         setInsufficientUsdcBalance(false);
@@ -201,7 +223,7 @@ export default function CreateJobPage() {
     return () => {
       active = false;
     };
-  }, [account, rewardUnits]);
+  }, [account, totalRequiredUnits]);
 
   useEffect(() => {
     let active = true;
@@ -231,12 +253,14 @@ export default function CreateJobPage() {
         try {
           const rewardUnits = parseRewardToUnits(rewardInput);
           const taskContract = await getJobWriteContract(browserProvider);
-          const gas = (await taskContract.createJob.estimateGas(
+          const gas = (await taskContract["createJob(string,string,uint256,uint256,uint256,uint256,uint256)"].estimateGas(
             trimmedTitle,
             trimmedDescription,
             deadline,
             rewardUnits,
-            maxApprovals
+            maxApprovals,
+            interactionStakeUnits ?? 0n,
+            interactionPoolBps
           )) as bigint;
 
           const feeData = await browserProvider.getFeeData();
@@ -261,7 +285,18 @@ export default function CreateJobPage() {
       active = false;
       clearTimeout(timer);
     };
-  }, [browserProvider, deadline, deadlineInput, maxApprovals, rewardInput, trimmedDescription, trimmedTitle]);
+  }, [
+    browserProvider,
+    deadline,
+    deadlineInput,
+    interactionPoolBps,
+    interactionStakeUnits,
+    maxApprovals,
+    rewardInput,
+    trimmedDescription,
+    trimmedTitle,
+    rewardUnits
+  ]);
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -305,9 +340,19 @@ export default function CreateJobPage() {
       setError(`Reward pool must be at least ${minPoolDisplay} USDC for ${maxApprovals} approvals.`);
       return;
     }
-    if (insufficientUsdcBalance) {
+    if (interactionStakeUnits === null) {
+      setError("Enter a valid interaction stake amount.");
+      return;
+    }
+    if (interactionStakeUnits !== null && interactionStakeUnits > 0n) {
+      if (interactionStakeUnits < 10_000n || interactionStakeUnits > 5_000_000n) {
+        setError("Interaction stake must be between 0.01 and 5 USDC.");
+        return;
+      }
+    }
+    if (insufficientUsdcBalance || totalRequiredUnits === null) {
       setError(
-        `Insufficient USDC balance. You have ${walletBalanceDisplay} USDC, this task requires ${formatUsdcTwoDecimals(rewardUnitsValue)} USDC.`
+        `Insufficient USDC balance. You have ${walletBalanceDisplay} USDC, this task requires ${totalRequiredDisplay} USDC.`
       );
       return;
     }
@@ -333,24 +378,27 @@ export default function CreateJobPage() {
       ]);
       setWalletUsdcBalance(freshBalance);
       setCurrentUsdcAllowance(freshAllowance);
-      if (freshBalance < rewardUnitsValue) {
+      const totalRequired = totalRequiredUnits ?? rewardUnitsValue;
+      if (freshBalance < totalRequired) {
         throw new Error(
-          `Insufficient USDC balance. You have ${formatUsdcTwoDecimals(freshBalance)} USDC, this task requires ${formatUsdcTwoDecimals(rewardUnitsValue)} USDC.`
+          `Insufficient USDC balance. You have ${formatUsdcTwoDecimals(freshBalance)} USDC, this task requires ${formatUsdcTwoDecimals(totalRequired)} USDC.`
         );
       }
-      if (freshAllowance < rewardUnitsValue) {
+      if (freshAllowance < totalRequired) {
         throw new Error("Step 1 required: approve USDC before posting this task.");
       }
 
       const taskContract = await getJobWriteContract(provider);
       const predictedJobId = Number(await taskContract.nextJobId());
 
-      const tx = (await taskContract.createJob(
+      const tx = (await taskContract["createJob(string,string,uint256,uint256,uint256,uint256,uint256)"](
         trimmedTitle,
         trimmedDescription,
         deadline,
         rewardUnitsValue,
-        maxApprovals
+        maxApprovals,
+        interactionStakeUnits ?? 0n,
+        interactionPoolBps
       )) as ethers.TransactionResponse;
       setStatus(`Create transaction submitted: ${tx.hash}`);
       const receipt = await tx.wait();
@@ -381,6 +429,8 @@ export default function CreateJobPage() {
       setDeadlineInput("");
       setRewardInput("0");
       setMaxApprovalsInput("5");
+      setInteractionPoolPercent(0);
+      setInteractionStakeUSDC("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task.");
     } finally {
@@ -391,13 +441,13 @@ export default function CreateJobPage() {
   const handleApproveUsdc = async () => {
     setError("");
     setStatus("");
-    if (rewardUnits === null || rewardUnits <= 0n) {
+    if (totalRequiredUnits === null || totalRequiredUnits <= 0n) {
       setError("Enter a valid USDC reward amount first.");
       return;
     }
     if (insufficientUsdcBalance) {
       setError(
-        `Insufficient USDC balance. You have ${walletBalanceDisplay} USDC, this task requires ${rewardDisplay} USDC.`
+        `Insufficient USDC balance. You have ${walletBalanceDisplay} USDC, this task requires ${totalRequiredDisplay} USDC.`
       );
       return;
     }
@@ -411,7 +461,7 @@ export default function CreateJobPage() {
         throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
       }
 
-      const tx = await txApproveUsdc(provider, contractAddresses.job, rewardUnits);
+      const tx = await txApproveUsdc(provider, contractAddresses.job, totalRequiredUnits);
       setStatus(`USDC approve transaction submitted: ${tx.hash}`);
       await tx.wait();
 
@@ -424,7 +474,7 @@ export default function CreateJobPage() {
         ]);
         setWalletUsdcBalance(balance);
         setCurrentUsdcAllowance(allowance);
-        setInsufficientUsdcBalance(balance < rewardUnits);
+        setInsufficientUsdcBalance(balance < totalRequiredUnits);
       } catch {
         // Fails silently by design.
       }
@@ -530,9 +580,9 @@ export default function CreateJobPage() {
             {checkingUsdcBalance && account ? (
               <p className="mt-1 text-xs text-[#9CA3AF]">Checking balance...</p>
             ) : null}
-            {account && insufficientUsdcBalance && rewardUnits !== null ? (
+            {account && insufficientUsdcBalance && totalRequiredUnits !== null ? (
               <p className="mt-1 text-xs text-rose-300">
-                Insufficient USDC balance. You have {walletBalanceDisplay} USDC, this task requires {rewardDisplay} USDC.
+                Insufficient USDC balance. You have {walletBalanceDisplay} USDC, this task requires {totalRequiredDisplay} USDC.
               </p>
             ) : null}
           </label>
@@ -560,6 +610,66 @@ export default function CreateJobPage() {
             </p>
           </div>
 
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-4">
+            <div className="section-header mb-3">INTERACTION ECONOMY (OPTIONAL)</div>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Reserve part of the reward pool for reveal-phase critiques and build-ons. This lets agents earn
+              micro-payments for useful interaction instead of only final winner payouts.
+            </p>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-[var(--text-primary)]">Interaction Pool (%)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={30}
+                  step={1}
+                  className="archon-input"
+                  placeholder="0"
+                  value={interactionPoolPercent}
+                  onChange={(event) =>
+                    setInteractionPoolPercent(Math.max(0, Math.min(30, Number(event.target.value || 0))))
+                  }
+                />
+                <p className="mt-1 text-[10px] text-[var(--text-muted)]">Max 30% of reward pool reserved for interactions.</p>
+              </label>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-[var(--text-primary)]">
+                  Stake Per Interaction (USDC)
+                </span>
+                <input
+                  type="number"
+                  min="0.01"
+                  max="5"
+                  step="0.01"
+                  className="archon-input"
+                  placeholder="2.00"
+                  value={interactionStakeUSDC}
+                  onChange={(event) => setInteractionStakeUSDC(event.target.value)}
+                />
+                <p className="mt-1 text-[10px] text-[var(--text-muted)]">
+                  Leave blank to use the default 2 USDC reveal-phase stake.
+                </p>
+              </label>
+            </div>
+
+            {interactionPoolPercent > 0 && interactionPoolUnits !== null ? (
+              <div
+                className="mt-4 rounded-xl border px-3 py-3 text-xs"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--arc) 35%, transparent)",
+                  background: "color-mix(in srgb, var(--arc) 8%, transparent)",
+                  color: "var(--arc)"
+                }}
+              >
+                Pool: {formatUsdcTwoDecimals(interactionPoolUnits)} USDC · Per interaction: ~{perInteractionDisplay} USDC ·
+                Total deposit: {totalRequiredDisplay} USDC
+              </div>
+            ) : null}
+          </div>
+
           {gateEnabled && !arcGateAllowed ? (
             <div className="rounded-xl border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
               You need at least {ARC_TOKEN_CONFIG.minBalanceToPost} {ARC_TOKEN_CONFIG.symbol} to post a task. Your
@@ -581,11 +691,11 @@ export default function CreateJobPage() {
             )}
           </div>
 
-          {account && rewardUnits !== null && rewardUnits > 0n && needsApproval ? (
+          {account && totalRequiredUnits !== null && totalRequiredUnits > 0n && needsApproval ? (
             <div className="space-y-2 rounded-xl border border-white/10 bg-[#111214] px-3 py-3">
               <p className="text-xs font-semibold text-[#EAEAF0]">Step 1 of 2: Approve USDC</p>
               <p className="text-xs text-[#9CA3AF]">
-                Before creating this task, you need to approve {rewardDisplay} USDC for the contract to hold in escrow.
+                Before creating this task, you need to approve {totalRequiredDisplay} USDC for the contract to hold in escrow.
               </p>
               <button
                 type="button"
@@ -593,13 +703,13 @@ export default function CreateJobPage() {
                 disabled={approveUsdcDisabled}
                 className="archon-button-primary w-full px-4 py-2.5 text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {approvingUsdc ? "Approving..." : `Approve ${rewardDisplay} USDC`}
+                {approvingUsdc ? "Approving..." : `Approve ${totalRequiredDisplay} USDC`}
               </button>
               <p className="text-xs text-[#6B7280]">Step 2: Create Task (unlocks after approval)</p>
             </div>
           ) : null}
 
-          {account && rewardUnits !== null && rewardUnits > 0n && !needsApproval ? (
+          {account && totalRequiredUnits !== null && totalRequiredUnits > 0n && !needsApproval ? (
             <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
               USDC Approved
             </div>

@@ -126,7 +126,7 @@ const USER_GUIDES: Guide[] = [
       "Step 2 of 2: post the task transaction after approval confirms.",
       "Task appears on home feed and can be shared via /job/[jobId].",
       "Review submissions as creator: wallet, URL, timestamp, status, suspicion signal.",
-      "Set custom reward per submission and approve using approveSubmission(jobId, agent, rewardAmount).",
+      "Select finalists, run the reveal phase, then finalize winners with custom USDC reward amounts.",
       "When max approvals are used, task closes for new approvals; remaining refundable balance can be reclaimed after expiry if eligible."
     ]
   },

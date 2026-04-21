@@ -1,6 +1,7 @@
 {
-  "network": "arc-testnet",
+  "network": "arc_testnet",
   "chainId": 5042002,
+  "deployedAt": "2026-04-21T06:04:10.773Z",
   "rpcUrl": "https://rpc.testnet.arc.network",
   "usdcAddress": "0x3600000000000000000000000000000000000000",
   "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
@@ -11,7 +12,7 @@
   },
   "contracts": {
     "sourceRegistry": {
-      "address": "0x942c5B8F8e343C0F475c713C235d5D9963e3308F",
+      "address": "0xB079917189AdC25904AA6438252C4253B239598a",
       "abi": [
         {
           "inputs": [],
@@ -336,7 +337,7 @@
       ]
     },
     "validationRegistry": {
-      "address": "0xe428fdC8Dfe51a0689f6bC4D68E3b6d024548a8C",
+      "address": "0xaA11b92a4E7628D9CFB06C6eF3b6FC27A76D1BdA",
       "abi": [
         {
           "inputs": [],
@@ -410,6 +411,54 @@
           ],
           "name": "IssuerAuthorizationUpdated",
           "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "wallet",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "int256",
+              "name": "delta",
+              "type": "int256"
+            },
+            {
+              "indexed": false,
+              "internalType": "string",
+              "name": "reason",
+              "type": "string"
+            }
+          ],
+          "name": "RelationshipReputationApplied",
+          "type": "event"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "wallet",
+              "type": "address"
+            },
+            {
+              "internalType": "int256",
+              "name": "delta",
+              "type": "int256"
+            },
+            {
+              "internalType": "string",
+              "name": "reason",
+              "type": "string"
+            }
+          ],
+          "name": "applyRelationshipReputation",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
         },
         {
           "inputs": [
@@ -715,6 +764,25 @@
           "type": "function"
         },
         {
+          "inputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "relationshipReputation",
+          "outputs": [
+            {
+              "internalType": "int256",
+              "name": "",
+              "type": "int256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
           "inputs": [],
           "name": "totalCredentials",
           "outputs": [
@@ -730,7 +798,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0x0939493F3ba9B96c381110c29fCe85788B8da28a",
+      "address": "0x3b06c52AE114228e216F92758E2496ba82D0b9cb",
       "abi": [
         {
           "inputs": [
@@ -982,65 +1050,15 @@
       "address": "0x3600000000000000000000000000000000000000",
       "abi": [
         {
-          "anonymous": false,
           "inputs": [
             {
-              "indexed": true,
               "internalType": "address",
               "name": "owner",
               "type": "address"
             },
             {
-              "indexed": true,
               "internalType": "address",
               "name": "spender",
-              "type": "address"
-            },
-            {
-              "indexed": false,
-              "internalType": "uint256",
-              "name": "value",
-              "type": "uint256"
-            }
-          ],
-          "name": "Approval",
-          "type": "event"
-        },
-        {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "address",
-              "name": "from",
-              "type": "address"
-            },
-            {
-              "indexed": true,
-              "internalType": "address",
-              "name": "to",
-              "type": "address"
-            },
-            {
-              "indexed": false,
-              "internalType": "uint256",
-              "name": "value",
-              "type": "uint256"
-            }
-          ],
-          "name": "Transfer",
-          "type": "event"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            },
-            {
-              "internalType": "address",
-              "name": "",
               "type": "address"
             }
           ],
@@ -1059,105 +1077,11 @@
           "inputs": [
             {
               "internalType": "address",
-              "name": "spender",
-              "type": "address"
-            },
-            {
-              "internalType": "uint256",
-              "name": "amount",
-              "type": "uint256"
-            }
-          ],
-          "name": "approve",
-          "outputs": [
-            {
-              "internalType": "bool",
-              "name": "",
-              "type": "bool"
-            }
-          ],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
+              "name": "account",
               "type": "address"
             }
           ],
           "name": "balanceOf",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "decimals",
-          "outputs": [
-            {
-              "internalType": "uint8",
-              "name": "",
-              "type": "uint8"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "to",
-              "type": "address"
-            },
-            {
-              "internalType": "uint256",
-              "name": "amount",
-              "type": "uint256"
-            }
-          ],
-          "name": "mint",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "name",
-          "outputs": [
-            {
-              "internalType": "string",
-              "name": "",
-              "type": "string"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "symbol",
-          "outputs": [
-            {
-              "internalType": "string",
-              "name": "",
-              "type": "string"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "totalSupply",
           "outputs": [
             {
               "internalType": "uint256",
@@ -1224,7 +1148,7 @@
       ]
     },
     "jobContract": {
-      "address": "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16",
+      "address": "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363",
       "abi": [
         {
           "inputs": [
@@ -1256,6 +1180,31 @@
           ],
           "stateMutability": "nonpayable",
           "type": "constructor"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "finalistCount",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "revealEndsAt",
+              "type": "uint256"
+            }
+          ],
+          "name": "AutoRevealStarted",
+          "type": "event"
         },
         {
           "anonymous": false,
@@ -1311,6 +1260,56 @@
             }
           ],
           "name": "DeliverableSubmitted",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "address[]",
+              "name": "agents",
+              "type": "address[]"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "revealEndsAt",
+              "type": "uint256"
+            }
+          ],
+          "name": "FinalistsSelected",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "InteractionRewardClaimed",
           "type": "event"
         },
         {
@@ -1383,12 +1382,6 @@
               "internalType": "uint256",
               "name": "minJobStake",
               "type": "uint256"
-            },
-            {
-              "indexed": false,
-              "internalType": "bool",
-              "name": "requireCredentialToPost",
-              "type": "bool"
             }
           ],
           "name": "JobPostingRulesUpdated",
@@ -1500,6 +1493,56 @@
             {
               "indexed": true,
               "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "StakeReturned",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "StakeSlashed",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             },
@@ -1549,12 +1592,68 @@
           "inputs": [
             {
               "indexed": true,
+              "internalType": "uint256",
+              "name": "taskId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            }
+          ],
+          "name": "SubmissionResponseAdded",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
               "internalType": "address",
               "name": "validationRegistry",
               "type": "address"
             }
           ],
           "name": "ValidationRegistryUpdated",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "address[]",
+              "name": "winners",
+              "type": "address[]"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256[]",
+              "name": "rewardAmounts",
+              "type": "uint256[]"
+            }
+          ],
+          "name": "WinnersFinalized",
           "type": "event"
         },
         {
@@ -1573,6 +1672,58 @@
         {
           "inputs": [],
           "name": "CREDENTIAL_COOLDOWN",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "DEFAULT_INTERACTION_STAKE",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "MAX_INTERACTION_POOL_RATIO",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "MAX_INTERACTION_STAKE",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "MIN_INTERACTION_STAKE",
           "outputs": [
             {
               "internalType": "uint256",
@@ -1610,50 +1761,21 @@
           "type": "function"
         },
         {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "jobId",
-              "type": "uint256"
-            }
-          ],
-          "name": "acceptJob",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "jobId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
-            },
-            {
-              "internalType": "uint256",
-              "name": "rewardAmount",
-              "type": "uint256"
-            }
-          ],
-          "name": "approveSubmission",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
+          "inputs": [],
+          "name": "RESPONSE_STAKE",
+          "outputs": [
             {
               "internalType": "uint256",
               "name": "",
               "type": "uint256"
             }
           ],
-          "name": "approvedAgentCount",
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "REVEAL_DURATION",
           "outputs": [
             {
               "internalType": "uint256",
@@ -1672,11 +1794,142 @@
               "type": "uint256"
             }
           ],
+          "name": "acceptJob",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "autoStartReveal",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "buildOnParent",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "buildOnParentByResponder",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
           "name": "claimCredential",
           "outputs": [
             {
               "internalType": "uint256",
               "name": "credentialRecordId",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            }
+          ],
+          "name": "claimInteractionReward",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "description",
+              "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "rewardUSDC",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxApprovals",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionStakeOverride",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionPoolPercent",
+              "type": "uint256"
+            }
+          ],
+          "name": "createJob",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "createdJobId",
               "type": "uint256"
             }
           ],
@@ -1741,6 +1994,29 @@
               "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
+            },
+            {
+              "internalType": "address[]",
+              "name": "winners",
+              "type": "address[]"
+            },
+            {
+              "internalType": "uint256[]",
+              "name": "rewardAmounts",
+              "type": "uint256[]"
+            }
+          ],
+          "name": "finalizeWinners",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
             }
           ],
           "name": "getAcceptedAgents",
@@ -1755,80 +2031,19 @@
           "type": "function"
         },
         {
-          "inputs": [],
-          "name": "getAllJobs",
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getInteractionPoolRemaining",
           "outputs": [
             {
-              "components": [
-                {
-                  "internalType": "uint256",
-                  "name": "jobId",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "address",
-                  "name": "client",
-                  "type": "address"
-                },
-                {
-                  "internalType": "string",
-                  "name": "title",
-                  "type": "string"
-                },
-                {
-                  "internalType": "string",
-                  "name": "description",
-                  "type": "string"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "deadline",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "rewardUSDC",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "createdAt",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "acceptedCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "submissionCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "approvedCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "claimedCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "paidOutUSDC",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "bool",
-                  "name": "refunded",
-                  "type": "bool"
-                }
-              ],
-              "internalType": "struct ERC8183Job.Job[]",
-              "name": "allJobs",
-              "type": "tuple[]"
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
             }
           ],
           "stateMutability": "view",
@@ -1878,6 +2093,11 @@
                 },
                 {
                   "internalType": "uint256",
+                  "name": "maxApprovals",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
                   "name": "createdAt",
                   "type": "uint256"
                 },
@@ -1910,6 +2130,11 @@
                   "internalType": "bool",
                   "name": "refunded",
                   "type": "bool"
+                },
+                {
+                  "internalType": "enum ERC8183Job.JobStatus",
+                  "name": "status",
+                  "type": "uint8"
                 }
               ],
               "internalType": "struct ERC8183Job.Job",
@@ -1923,36 +2148,74 @@
         {
           "inputs": [
             {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
             }
           ],
-          "name": "getJobsByAgent",
+          "name": "getResponse",
           "outputs": [
             {
-              "internalType": "uint256[]",
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "responseId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "parentSubmissionId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "taskId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "responder",
+                  "type": "address"
+                },
+                {
+                  "internalType": "enum ERC8183Job.ResponseType",
+                  "name": "responseType",
+                  "type": "uint8"
+                },
+                {
+                  "internalType": "string",
+                  "name": "contentURI",
+                  "type": "string"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "stakedAmount",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "createdAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "stakeSlashed",
+                  "type": "bool"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "stakeReturned",
+                  "type": "bool"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "interactionRewardClaimed",
+                  "type": "bool"
+                }
+              ],
+              "internalType": "struct ERC8183Job.SubmissionResponse",
               "name": "",
-              "type": "uint256[]"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "client",
-              "type": "address"
-            }
-          ],
-          "name": "getJobsByClient",
-          "outputs": [
-            {
-              "internalType": "uint256[]",
-              "name": "",
-              "type": "uint256[]"
+              "type": "tuple"
             }
           ],
           "stateMutability": "view",
@@ -1966,12 +2229,31 @@
               "type": "uint256"
             }
           ],
-          "name": "getRewardPerApproval",
+          "name": "getRevealPhaseEnd",
           "outputs": [
             {
               "internalType": "uint256",
               "name": "",
               "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getSelectedFinalists",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "",
+              "type": "address[]"
             }
           ],
           "stateMutability": "view",
@@ -1995,6 +2277,11 @@
             {
               "components": [
                 {
+                  "internalType": "uint256",
+                  "name": "submissionId",
+                  "type": "uint256"
+                },
+                {
                   "internalType": "address",
                   "name": "agent",
                   "type": "address"
@@ -2028,11 +2315,40 @@
                   "internalType": "uint256",
                   "name": "allocatedReward",
                   "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "buildOnBonus",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "isBuildOnWinner",
+                  "type": "bool"
                 }
               ],
               "internalType": "struct ERC8183Job.Submission",
               "name": "",
               "type": "tuple"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "submissionId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getSubmissionResponses",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
             }
           ],
           "stateMutability": "view",
@@ -2051,6 +2367,11 @@
             {
               "components": [
                 {
+                  "internalType": "uint256",
+                  "name": "submissionId",
+                  "type": "uint256"
+                },
+                {
                   "internalType": "address",
                   "name": "agent",
                   "type": "address"
@@ -2084,6 +2405,16 @@
                   "internalType": "uint256",
                   "name": "allocatedReward",
                   "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "buildOnBonus",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "isBuildOnWinner",
+                  "type": "bool"
                 }
               ],
               "internalType": "struct ERC8183Job.SubmissionView[]",
@@ -2097,27 +2428,39 @@
         {
           "inputs": [
             {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
-            },
-            {
               "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             }
           ],
-          "name": "getSuspicionScore",
+          "name": "getTaskEconomy",
           "outputs": [
             {
-              "internalType": "uint256",
-              "name": "score",
-              "type": "uint256"
-            },
-            {
-              "internalType": "string",
-              "name": "reason",
-              "type": "string"
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "interactionStake",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "interactionReward",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "interactionPool",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "interactionPoolFunded",
+                  "type": "bool"
+                }
+              ],
+              "internalType": "struct ERC8183Job.TaskEconomyConfig",
+              "name": "",
+              "type": "tuple"
             }
           ],
           "stateMutability": "view",
@@ -2137,6 +2480,30 @@
           "type": "function"
         },
         {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "hasResponded",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
           "inputs": [],
           "name": "hook",
           "outputs": [
@@ -2144,6 +2511,25 @@
               "internalType": "address",
               "name": "",
               "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "interactionPoolUsed",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
             }
           ],
           "stateMutability": "view",
@@ -2177,54 +2563,40 @@
           "inputs": [
             {
               "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "isFinalist",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             }
           ],
-          "name": "jobEscrow",
+          "name": "isInRevealPhase",
           "outputs": [
             {
-              "internalType": "uint256",
+              "internalType": "bool",
               "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "name": "jobsCompletedByWallet",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "name": "jobsCreatedByWallet",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
+              "type": "bool"
             }
           ],
           "stateMutability": "view",
@@ -2239,25 +2611,6 @@
             }
           ],
           "name": "lastCredentialClaim",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "maxApprovalsForJob",
           "outputs": [
             {
               "internalType": "uint256",
@@ -2284,6 +2637,32 @@
         {
           "inputs": [],
           "name": "nextJobId",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "nextResponseId",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "nextSubmissionId",
           "outputs": [
             {
               "internalType": "uint256",
@@ -2337,13 +2716,149 @@
           "inputs": [
             {
               "internalType": "uint256",
-              "name": "jobId",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            },
+            {
+              "internalType": "string",
+              "name": "contentURI",
+              "type": "string"
+            }
+          ],
+          "name": "respondToSubmission",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
               "type": "uint256"
             }
           ],
-          "name": "refundExpiredJob",
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "responses",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "taskId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            },
+            {
+              "internalType": "string",
+              "name": "contentURI",
+              "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "stakedAmount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "createdAt",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "stakeSlashed",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "stakeReturned",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "interactionRewardClaimed",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            }
+          ],
+          "name": "returnResponseStake",
           "outputs": [],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "revealPhaseEnd",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "revealPhaseStart",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -2354,29 +2869,35 @@
               "type": "uint256"
             },
             {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
-            },
-            {
-              "internalType": "string",
-              "name": "reviewerNote",
-              "type": "string"
+              "internalType": "address[]",
+              "name": "agents",
+              "type": "address[]"
             }
           ],
-          "name": "rejectSubmission",
+          "name": "selectFinalists",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
         },
         {
-          "inputs": [],
-          "name": "requireCredentialToPost",
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "selectedFinalists",
           "outputs": [
             {
-              "internalType": "bool",
+              "internalType": "address",
               "name": "",
-              "type": "bool"
+              "type": "address"
             }
           ],
           "stateMutability": "view",
@@ -2416,12 +2937,12 @@
         {
           "inputs": [
             {
-              "internalType": "bool",
-              "name": "required",
-              "type": "bool"
+              "internalType": "address",
+              "name": "validationRegistryAddress",
+              "type": "address"
             }
           ],
-          "name": "setRequireCredentialToPost",
+          "name": "setValidationRegistry",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -2429,12 +2950,12 @@
         {
           "inputs": [
             {
-              "internalType": "address",
-              "name": "validationRegistryAddress",
-              "type": "address"
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
             }
           ],
-          "name": "setValidationRegistry",
+          "name": "slashResponseStake",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -2482,6 +3003,87 @@
           "inputs": [
             {
               "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionIdToAgent",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionIdToTaskId",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionResponseCount",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionResponses",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             },
@@ -2494,6 +3096,82 @@
           "name": "submitDeliverable",
           "outputs": [],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "deliverableLink",
+              "type": "string"
+            }
+          ],
+          "name": "submitDirect",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submittedAgents",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "taskEconomy",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "interactionStake",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionReward",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionPool",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "interactionPoolFunded",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -2538,7 +3216,7 @@
       ]
     },
     "job": {
-      "address": "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16",
+      "address": "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363",
       "abi": [
         {
           "inputs": [
@@ -2570,6 +3248,31 @@
           ],
           "stateMutability": "nonpayable",
           "type": "constructor"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "finalistCount",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "revealEndsAt",
+              "type": "uint256"
+            }
+          ],
+          "name": "AutoRevealStarted",
+          "type": "event"
         },
         {
           "anonymous": false,
@@ -2625,6 +3328,56 @@
             }
           ],
           "name": "DeliverableSubmitted",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "address[]",
+              "name": "agents",
+              "type": "address[]"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "revealEndsAt",
+              "type": "uint256"
+            }
+          ],
+          "name": "FinalistsSelected",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "InteractionRewardClaimed",
           "type": "event"
         },
         {
@@ -2697,12 +3450,6 @@
               "internalType": "uint256",
               "name": "minJobStake",
               "type": "uint256"
-            },
-            {
-              "indexed": false,
-              "internalType": "bool",
-              "name": "requireCredentialToPost",
-              "type": "bool"
             }
           ],
           "name": "JobPostingRulesUpdated",
@@ -2814,6 +3561,56 @@
             {
               "indexed": true,
               "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "StakeReturned",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            }
+          ],
+          "name": "StakeSlashed",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             },
@@ -2863,12 +3660,68 @@
           "inputs": [
             {
               "indexed": true,
+              "internalType": "uint256",
+              "name": "taskId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            }
+          ],
+          "name": "SubmissionResponseAdded",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
               "internalType": "address",
               "name": "validationRegistry",
               "type": "address"
             }
           ],
           "name": "ValidationRegistryUpdated",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "address[]",
+              "name": "winners",
+              "type": "address[]"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256[]",
+              "name": "rewardAmounts",
+              "type": "uint256[]"
+            }
+          ],
+          "name": "WinnersFinalized",
           "type": "event"
         },
         {
@@ -2887,6 +3740,58 @@
         {
           "inputs": [],
           "name": "CREDENTIAL_COOLDOWN",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "DEFAULT_INTERACTION_STAKE",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "MAX_INTERACTION_POOL_RATIO",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "MAX_INTERACTION_STAKE",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "MIN_INTERACTION_STAKE",
           "outputs": [
             {
               "internalType": "uint256",
@@ -2924,50 +3829,21 @@
           "type": "function"
         },
         {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "jobId",
-              "type": "uint256"
-            }
-          ],
-          "name": "acceptJob",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "jobId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
-            },
-            {
-              "internalType": "uint256",
-              "name": "rewardAmount",
-              "type": "uint256"
-            }
-          ],
-          "name": "approveSubmission",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
+          "inputs": [],
+          "name": "RESPONSE_STAKE",
+          "outputs": [
             {
               "internalType": "uint256",
               "name": "",
               "type": "uint256"
             }
           ],
-          "name": "approvedAgentCount",
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "REVEAL_DURATION",
           "outputs": [
             {
               "internalType": "uint256",
@@ -2986,11 +3862,142 @@
               "type": "uint256"
             }
           ],
+          "name": "acceptJob",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "autoStartReveal",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "buildOnParent",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "buildOnParentByResponder",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
           "name": "claimCredential",
           "outputs": [
             {
               "internalType": "uint256",
               "name": "credentialRecordId",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            }
+          ],
+          "name": "claimInteractionReward",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "string",
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "description",
+              "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "deadline",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "rewardUSDC",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxApprovals",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionStakeOverride",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionPoolPercent",
+              "type": "uint256"
+            }
+          ],
+          "name": "createJob",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "createdJobId",
               "type": "uint256"
             }
           ],
@@ -3055,6 +4062,29 @@
               "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
+            },
+            {
+              "internalType": "address[]",
+              "name": "winners",
+              "type": "address[]"
+            },
+            {
+              "internalType": "uint256[]",
+              "name": "rewardAmounts",
+              "type": "uint256[]"
+            }
+          ],
+          "name": "finalizeWinners",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
             }
           ],
           "name": "getAcceptedAgents",
@@ -3069,80 +4099,19 @@
           "type": "function"
         },
         {
-          "inputs": [],
-          "name": "getAllJobs",
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getInteractionPoolRemaining",
           "outputs": [
             {
-              "components": [
-                {
-                  "internalType": "uint256",
-                  "name": "jobId",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "address",
-                  "name": "client",
-                  "type": "address"
-                },
-                {
-                  "internalType": "string",
-                  "name": "title",
-                  "type": "string"
-                },
-                {
-                  "internalType": "string",
-                  "name": "description",
-                  "type": "string"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "deadline",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "rewardUSDC",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "createdAt",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "acceptedCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "submissionCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "approvedCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "claimedCount",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "paidOutUSDC",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "bool",
-                  "name": "refunded",
-                  "type": "bool"
-                }
-              ],
-              "internalType": "struct ERC8183Job.Job[]",
-              "name": "allJobs",
-              "type": "tuple[]"
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
             }
           ],
           "stateMutability": "view",
@@ -3192,6 +4161,11 @@
                 },
                 {
                   "internalType": "uint256",
+                  "name": "maxApprovals",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
                   "name": "createdAt",
                   "type": "uint256"
                 },
@@ -3224,6 +4198,11 @@
                   "internalType": "bool",
                   "name": "refunded",
                   "type": "bool"
+                },
+                {
+                  "internalType": "enum ERC8183Job.JobStatus",
+                  "name": "status",
+                  "type": "uint8"
                 }
               ],
               "internalType": "struct ERC8183Job.Job",
@@ -3237,36 +4216,74 @@
         {
           "inputs": [
             {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
             }
           ],
-          "name": "getJobsByAgent",
+          "name": "getResponse",
           "outputs": [
             {
-              "internalType": "uint256[]",
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "responseId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "parentSubmissionId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "taskId",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "responder",
+                  "type": "address"
+                },
+                {
+                  "internalType": "enum ERC8183Job.ResponseType",
+                  "name": "responseType",
+                  "type": "uint8"
+                },
+                {
+                  "internalType": "string",
+                  "name": "contentURI",
+                  "type": "string"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "stakedAmount",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "createdAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "stakeSlashed",
+                  "type": "bool"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "stakeReturned",
+                  "type": "bool"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "interactionRewardClaimed",
+                  "type": "bool"
+                }
+              ],
+              "internalType": "struct ERC8183Job.SubmissionResponse",
               "name": "",
-              "type": "uint256[]"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "client",
-              "type": "address"
-            }
-          ],
-          "name": "getJobsByClient",
-          "outputs": [
-            {
-              "internalType": "uint256[]",
-              "name": "",
-              "type": "uint256[]"
+              "type": "tuple"
             }
           ],
           "stateMutability": "view",
@@ -3280,12 +4297,31 @@
               "type": "uint256"
             }
           ],
-          "name": "getRewardPerApproval",
+          "name": "getRevealPhaseEnd",
           "outputs": [
             {
               "internalType": "uint256",
               "name": "",
               "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getSelectedFinalists",
+          "outputs": [
+            {
+              "internalType": "address[]",
+              "name": "",
+              "type": "address[]"
             }
           ],
           "stateMutability": "view",
@@ -3309,6 +4345,11 @@
             {
               "components": [
                 {
+                  "internalType": "uint256",
+                  "name": "submissionId",
+                  "type": "uint256"
+                },
+                {
                   "internalType": "address",
                   "name": "agent",
                   "type": "address"
@@ -3342,11 +4383,40 @@
                   "internalType": "uint256",
                   "name": "allocatedReward",
                   "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "buildOnBonus",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "isBuildOnWinner",
+                  "type": "bool"
                 }
               ],
               "internalType": "struct ERC8183Job.Submission",
               "name": "",
               "type": "tuple"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "submissionId",
+              "type": "uint256"
+            }
+          ],
+          "name": "getSubmissionResponses",
+          "outputs": [
+            {
+              "internalType": "uint256[]",
+              "name": "",
+              "type": "uint256[]"
             }
           ],
           "stateMutability": "view",
@@ -3365,6 +4435,11 @@
             {
               "components": [
                 {
+                  "internalType": "uint256",
+                  "name": "submissionId",
+                  "type": "uint256"
+                },
+                {
                   "internalType": "address",
                   "name": "agent",
                   "type": "address"
@@ -3398,6 +4473,16 @@
                   "internalType": "uint256",
                   "name": "allocatedReward",
                   "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "buildOnBonus",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "isBuildOnWinner",
+                  "type": "bool"
                 }
               ],
               "internalType": "struct ERC8183Job.SubmissionView[]",
@@ -3411,27 +4496,39 @@
         {
           "inputs": [
             {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
-            },
-            {
               "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             }
           ],
-          "name": "getSuspicionScore",
+          "name": "getTaskEconomy",
           "outputs": [
             {
-              "internalType": "uint256",
-              "name": "score",
-              "type": "uint256"
-            },
-            {
-              "internalType": "string",
-              "name": "reason",
-              "type": "string"
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "interactionStake",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "interactionReward",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "interactionPool",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bool",
+                  "name": "interactionPoolFunded",
+                  "type": "bool"
+                }
+              ],
+              "internalType": "struct ERC8183Job.TaskEconomyConfig",
+              "name": "",
+              "type": "tuple"
             }
           ],
           "stateMutability": "view",
@@ -3451,6 +4548,30 @@
           "type": "function"
         },
         {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "hasResponded",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
           "inputs": [],
           "name": "hook",
           "outputs": [
@@ -3458,6 +4579,25 @@
               "internalType": "address",
               "name": "",
               "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "interactionPoolUsed",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
             }
           ],
           "stateMutability": "view",
@@ -3491,54 +4631,40 @@
           "inputs": [
             {
               "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "name": "isFinalist",
+          "outputs": [
+            {
+              "internalType": "bool",
+              "name": "",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             }
           ],
-          "name": "jobEscrow",
+          "name": "isInRevealPhase",
           "outputs": [
             {
-              "internalType": "uint256",
+              "internalType": "bool",
               "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "name": "jobsCompletedByWallet",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "name": "jobsCreatedByWallet",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
+              "type": "bool"
             }
           ],
           "stateMutability": "view",
@@ -3553,25 +4679,6 @@
             }
           ],
           "name": "lastCredentialClaim",
-          "outputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "maxApprovalsForJob",
           "outputs": [
             {
               "internalType": "uint256",
@@ -3598,6 +4705,32 @@
         {
           "inputs": [],
           "name": "nextJobId",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "nextResponseId",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [],
+          "name": "nextSubmissionId",
           "outputs": [
             {
               "internalType": "uint256",
@@ -3651,13 +4784,149 @@
           "inputs": [
             {
               "internalType": "uint256",
-              "name": "jobId",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            },
+            {
+              "internalType": "string",
+              "name": "contentURI",
+              "type": "string"
+            }
+          ],
+          "name": "respondToSubmission",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
               "type": "uint256"
             }
           ],
-          "name": "refundExpiredJob",
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "responses",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "taskId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "responder",
+              "type": "address"
+            },
+            {
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            },
+            {
+              "internalType": "string",
+              "name": "contentURI",
+              "type": "string"
+            },
+            {
+              "internalType": "uint256",
+              "name": "stakedAmount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "createdAt",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "stakeSlashed",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "stakeReturned",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "interactionRewardClaimed",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            }
+          ],
+          "name": "returnResponseStake",
           "outputs": [],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "revealPhaseEnd",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "revealPhaseStart",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -3668,29 +4937,35 @@
               "type": "uint256"
             },
             {
-              "internalType": "address",
-              "name": "agent",
-              "type": "address"
-            },
-            {
-              "internalType": "string",
-              "name": "reviewerNote",
-              "type": "string"
+              "internalType": "address[]",
+              "name": "agents",
+              "type": "address[]"
             }
           ],
-          "name": "rejectSubmission",
+          "name": "selectFinalists",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
         },
         {
-          "inputs": [],
-          "name": "requireCredentialToPost",
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "selectedFinalists",
           "outputs": [
             {
-              "internalType": "bool",
+              "internalType": "address",
               "name": "",
-              "type": "bool"
+              "type": "address"
             }
           ],
           "stateMutability": "view",
@@ -3730,12 +5005,12 @@
         {
           "inputs": [
             {
-              "internalType": "bool",
-              "name": "required",
-              "type": "bool"
+              "internalType": "address",
+              "name": "validationRegistryAddress",
+              "type": "address"
             }
           ],
-          "name": "setRequireCredentialToPost",
+          "name": "setValidationRegistry",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -3743,12 +5018,12 @@
         {
           "inputs": [
             {
-              "internalType": "address",
-              "name": "validationRegistryAddress",
-              "type": "address"
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
             }
           ],
-          "name": "setValidationRegistry",
+          "name": "slashResponseStake",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -3796,6 +5071,87 @@
           "inputs": [
             {
               "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionIdToAgent",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionIdToTaskId",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionResponseCount",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submissionResponses",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
               "name": "jobId",
               "type": "uint256"
             },
@@ -3808,6 +5164,82 @@
           "name": "submitDeliverable",
           "outputs": [],
           "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "deliverableLink",
+              "type": "string"
+            }
+          ],
+          "name": "submitDirect",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "submittedAgents",
+          "outputs": [
+            {
+              "internalType": "address",
+              "name": "",
+              "type": "address"
+            }
+          ],
+          "stateMutability": "view",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "",
+              "type": "uint256"
+            }
+          ],
+          "name": "taskEconomy",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "interactionStake",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionReward",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "interactionPool",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "interactionPoolFunded",
+              "type": "bool"
+            }
+          ],
+          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -3852,7 +5284,7 @@
       ]
     },
     "githubSource": {
-      "address": "0x13c813895c80b24B2B1293F1Fdd61eE517F5166C",
+      "address": "0xd8b01e03E23620a3FFFfa9251FE2F1076ce6929e",
       "abi": [
         {
           "inputs": [
@@ -4403,7 +5835,7 @@
       ]
     },
     "communitySource": {
-      "address": "0x1e69b029FD8F01a96A070EB0467CF14F614f7232",
+      "address": "0xdA1Bf30dA93A8B7397ec7a3eB55cd75f3FF49fB0",
       "abi": [
         {
           "inputs": [
@@ -5393,7 +6825,7 @@
       ]
     },
     "agentTaskSource": {
-      "address": "0xaCeb8425AD63516590CCB591dfd5ACDf683B0207",
+      "address": "0x5b0978E54b4E5277F22716ed27AC641DBe014DDC",
       "abi": [
         {
           "inputs": [
@@ -6138,7 +7570,7 @@
       ]
     },
     "milestoneEscrow": {
-      "address": "0x9418878C0Be7e0a81c121878f4Bc49009AABff17",
+      "address": "0xf8C90f3c3d582272Cdf0f5853eF8d68Df78Fe644",
       "abi": [
         {
           "inputs": [
@@ -7195,7 +8627,7 @@
       ]
     },
     "peerAttestationSource": {
-      "address": "0x6bB59d931a3635917A5251eE86c0059a3abA300E",
+      "address": "0x114feA150292EE17faf86CdDcb72a7bb3125585C",
       "abi": [
         {
           "inputs": [
@@ -7615,7 +9047,7 @@
       ]
     },
     "daoGovernanceSource": {
-      "address": "0xbCaA50187fBef97D706665DFcE4f03d4726DE9d7",
+      "address": "0xBFC24e2426b3c5E99B747A283c019a2e414623e6",
       "abi": [
         {
           "inputs": [

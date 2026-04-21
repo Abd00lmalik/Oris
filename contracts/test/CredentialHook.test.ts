@@ -56,49 +56,42 @@ describe("Archon Hook + ERC8183Job", function () {
     expect(await hook.owner()).to.equal(owner.address);
   });
 
-  it("enforces review delay and approval cap", async function () {
-    const { owner, job, client, agentA, agentB, other } = await deployFixture();
+  it("enforces finalist and winner approval cap", async function () {
+    const { job, client, agentA, agentB, other } = await deployFixture();
     await createJob(job, client);
 
-    await job.connect(agentA).acceptJob(0);
-    await job.connect(agentA).submitDeliverable(0, "https://github.com/a");
-
-    await expect(job.connect(client).approveSubmission(0, agentA.address, ethers.parseUnits("100", 6))).to.be.revertedWith(
-      "job too new"
-    );
-    await time.increase(61 * 60);
-    await job.connect(client).approveSubmission(0, agentA.address, ethers.parseUnits("100", 6));
-
-    await job.connect(agentB).acceptJob(0);
-    await job.connect(agentB).submitDeliverable(0, "https://github.com/b");
-    await expect(job.connect(client).approveSubmission(0, agentB.address, ethers.parseUnits("100", 6))).to.be.revertedWith(
-      "review delay not elapsed"
-    );
-    await time.increase(16 * 60);
-    await job.connect(client).approveSubmission(0, agentB.address, ethers.parseUnits("100", 6));
-
-    await job.connect(other).acceptJob(0);
-    await job.connect(other).submitDeliverable(0, "https://github.com/c");
-    await time.increase(16 * 60);
-    await job.connect(client).approveSubmission(0, other.address, ethers.parseUnits("100", 6));
-
     const fourth = (await ethers.getSigners())[6];
-    await job.connect(fourth).acceptJob(0);
-    await job.connect(fourth).submitDeliverable(0, "https://github.com/d");
-    await time.increase(16 * 60);
+    await job.connect(agentA).submitDirect(0, "https://github.com/a");
+    await job.connect(agentB).submitDirect(0, "https://github.com/b");
+    await job.connect(other).submitDirect(0, "https://github.com/c");
+    await job.connect(fourth).submitDirect(0, "https://github.com/d");
+    await job.connect(client).selectFinalists(0, [agentA.address, agentB.address, other.address, fourth.address]);
+    await time.increase(5 * 24 * 60 * 60 + 1);
+
     await expect(
-      job.connect(client).approveSubmission(0, fourth.address, ethers.parseUnits("100", 6))
-    ).to.be.revertedWith("maximum approvals reached for this job");
+      job
+        .connect(client)
+        .finalizeWinners(
+          0,
+          [agentA.address, agentB.address, other.address, fourth.address],
+          [
+            ethers.parseUnits("75", 6),
+            ethers.parseUnits("75", 6),
+            ethers.parseUnits("75", 6),
+            ethers.parseUnits("75", 6)
+          ]
+        )
+    ).to.be.revertedWith("too many winners");
   });
 
   it("pays reward + mints weighted credential when approved submitter claims", async function () {
     const { registry, usdc, job, client, agentA, treasury } = await deployFixture();
     await createJob(job, client);
 
-    await job.connect(agentA).acceptJob(0);
-    await job.connect(agentA).submitDeliverable(0, "https://github.com/work");
-    await time.increase(61 * 60);
-    await job.connect(client).approveSubmission(0, agentA.address, ethers.parseUnits("100", 6));
+    await job.connect(agentA).submitDirect(0, "https://github.com/work");
+    await job.connect(client).selectFinalists(0, [agentA.address]);
+    await time.increase(5 * 24 * 60 * 60 + 1);
+    await job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)]);
 
     const treasuryBefore = await usdc.balanceOf(treasury.address);
     const agentBefore = await usdc.balanceOf(agentA.address);

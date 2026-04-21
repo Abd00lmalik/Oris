@@ -81,6 +81,7 @@ type RawJobRecord = {
   description: unknown;
   deadline: unknown;
   rewardUSDC: unknown;
+  maxApprovals?: unknown;
   createdAt: unknown;
   acceptedCount: unknown;
   submissionCount: unknown;
@@ -130,6 +131,7 @@ export type JobRecord = {
   description: string;
   deadline: number;
   rewardUSDC: string;
+  maxApprovals: number;
   createdAt: number;
   acceptedCount: number;
   submissionCount: number;
@@ -238,6 +240,14 @@ export type SuspicionResult = {
   reason: string;
 };
 
+export type TaskEconomyRecord = {
+  interactionStake: bigint;
+  interactionReward: bigint;
+  interactionPool: bigint;
+  interactionPoolFunded: boolean;
+  poolRemaining: bigint;
+};
+
 export const RESPONSE_TYPE = {
   BuildsOn: 0,
   Critiques: 1,
@@ -333,53 +343,9 @@ const COMMUNITY_SOURCE_ABI = [
   "function approveApplication(uint256 applicationId,uint8 activityType,string reviewNote)",
   "function rejectApplication(uint256 applicationId,string reviewNote)"
 ] as const;
-const JOB_OPTIONAL_ABI = [
-  "function getAllJobs() view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status)[])",
-  "function getJob(uint256 jobId) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded,uint8 status))",
-  "function getSubmission(uint256 jobId,address agent) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner))",
-  "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner)[])",
-  "function isAccepted(uint256 jobId,address agent) view returns (bool)",
-  "function getAcceptedAgents(uint256 jobId) view returns (address[])",
-  "function getJobsByClient(address client) view returns (uint256[])",
-  "function getJobsByAgent(address agent) view returns (uint256[])",
-  "function jobEscrow(uint256 jobId) view returns (uint256)",
-  "function approvedAgentCount(uint256 jobId) view returns (uint256)",
-  "function maxApprovalsForJob(uint256 jobId) view returns (uint256)",
-  "function getSuspicionScore(address agent, uint256 jobId) view returns (uint256,string)",
-  "function jobsCreatedByWallet(address wallet) view returns (uint256)",
-  "function jobsCompletedByWallet(address wallet) view returns (uint256)",
-  "function minJobStake() view returns (uint256)",
-  "function platformFeeBps() view returns (uint256)",
-  "function platformTreasury() view returns (address)",
-  "function requireCredentialToPost() view returns (bool)",
-  "function CREDENTIAL_COOLDOWN() view returns (uint256)",
-  "function nextJobId() view returns (uint256)",
-  "function lastCredentialClaim(address wallet) view returns (uint256)",
-  "function acceptJob(uint256 jobId) external",
-  "function submitDeliverable(uint256 jobId,string deliverableLink) external",
-  "function submitDirect(uint256 jobId,string deliverableLink) external",
-  "function respondToSubmission(uint256 parentSubmissionId, uint8 responseType, string contentURI) returns (uint256)",
-  "function returnResponseStake(uint256 responseId)",
-  "function slashResponseStake(uint256 responseId)",
-  "function getSubmissionResponses(uint256 submissionId) view returns (uint256[])",
-  "function getResponse(uint256 responseId) view returns (tuple(uint256 responseId, uint256 parentSubmissionId, uint256 taskId, address responder, uint8 responseType, string contentURI, uint256 stakedAmount, uint256 createdAt, bool stakeSlashed, bool stakeReturned))",
-  "function submissionResponseCount(uint256 submissionId) view returns (uint256)",
-  "function submissionIdToAgent(uint256 submissionId) view returns (address)",
-  "function selectFinalists(uint256 jobId, address[] agents) external",
-  "function autoStartReveal(uint256 jobId) external",
-  "function finalizeWinners(uint256 jobId, address[] winners, uint256[] rewardAmounts) external",
-  "function getSelectedFinalists(uint256 jobId) external view returns (address[])",
-  "function getRevealPhaseEnd(uint256 jobId) external view returns (uint256)",
-  "function isInRevealPhase(uint256 jobId) external view returns (bool)",
-  "function buildOnParentByResponder(uint256 jobId,address responder) external view returns (address)",
-  "event SubmissionResponseAdded(uint256 indexed taskId, uint256 indexed parentSubmissionId, uint256 indexed responseId, uint8 responseType)",
-  "event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt)",
-  "event AutoRevealStarted(uint256 indexed jobId, uint256 finalistCount, uint256 revealEndsAt)",
-  "event WinnersFinalized(uint256 indexed jobId, address[] winners, uint256[] rewardAmounts)",
-  "function setMinJobStake(uint256 amount)",
-  "function setRequireCredentialToPost(bool required)",
-  "function setPlatformConfig(address treasuryAddress,uint256 feeBps)"
-] as const;
+export const JOB_ABI = (resolvedJobContract?.abi ?? []) as ethers.InterfaceAbi;
+export const REGISTRY_ABI = (deployment.contracts.validationRegistry.abi ?? []) as ethers.InterfaceAbi;
+const JOB_OPTIONAL_ABI = JOB_ABI;
 const REGISTRY_OPTIONAL_ABI = [
   "function applyRelationshipReputation(address wallet, int256 delta, string reason)",
   "function relationshipReputation(address wallet) view returns (int256)"
@@ -494,6 +460,19 @@ function toBoolean(input: unknown) {
   if (typeof input === "boolean") return input;
   if (typeof input === "string") return input.toLowerCase() === "true";
   return Boolean(input);
+}
+
+function toBigInt(input: unknown) {
+  if (typeof input === "bigint") return input;
+  if (typeof input === "number") return BigInt(Math.trunc(input));
+  if (typeof input === "string" && input.trim()) {
+    try {
+      return BigInt(input);
+    } catch {
+      return 0n;
+    }
+  }
+  return 0n;
 }
 
 function sourceTypeKey(value: string) {
@@ -654,8 +633,10 @@ export function formatTimestamp(ts: number) {
 export function parseJob(rawJob: unknown): JobRecord {
   const candidate = rawJob as Partial<RawJobRecord> & unknown[];
   const deadline = toNumber(candidate.deadline ?? candidate[4]);
+  const maxApprovals = toNumber(candidate.maxApprovals ?? candidate[6]);
   const statusCandidates = [
     candidate.status,
+    candidate[14],
     candidate[13],
     candidate[6],
     candidate[7]
@@ -670,13 +651,14 @@ export function parseJob(rawJob: unknown): JobRecord {
     description: toString(candidate.description ?? candidate[3]),
     deadline,
     rewardUSDC: toString(candidate.rewardUSDC ?? candidate[5]),
-    createdAt: toNumber(candidate.createdAt ?? candidate[6]),
-    acceptedCount: toNumber(candidate.acceptedCount ?? candidate[7]),
-    submissionCount: toNumber(candidate.submissionCount ?? candidate[8]),
-    approvedCount: toNumber(candidate.approvedCount ?? candidate[9]),
-    claimedCount: toNumber(candidate.claimedCount ?? candidate[10]),
-    paidOutUSDC: toString(candidate.paidOutUSDC ?? candidate[11]),
-    refunded: toBoolean(candidate.refunded ?? candidate[12]),
+    maxApprovals: Number.isNaN(maxApprovals) ? 0 : maxApprovals,
+    createdAt: toNumber(candidate.createdAt ?? candidate[7] ?? candidate[6]),
+    acceptedCount: toNumber(candidate.acceptedCount ?? candidate[8] ?? candidate[7]),
+    submissionCount: toNumber(candidate.submissionCount ?? candidate[9] ?? candidate[8]),
+    approvedCount: toNumber(candidate.approvedCount ?? candidate[10] ?? candidate[9]),
+    claimedCount: toNumber(candidate.claimedCount ?? candidate[11] ?? candidate[10]),
+    paidOutUSDC: toString(candidate.paidOutUSDC ?? candidate[12] ?? candidate[11]),
+    refunded: toBoolean(candidate.refunded ?? candidate[13] ?? candidate[12]),
     status: onChainStatus >= 0 ? onChainStatus : normalizeJobStatus(deadline),
     revealPhaseEnd: 0n
   };
@@ -956,20 +938,21 @@ function getMilestoneEscrowContract(providerOrSigner: ethers.Provider | ethers.S
   return new ethers.Contract(contractAddresses.milestoneEscrow, MILESTONE_ESCROW_ABI, providerOrSigner);
 }
 
-export function getJobReadContract() {
+export function getJobContract(providerOrSigner: ethers.Provider | ethers.Signer) {
   ensureContractsConfigured();
-  return getContractFromConfig(resolvedJobContract, getReadProvider());
+  return getContractFromConfig(resolvedJobContract, providerOrSigner);
+}
+
+export function getJobReadContract() {
+  return getJobContract(getReadProvider());
 }
 
 function getOptionalJobReadContract() {
-  if (!contractAddresses.job || contractAddresses.job === ZERO_ADDRESS) {
-    throw new Error("Job contract is not configured.");
-  }
-  return new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, getReadProvider());
+  return getJobContract(getReadProvider());
 }
 
 export function getJobSignalsReadContract() {
-  return getOptionalJobReadContract();
+  return getJobContract(getReadProvider());
 }
 
 export function getRegistryReadContract() {
@@ -987,9 +970,8 @@ export function getMilestoneEscrowReadContract() {
 }
 
 export async function getJobWriteContract(browserProvider: ethers.BrowserProvider) {
-  ensureContractsConfigured();
   const signer = await browserProvider.getSigner();
-  return getContractFromConfig(resolvedJobContract, signer);
+  return getJobContract(signer);
 }
 
 export async function getSourceWriteContract(
@@ -1574,7 +1556,8 @@ export async function fetchMaxApprovalsForJob(jobId: number): Promise<number> {
     const value = (await optional.maxApprovalsForJob(jobId)) as bigint;
     return Number(value);
   } catch {
-    return 3;
+    const job = await fetchJob(jobId);
+    return job?.maxApprovals ?? 3;
   }
 }
 
@@ -2153,8 +2136,38 @@ export async function txCreateJob(
   maxApprovals: number
 ) {
   const contract = await getJobWriteContract(browserProvider);
-  const tx = await contract.createJob(title, description, deadline, rewardUSDC, maxApprovals);
+  const tx = await contract["createJob(string,string,uint256,uint256,uint256)"](
+    title,
+    description,
+    deadline,
+    rewardUSDC,
+    maxApprovals
+  );
   return tx as ethers.TransactionResponse;
+}
+
+export async function txCreateJobWithEconomy(
+  signer: ethers.JsonRpcSigner,
+  title: string,
+  description: string,
+  deadline: bigint,
+  rewardUSDC: bigint,
+  maxApprovals: number,
+  interactionStakeOverride: bigint,
+  interactionPoolPercent: number
+): Promise<string> {
+  const contract = getJobContract(signer);
+  const tx = await contract["createJob(string,string,uint256,uint256,uint256,uint256,uint256)"](
+    title,
+    description,
+    deadline,
+    rewardUSDC,
+    maxApprovals,
+    interactionStakeOverride,
+    interactionPoolPercent
+  );
+  await tx.wait();
+  return tx.hash as string;
 }
 
 export async function txAcceptJob(browserProvider: ethers.BrowserProvider, jobId: number) {
@@ -2176,7 +2189,7 @@ export async function txSubmitDirect(
   jobId: bigint,
   deliverableLink: string
 ): Promise<string> {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const contract = getJobContract(signer);
 
   try {
     const tx = await contract.submitDirect(jobId, deliverableLink);
@@ -2201,8 +2214,11 @@ export async function txApproveSubmission(
   agent: string,
   rewardAmount: bigint
 ) {
-  const contract = await getJobWriteContract(browserProvider);
-  return (await contract.approveSubmission(jobId, agent, rewardAmount)) as ethers.TransactionResponse;
+  void browserProvider;
+  void jobId;
+  void agent;
+  void rewardAmount;
+  throw new Error("Legacy approveSubmission was removed. Use selectFinalists + finalizeWinners.");
 }
 
 export async function txSelectFinalists(
@@ -2210,7 +2226,7 @@ export async function txSelectFinalists(
   jobId: bigint,
   agents: string[]
 ) : Promise<string> {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const contract = getJobContract(signer);
   const tx = await contract.selectFinalists(jobId, agents);
   await tx.wait();
   return tx.hash as string;
@@ -2220,20 +2236,22 @@ export async function txAutoStartReveal(
   signer: ethers.JsonRpcSigner,
   jobId: bigint
 ): Promise<string> {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const contract = getJobContract(signer);
   const tx = await contract.autoStartReveal(jobId);
   await tx.wait();
   return tx.hash as string;
 }
 
 export async function txFinalizeWinners(
-  browserProvider: ethers.BrowserProvider,
-  jobId: number,
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint,
   winners: string[],
   rewardAmounts: bigint[]
-) {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, await browserProvider.getSigner());
-  return (await contract.finalizeWinners(jobId, winners, rewardAmounts)) as ethers.TransactionResponse;
+): Promise<string> {
+  const contract = getJobContract(signer);
+  const tx = await contract.finalizeWinners(jobId, winners, rewardAmounts);
+  await tx.wait();
+  return tx.hash as string;
 }
 
 export async function txRejectSubmission(
@@ -2242,8 +2260,11 @@ export async function txRejectSubmission(
   agent: string,
   reason: string
 ) {
-  const contract = await getJobWriteContract(browserProvider);
-  return (await contract.rejectSubmission(jobId, agent, reason)) as ethers.TransactionResponse;
+  void browserProvider;
+  void jobId;
+  void agent;
+  void reason;
+  throw new Error("Legacy rejectSubmission was removed. Use finalist selection and omit rejected submissions.");
 }
 
 export async function txClaimJobCredential(browserProvider: ethers.BrowserProvider, jobId: number) {
@@ -2257,24 +2278,71 @@ export async function txRespondToSubmission(
   responseType: number,
   contentURI: string
 ): Promise<string> {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const contract = getJobContract(signer);
   const tx = await contract.respondToSubmission(parentSubmissionId, responseType, contentURI);
   await tx.wait();
   return tx.hash;
 }
 
 export async function txReturnStake(signer: ethers.JsonRpcSigner, responseId: bigint): Promise<string> {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const contract = getJobContract(signer);
   const tx = await contract.returnResponseStake(responseId);
   await tx.wait();
   return tx.hash;
 }
 
 export async function txSlashResponseStake(signer: ethers.JsonRpcSigner, responseId: bigint): Promise<string> {
-  const contract = new ethers.Contract(contractAddresses.job, JOB_OPTIONAL_ABI, signer);
+  const contract = getJobContract(signer);
   const tx = await contract.slashResponseStake(responseId);
   await tx.wait();
   return tx.hash;
+}
+
+export async function txClaimInteractionReward(
+  signer: ethers.JsonRpcSigner,
+  responseId: bigint
+): Promise<string> {
+  const contract = getJobContract(signer);
+  const tx = await contract.claimInteractionReward(responseId);
+  await tx.wait();
+  return tx.hash as string;
+}
+
+export async function fetchTaskEconomy(
+  provider: ethers.BrowserProvider | ethers.JsonRpcProvider,
+  jobId: number
+): Promise<TaskEconomyRecord> {
+  const contract = getJobContract(provider);
+
+  try {
+    const [economyRaw, poolRemainingRaw] = await Promise.all([
+      contract.getTaskEconomy(BigInt(jobId)),
+      contract.getInteractionPoolRemaining(BigInt(jobId))
+    ]);
+
+    const economy = economyRaw as {
+      interactionStake?: bigint;
+      interactionReward?: bigint;
+      interactionPool?: bigint;
+      interactionPoolFunded?: boolean;
+    } & unknown[];
+
+    return {
+      interactionStake: toBigInt(economy.interactionStake ?? economy[0] ?? 0n),
+      interactionReward: toBigInt(economy.interactionReward ?? economy[1] ?? 0n),
+      interactionPool: toBigInt(economy.interactionPool ?? economy[2] ?? 0n),
+      interactionPoolFunded: Boolean(economy.interactionPoolFunded ?? economy[3] ?? false),
+      poolRemaining: toBigInt(poolRemainingRaw ?? 0n)
+    };
+  } catch {
+    return {
+      interactionStake: 2_000_000n,
+      interactionReward: 0n,
+      interactionPool: 0n,
+      interactionPoolFunded: false,
+      poolRemaining: 0n
+    };
+  }
 }
 
 export async function txAwardCommunityActivity(

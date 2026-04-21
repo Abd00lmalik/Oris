@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import {ICredentialHook} from "./interfaces/ICredentialHook.sol";
 import {ICredentialSource} from "./interfaces/ICredentialSource.sol";
 import {IERC20Minimal} from "./interfaces/IERC20Minimal.sol";
-import {IValidationRegistry} from "./interfaces/IValidationRegistry.sol";
 
 contract ERC8183Job is ICredentialSource {
     enum JobStatus {
@@ -30,6 +29,13 @@ contract ERC8183Job is ICredentialSource {
         Alternative
     }
 
+    struct TaskEconomyConfig {
+        uint256 interactionStake;
+        uint256 interactionReward;
+        uint256 interactionPool;
+        bool interactionPoolFunded;
+    }
+
     struct Job {
         uint256 jobId;
         address client;
@@ -37,6 +43,7 @@ contract ERC8183Job is ICredentialSource {
         string description;
         uint256 deadline;
         uint256 rewardUSDC;
+        uint256 maxApprovals;
         uint256 createdAt;
         uint256 acceptedCount;
         uint256 submissionCount;
@@ -84,14 +91,19 @@ contract ERC8183Job is ICredentialSource {
         uint256 createdAt;
         bool stakeSlashed;
         bool stakeReturned;
+        bool interactionRewardClaimed;
     }
 
     uint256 public constant BASIS_POINTS = 10_000;
     uint256 public constant MIN_JOB_DURATION = 1 hours;
     uint256 public constant MIN_REVIEW_DELAY = 15 minutes;
     uint256 public constant CREDENTIAL_COOLDOWN = 6 hours;
-    uint256 public constant RESPONSE_STAKE = 2_000_000; // 2 USDC
     uint256 public constant REVEAL_DURATION = 5 days;
+    uint256 public constant MIN_INTERACTION_STAKE = 10_000; // 0.01 USDC
+    uint256 public constant MAX_INTERACTION_STAKE = 5_000_000; // 5 USDC
+    uint256 public constant DEFAULT_INTERACTION_STAKE = 2_000_000; // 2 USDC
+    uint256 public constant RESPONSE_STAKE = DEFAULT_INTERACTION_STAKE; // backwards-compatible alias
+    uint256 public constant MAX_INTERACTION_POOL_RATIO = 3_000; // 30%
 
     address public owner;
     uint256 public nextJobId;
@@ -104,16 +116,9 @@ contract ERC8183Job is ICredentialSource {
     address public platformTreasury;
     uint256 public platformFeeBps;
     uint256 public minJobStake = 5_000_000; // 5 USDC (6 decimals)
-    bool public requireCredentialToPost;
     mapping(address => uint256) public lastCredentialClaim;
-    mapping(address => uint256) public jobsCreatedByWallet;
-    mapping(address => uint256) public jobsCompletedByWallet;
-    mapping(uint256 => uint256) public maxApprovalsForJob;
-    mapping(uint256 => uint256) public approvedAgentCount;
     mapping(uint256 => Job) private jobs;
     mapping(uint256 => address[]) private acceptedAgentsByJob;
-    mapping(address => uint256[]) private jobsByClient;
-    mapping(address => uint256[]) private jobsByAgent;
     mapping(uint256 => mapping(address => bool)) public isAccepted;
     mapping(uint256 => address[]) private submissionAgentsByJob;
     mapping(uint256 => address[]) public submittedAgents;
@@ -130,12 +135,14 @@ contract ERC8183Job is ICredentialSource {
     mapping(uint256 => mapping(address => bool)) public isFinalist;
     mapping(uint256 => uint256) public revealPhaseStart;
     mapping(uint256 => uint256) public revealPhaseEnd;
+    mapping(uint256 => TaskEconomyConfig) public taskEconomy;
+    mapping(uint256 => uint256) public interactionPoolUsed;
 
     uint256 private _reentrancyLock;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event PlatformConfigUpdated(address indexed platformTreasury, uint256 platformFeeBps);
-    event JobPostingRulesUpdated(uint256 minJobStake, bool requireCredentialToPost);
+    event JobPostingRulesUpdated(uint256 minJobStake);
     event ValidationRegistryUpdated(address indexed validationRegistry);
     event JobCreated(
         uint256 indexed jobId,
@@ -173,13 +180,6 @@ contract ERC8183Job is ICredentialSource {
         uint256 indexed responseId,
         ResponseType responseType
     );
-    event ResponseAdded(
-        uint256 indexed taskId,
-        uint256 indexed parentSubmissionId,
-        uint256 indexed responseId,
-        address responder,
-        uint8 responseType
-    );
     event StakeSlashed(uint256 indexed responseId, address indexed responder, uint256 amount);
     event StakeReturned(uint256 indexed responseId, address indexed responder, uint256 amount);
     event FinalistsSelected(uint256 indexed jobId, address[] agents, uint256 revealEndsAt);
@@ -192,6 +192,11 @@ contract ERC8183Job is ICredentialSource {
         uint256 indexed jobId,
         uint256 finalistCount,
         uint256 revealEndsAt
+    );
+    event InteractionRewardClaimed(
+        uint256 indexed responseId,
+        address indexed responder,
+        uint256 amount
     );
 
     modifier onlyOwner() {
@@ -274,12 +279,7 @@ contract ERC8183Job is ICredentialSource {
     function setMinJobStake(uint256 amount) external onlyOwner {
         require(amount > 0, "invalid minimum stake");
         minJobStake = amount;
-        emit JobPostingRulesUpdated(minJobStake, requireCredentialToPost);
-    }
-
-    function setRequireCredentialToPost(bool required) external onlyOwner {
-        requireCredentialToPost = required;
-        emit JobPostingRulesUpdated(minJobStake, required);
+        emit JobPostingRulesUpdated(minJobStake);
     }
 
     function createJob(
@@ -288,7 +288,40 @@ contract ERC8183Job is ICredentialSource {
         uint256 deadline,
         uint256 rewardUSDC,
         uint256 maxApprovals
-    ) external returns (uint256 createdJobId) {
+    ) external nonReentrant returns (uint256 createdJobId) {
+        return _createJob(title, description, deadline, rewardUSDC, maxApprovals, 0, 0);
+    }
+
+    function createJob(
+        string calldata title,
+        string calldata description,
+        uint256 deadline,
+        uint256 rewardUSDC,
+        uint256 maxApprovals,
+        uint256 interactionStakeOverride,
+        uint256 interactionPoolPercent
+    ) external nonReentrant returns (uint256 createdJobId) {
+        return
+            _createJob(
+                title,
+                description,
+                deadline,
+                rewardUSDC,
+                maxApprovals,
+                interactionStakeOverride,
+                interactionPoolPercent
+            );
+    }
+
+    function _createJob(
+        string memory title,
+        string memory description,
+        uint256 deadline,
+        uint256 rewardUSDC,
+        uint256 maxApprovals,
+        uint256 interactionStakeOverride,
+        uint256 interactionPoolPercent
+    ) internal returns (uint256 createdJobId) {
         require(bytes(title).length > 0, "title required");
         require(bytes(description).length > 0, "description required");
         require(deadline >= block.timestamp + MIN_JOB_DURATION, "deadline too soon");
@@ -298,14 +331,26 @@ contract ERC8183Job is ICredentialSource {
             rewardUSDC >= minJobStake * maxApprovals,
             "reward pool too small for number of approvals"
         );
-        if (requireCredentialToPost) {
-            require(validationRegistry != address(0), "validation registry not set");
-            require(
-                IValidationRegistry(validationRegistry).credentialCount(msg.sender) >= 1,
-                "need at least 1 credential to post jobs"
-            );
+        require(
+            interactionPoolPercent <= MAX_INTERACTION_POOL_RATIO,
+            "interaction pool too large"
+        );
+
+        uint256 interactionPool = 0;
+        if (interactionPoolPercent > 0) {
+            interactionPool = (rewardUSDC * interactionPoolPercent) / BASIS_POINTS;
         }
-        require(usdc.transferFrom(msg.sender, address(this), rewardUSDC), "usdc transfer failed");
+
+        uint256 stake = interactionStakeOverride > 0
+            ? interactionStakeOverride
+            : DEFAULT_INTERACTION_STAKE;
+        require(
+            stake >= MIN_INTERACTION_STAKE && stake <= MAX_INTERACTION_STAKE,
+            "invalid interaction stake"
+        );
+
+        uint256 totalRequired = rewardUSDC + interactionPool;
+        require(usdc.transferFrom(msg.sender, address(this), totalRequired), "usdc transfer failed");
 
         createdJobId = nextJobId;
         nextJobId += 1;
@@ -317,6 +362,7 @@ contract ERC8183Job is ICredentialSource {
             description: description,
             deadline: deadline,
             rewardUSDC: rewardUSDC,
+            maxApprovals: maxApprovals,
             createdAt: block.timestamp,
             acceptedCount: 0,
             submissionCount: 0,
@@ -326,10 +372,13 @@ contract ERC8183Job is ICredentialSource {
             refunded: false,
             status: JobStatus.Open
         });
-        maxApprovalsForJob[createdJobId] = maxApprovals;
-        approvedAgentCount[createdJobId] = 0;
-        jobsByClient[msg.sender].push(createdJobId);
-        jobsCreatedByWallet[msg.sender] += 1;
+        taskEconomy[createdJobId] = TaskEconomyConfig({
+            interactionStake: stake,
+            interactionReward: interactionPool > 0 ? interactionPool / 20 : 0,
+            interactionPool: interactionPool,
+            interactionPoolFunded: interactionPool > 0
+        });
+        interactionPoolUsed[createdJobId] = 0;
 
         emit JobCreated(createdJobId, msg.sender, title, description, deadline, rewardUSDC);
     }
@@ -348,7 +397,6 @@ contract ERC8183Job is ICredentialSource {
 
         isAccepted[jobId][msg.sender] = true;
         acceptedAgentsByJob[jobId].push(msg.sender);
-        jobsByAgent[msg.sender].push(jobId);
         job.acceptedCount += 1;
         if (uint8(job.status) == uint8(JobStatus.Open)) {
             job.status = JobStatus.InProgress;
@@ -419,7 +467,6 @@ contract ERC8183Job is ICredentialSource {
         if (!isAccepted[jobId][msg.sender]) {
             isAccepted[jobId][msg.sender] = true;
             acceptedAgentsByJob[jobId].push(msg.sender);
-            jobsByAgent[msg.sender].push(jobId);
             job.acceptedCount += 1;
             if (uint8(job.status) == uint8(JobStatus.Open)) {
                 job.status = JobStatus.InProgress;
@@ -457,59 +504,6 @@ contract ERC8183Job is ICredentialSource {
         emit DeliverableSubmitted(jobId, msg.sender, deliverableLink);
     }
 
-    function approveSubmission(
-        uint256 jobId,
-        address agent,
-        uint256 rewardAmount
-    ) external onlyClient(jobId) {
-        Job storage job = _getExistingJob(jobId);
-        require(agent != address(0), "invalid agent");
-        Submission storage submission = submissions[jobId][agent];
-        require(submission.status == SubmissionStatus.Submitted, "submission not pending");
-        require(block.timestamp >= job.createdAt + MIN_JOB_DURATION, "job too new");
-        require(
-            block.timestamp >= submission.submittedAt + MIN_REVIEW_DELAY,
-            "review delay not elapsed"
-        );
-        require(
-            approvedAgentCount[jobId] < maxApprovalsForJob[jobId],
-            "maximum approvals reached for this job"
-        );
-        require(rewardAmount > 0, "reward must be positive");
-
-        uint256 alreadyAllocated = _totalAllocated(jobId);
-        require(
-            alreadyAllocated + rewardAmount <= job.rewardUSDC,
-            "reward exceeds remaining escrow balance"
-        );
-
-        submission.status = SubmissionStatus.Approved;
-        submission.reviewerNote = "";
-        submission.allocatedReward = rewardAmount;
-        submission.isBuildOnWinner = false;
-        approvedAgentCount[jobId] += 1;
-        job.approvedCount += 1;
-
-        emit SubmissionApproved(jobId, agent, rewardAmount);
-    }
-
-    function rejectSubmission(
-        uint256 jobId,
-        address agent,
-        string calldata reviewerNote
-    ) external onlyClient(jobId) {
-        _getExistingJob(jobId);
-        require(agent != address(0), "invalid agent");
-
-        Submission storage submission = submissions[jobId][agent];
-        require(submission.status == SubmissionStatus.Submitted, "submission not pending");
-
-        submission.status = SubmissionStatus.Rejected;
-        submission.reviewerNote = reviewerNote;
-
-        emit SubmissionRejected(jobId, agent, reviewerNote);
-    }
-
     function selectFinalists(uint256 jobId, address[] calldata agents) external {
         Job storage job = _getExistingJob(jobId);
         require(msg.sender == job.client, "only client");
@@ -520,7 +514,7 @@ contract ERC8183Job is ICredentialSource {
         );
         require(agents.length > 0, "at least one finalist");
         require(
-            agents.length <= maxApprovalsForJob[jobId] + 5,
+            agents.length <= job.maxApprovals + 5,
             "too many finalists"
         );
         require(selectedFinalists[jobId].length == 0, "finalists already selected");
@@ -581,7 +575,7 @@ contract ERC8183Job is ICredentialSource {
 
         require(actualCount > 0, "no submissions");
         require(
-            actualCount <= maxApprovalsForJob[jobId] + 5,
+            actualCount <= job.maxApprovals + 5,
             "manual selection required: too many submissions"
         );
 
@@ -617,7 +611,7 @@ contract ERC8183Job is ICredentialSource {
             "reveal phase not ended"
         );
         require(winners.length == rewardAmounts.length, "length mismatch");
-        require(winners.length <= maxApprovalsForJob[jobId], "too many winners");
+        require(winners.length <= job.maxApprovals, "too many winners");
 
         uint256 totalReward = 0;
         for (uint256 i = 0; i < winners.length; i++) {
@@ -638,16 +632,11 @@ contract ERC8183Job is ICredentialSource {
             totalReward += rewardAmount;
         }
 
-        uint256 alreadyAllocated = _totalAllocated(jobId);
-        require(
-            alreadyAllocated + totalReward <= job.rewardUSDC,
-            "reward exceeds remaining escrow balance"
-        );
+        require(totalReward <= job.rewardUSDC, "reward exceeds escrow");
 
         for (uint256 i = 0; i < winners.length; i++) {
             Submission storage sub = submissions[jobId][winners[i]];
             if (sub.status != SubmissionStatus.Approved) {
-                approvedAgentCount[jobId] += 1;
                 job.approvedCount += 1;
             }
             sub.status = SubmissionStatus.Approved;
@@ -696,7 +685,6 @@ contract ERC8183Job is ICredentialSource {
         submission.buildOnBonus = 0;
         job.claimedCount += 1;
         job.paidOutUSDC += grossReward;
-        jobsCompletedByWallet[msg.sender] += 1;
         lastCredentialClaim[msg.sender] = block.timestamp;
 
         uint256 platformFee = (grossReward * platformFeeBps) / BASIS_POINTS;
@@ -715,22 +703,6 @@ contract ERC8183Job is ICredentialSource {
         emit CredentialClaimed(jobId, msg.sender, credentialRecordId, 100);
     }
 
-    function refundExpiredJob(uint256 jobId) external onlyClient(jobId) {
-        Job storage job = _getExistingJob(jobId);
-        require(block.timestamp > job.deadline, "job not expired");
-        require(!job.refunded, "already refunded");
-
-        uint256 reserved = _reservedUnclaimed(jobId);
-        uint256 available = job.rewardUSDC - job.paidOutUSDC;
-        require(available > reserved, "nothing refundable");
-
-        uint256 refundAmount = available - reserved;
-        job.refunded = true;
-
-        require(usdc.transfer(job.client, refundAmount), "refund transfer failed");
-        emit JobRefunded(jobId, job.client, refundAmount);
-    }
-
     function getJob(uint256 jobId) external view returns (Job memory) {
         return _getExistingJob(jobId);
     }
@@ -743,14 +715,6 @@ contract ERC8183Job is ICredentialSource {
     function getAcceptedAgents(uint256 jobId) external view returns (address[] memory) {
         _getExistingJob(jobId);
         return acceptedAgentsByJob[jobId];
-    }
-
-    function getJobsByClient(address client) external view returns (uint256[] memory) {
-        return jobsByClient[client];
-    }
-
-    function getJobsByAgent(address agent) external view returns (uint256[] memory) {
-        return jobsByAgent[agent];
     }
 
     function getSubmissions(uint256 jobId) external view returns (SubmissionView[] memory allSubmissions) {
@@ -798,55 +762,6 @@ contract ERC8183Job is ICredentialSource {
         }
     }
 
-    function getAllJobs() external view returns (Job[] memory allJobs) {
-        allJobs = new Job[](nextJobId);
-        for (uint256 i = 0; i < nextJobId; i++) {
-            allJobs[i] = jobs[i];
-        }
-    }
-
-    function getRewardPerApproval(uint256 jobId) external view returns (uint256) {
-        Job storage job = _getExistingJob(jobId);
-        uint256 maxApprovals = maxApprovalsForJob[jobId];
-        if (maxApprovals == 0) {
-            return 0;
-        }
-        return job.rewardUSDC / maxApprovals;
-    }
-
-    function jobEscrow(uint256 jobId) external view returns (uint256) {
-        Job storage job = _getExistingJob(jobId);
-        return job.rewardUSDC - job.paidOutUSDC;
-    }
-
-    function getSuspicionScore(
-        address agent,
-        uint256 jobId
-    ) external view returns (uint256 score, string memory reason) {
-        Job storage job = _getExistingJob(jobId);
-        Submission storage sub = submissions[jobId][agent];
-        if (sub.agent == address(0) || sub.submittedAt == 0) {
-            return (100, "submission missing; ");
-        }
-
-        if (sub.submittedAt > job.createdAt) {
-            uint256 timeToComplete = sub.submittedAt - job.createdAt;
-            if (timeToComplete < 2 hours) {
-                score += 30;
-                reason = "submission too fast; ";
-            }
-        }
-
-        uint256 clientJobs = jobsCreatedByWallet[job.client];
-        uint256 agentCompleted = jobsCompletedByWallet[agent];
-        if (clientJobs > 5 && agentCompleted > 5) {
-            score += 20;
-            reason = string.concat(reason, "high volume accounts; ");
-        }
-
-        return (score, reason);
-    }
-
     function respondToSubmission(
         uint256 parentSubmissionId,
         ResponseType responseType,
@@ -866,7 +781,10 @@ contract ERC8183Job is ICredentialSource {
         require(msg.sender != parentAgent, "cannot respond to own submission");
         require(!hasResponded[parentSubmissionId][msg.sender], "already responded");
         require(bytes(contentURI).length > 0, "content required");
-        require(usdc.transferFrom(msg.sender, address(this), RESPONSE_STAKE), "stake transfer failed");
+        uint256 stake = taskEconomy[taskId].interactionStake > 0
+            ? taskEconomy[taskId].interactionStake
+            : DEFAULT_INTERACTION_STAKE;
+        require(usdc.transferFrom(msg.sender, address(this), stake), "stake transfer failed");
 
         responseId = nextResponseId;
         nextResponseId += 1;
@@ -877,10 +795,11 @@ contract ERC8183Job is ICredentialSource {
             responder: msg.sender,
             responseType: responseType,
             contentURI: contentURI,
-            stakedAmount: RESPONSE_STAKE,
+            stakedAmount: stake,
             createdAt: block.timestamp,
             stakeSlashed: false,
-            stakeReturned: false
+            stakeReturned: false,
+            interactionRewardClaimed: false
         });
 
         submissionResponses[parentSubmissionId].push(responseId);
@@ -893,7 +812,6 @@ contract ERC8183Job is ICredentialSource {
         }
 
         emit SubmissionResponseAdded(taskId, parentSubmissionId, responseId, responseType);
-        emit ResponseAdded(taskId, parentSubmissionId, responseId, msg.sender, uint8(responseType));
         return responseId;
     }
 
@@ -929,6 +847,46 @@ contract ERC8183Job is ICredentialSource {
         emit StakeSlashed(responseId, response.responder, slashAmount);
     }
 
+    function claimInteractionReward(uint256 responseId) external nonReentrant {
+        SubmissionResponse storage response = responses[responseId];
+        require(response.responder == msg.sender, "not responder");
+        require(!response.interactionRewardClaimed, "already claimed");
+        require(!response.stakeSlashed, "stake was slashed");
+
+        uint256 taskId = response.taskId;
+        Job storage job = _getExistingJob(taskId);
+        require(uint8(job.status) == uint8(JobStatus.Approved), "task not finalized");
+
+        TaskEconomyConfig storage economy = taskEconomy[taskId];
+        require(economy.interactionPool > 0, "no interaction pool");
+        require(economy.interactionReward > 0, "no interaction reward configured");
+        require(
+            interactionPoolUsed[taskId] + economy.interactionReward <= economy.interactionPool,
+            "interaction pool exhausted"
+        );
+
+        response.interactionRewardClaimed = true;
+        interactionPoolUsed[taskId] += economy.interactionReward;
+
+        uint256 fee = (economy.interactionReward * platformFeeBps) / BASIS_POINTS;
+        uint256 payout = economy.interactionReward - fee;
+
+        if (fee > 0) {
+            require(usdc.transfer(platformTreasury, fee), "interaction fee transfer failed");
+        }
+        if (payout > 0) {
+            require(usdc.transfer(msg.sender, payout), "interaction reward transfer failed");
+        }
+
+        if (!response.stakeReturned) {
+            response.stakeReturned = true;
+            require(usdc.transfer(msg.sender, response.stakedAmount), "stake return failed");
+            emit StakeReturned(responseId, msg.sender, response.stakedAmount);
+        }
+
+        emit InteractionRewardClaimed(responseId, msg.sender, payout);
+    }
+
     function getSubmissionResponses(uint256 submissionId) external view returns (uint256[] memory) {
         return submissionResponses[submissionId];
     }
@@ -947,6 +905,20 @@ contract ERC8183Job is ICredentialSource {
         return revealPhaseEnd[jobId];
     }
 
+    function getTaskEconomy(uint256 jobId) external view returns (TaskEconomyConfig memory) {
+        _getExistingJob(jobId);
+        return taskEconomy[jobId];
+    }
+
+    function getInteractionPoolRemaining(uint256 jobId) external view returns (uint256) {
+        _getExistingJob(jobId);
+        TaskEconomyConfig memory economy = taskEconomy[jobId];
+        if (economy.interactionPool == 0) {
+            return 0;
+        }
+        return economy.interactionPool - interactionPoolUsed[jobId];
+    }
+
     function isInRevealPhase(uint256 jobId) external view returns (bool) {
         Job storage job = _getExistingJob(jobId);
         return
@@ -958,19 +930,6 @@ contract ERC8183Job is ICredentialSource {
         Job storage job = jobs[jobId];
         require(job.client != address(0), "job does not exist");
         return job;
-    }
-
-    function _totalAllocated(uint256 jobId) internal view returns (uint256 total) {
-        address[] storage agents = submissionAgentsByJob[jobId];
-        for (uint256 i = 0; i < agents.length; i++) {
-            Submission storage sub = submissions[jobId][agents[i]];
-            if (sub.status == SubmissionStatus.Approved || sub.credentialClaimed) {
-                total += sub.allocatedReward;
-            }
-            if (sub.buildOnBonus > 0) {
-                total += sub.buildOnBonus;
-            }
-        }
     }
 
     function _reservedUnclaimed(uint256 jobId) internal view returns (uint256 total) {

@@ -21,10 +21,12 @@ import {
   fetchSelectedFinalists,
   fetchSubmissionForAgent,
   fetchSubmissions,
+  fetchTaskEconomy,
   formatTaskDescription,
   formatTaskTitle,
   formatTimestamp,
   formatUsdc,
+  getJobContract,
   getJobContractAddress,
   getJobReadContract,
   getReadProvider,
@@ -35,7 +37,9 @@ import {
   JobRecord,
   RESPONSE_TYPE,
   SubmissionRecord,
+  TaskEconomyRecord,
   txAcceptJob,
+  txAutoStartReveal,
   txClaimJobCredential,
   txFinalizeWinners,
   txRespondToSubmission,
@@ -81,6 +85,65 @@ function contentToURI(content: string): string {
     type: "archon-response"
   });
   return `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`;
+}
+
+async function loadSubmissionsFromContract(
+  contract: ReturnType<typeof getJobReadContract>,
+  taskId: number
+): Promise<SubmissionRecord[]> {
+  console.log("[submissions] Loading for task:", taskId);
+
+  try {
+    const raw = await contract.getSubmissions(taskId);
+    const arr = Array.from(raw ?? []);
+    console.log("[submissions] getSubmissions returned:", arr.length);
+    const valid = arr.filter((submission) => isValidSubmission(submission)).map((submission) => parseSubmission(submission));
+    if (valid.length > 0) {
+      console.log("[submissions] Valid count:", valid.length);
+      return valid;
+    }
+  } catch (error) {
+    console.warn("[submissions] getSubmissions failed:", error);
+  }
+
+  try {
+    const fallback = await fetchSubmissions(taskId);
+    if (fallback.length > 0) {
+      console.log("[submissions] Fallback helper count:", fallback.length);
+      return fallback;
+    }
+  } catch (error) {
+    console.warn("[submissions] helper fallback failed:", error);
+  }
+
+  try {
+    const filter = contract.filters?.DeliverableSubmitted?.(taskId);
+    const events = filter ? await contract.queryFilter(filter) : [];
+    console.log("[submissions] Events found:", events.length);
+    const fromEvents: SubmissionRecord[] = [];
+
+    for (const event of events) {
+      const agent = String((event as { args?: unknown[] }).args?.[1] ?? "");
+      if (!agent) continue;
+      try {
+        const rawSubmission = await contract.getSubmission(taskId, agent);
+        if (isValidSubmission(rawSubmission)) {
+          fromEvents.push(parseSubmission(rawSubmission));
+        }
+      } catch {
+        // Skip agents whose submission rows cannot be read.
+      }
+    }
+
+    if (fromEvents.length > 0) {
+      return fromEvents;
+    }
+  } catch (error) {
+    console.warn("[submissions] event fallback failed:", error);
+  }
+
+  console.warn("[submissions] All methods failed - returning empty");
+  return [];
 }
 
 function DeadlineCountdown({ deadline }: { deadline: number }) {
@@ -426,6 +489,13 @@ export default function JobDetailsPage() {
   const [approvalsUsed, setApprovalsUsed] = useState(0);
   const [creatorPostedCount, setCreatorPostedCount] = useState(0);
   const [escrowLocked, setEscrowLocked] = useState(0n);
+  const [taskEconomy, setTaskEconomy] = useState<TaskEconomyRecord>({
+    interactionStake: 2_000_000n,
+    interactionReward: 0n,
+    interactionPool: 0n,
+    interactionPoolFunded: false,
+    poolRemaining: 0n
+  });
 
   const [selectedFinalists, setSelectedFinalists] = useState<string[]>([]);
   const [buildOnParents, setBuildOnParents] = useState<Record<string, string>>({});
@@ -515,16 +585,19 @@ export default function JobDetailsPage() {
     setJobError(null);
 
     try {
-      const [jobData, rawSubmissions, escrow, used, maxAllowed, finals, revealEnd, revealOpen] =
+      const readProvider = browserProvider ?? getReadProvider();
+      const readContract = getJobContract(readProvider);
+      const [jobData, rawSubmissions, escrow, used, maxAllowed, finals, revealEnd, revealOpen, economy] =
         await Promise.all([
           fetchJob(jobId),
-          fetchSubmissions(jobId),
+          loadSubmissionsFromContract(readContract, jobId),
           fetchJobEscrow(jobId),
           fetchApprovedAgentCount(jobId),
           fetchMaxApprovalsForJob(jobId),
           fetchSelectedFinalists(jobId),
           fetchRevealPhaseEnd(jobId),
-          fetchIsInRevealPhase(jobId)
+          fetchIsInRevealPhase(jobId),
+          fetchTaskEconomy(readProvider, jobId)
         ]);
 
       if (!jobData) {
@@ -553,6 +626,7 @@ export default function JobDetailsPage() {
       setSelectedFinalists(finals);
       setRevealPhaseEnd(revealEnd);
       setIsRevealPhase(revealOpen);
+      setTaskEconomy(economy);
       setCreatorPostedCount(await fetchJobsCreatedCount(jobData.client));
       setBuildOnParents(
         parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
@@ -584,7 +658,7 @@ export default function JobDetailsPage() {
     } finally {
       setJobLoading(false);
     }
-  }, [account, jobId, params.jobId]);
+  }, [account, browserProvider, jobId, params.jobId]);
 
   const loadHeatmap = useCallback(async () => {
     if (!Number.isInteger(jobId) || jobId < 0) return;
@@ -761,7 +835,7 @@ export default function JobDetailsPage() {
       }
 
       const usdcContract = getUSDCContract(signer);
-      const responseStake = 2_000_000n;
+      const responseStake = taskEconomy.interactionStake > 0n ? taskEconomy.interactionStake : 2_000_000n;
       const signerAddress = await signer.getAddress();
       const jobContractAddress = getJobContractAddress();
       const allowance = (await usdcContract.allowance(signerAddress, jobContractAddress)) as bigint;
@@ -823,19 +897,24 @@ export default function JobDetailsPage() {
     }
     try {
       setBusyAction("autoReveal");
-      const allAgents = [
-        ...new Set(
-          safeSubmissions
-            .map((submission) => submission.agent)
-            .filter((agent) => agent && agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase())
-        )
-      ];
-      console.log("[autoReveal] Calling selectFinalists with:", allAgents);
-      if (!allAgents.length) {
-        throw new Error("No valid submissions available to promote.");
+      try {
+        const txHash = await txAutoStartReveal(signer, BigInt(jobId));
+        setStatusMessage(`Reveal phase started automatically: ${txHash}`);
+      } catch (error) {
+        const allAgents = [
+          ...new Set(
+            safeSubmissions
+              .map((submission) => submission.agent)
+              .filter((agent) => agent && agent.toLowerCase() !== ZERO_ADDRESS.toLowerCase())
+          )
+        ];
+        console.log("[autoReveal] autoStartReveal failed, falling back to selectFinalists:", allAgents, error);
+        if (!allAgents.length) {
+          throw new Error("No valid submissions available to promote.");
+        }
+        const txHash = await txSelectFinalists(signer, BigInt(jobId), allAgents);
+        setStatusMessage(`Reveal phase started via selectFinalists fallback: ${txHash}`);
       }
-      const txHash = await txSelectFinalists(signer, BigInt(jobId), allAgents);
-      setStatusMessage(`Reveal phase started via selectFinalists: ${txHash}`);
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -858,9 +937,9 @@ export default function JobDetailsPage() {
         }
       }
       const provider = await withProvider();
-      const tx = await txFinalizeWinners(provider, jobId, winners, amounts);
-      setStatusMessage(`Finalize tx: ${tx.hash}`);
-      await tx.wait();
+      const activeSigner = await provider.getSigner();
+      const txHash = await txFinalizeWinners(activeSigner, BigInt(jobId), winners, amounts);
+      setStatusMessage(`Finalize tx: ${txHash}`);
       await loadTask();
       await loadHeatmap();
     } catch (error) {
@@ -1035,6 +1114,50 @@ export default function JobDetailsPage() {
             </div>
           ) : null}
 
+          {job.status === 4 ? (
+            <div
+              style={{
+                padding: "12px 16px",
+                border: "1px solid color-mix(in srgb, var(--arc) 35%, transparent)",
+                background: "color-mix(in srgb, var(--arc) 8%, transparent)"
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 10,
+                  color: "var(--arc)",
+                  letterSpacing: "0.1em",
+                  marginBottom: 8
+                }}
+              >
+                INTERACTION ECONOMY
+              </div>
+              <div className="flex flex-wrap gap-6 text-xs">
+                <div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>STAKE PER RESPONSE</div>
+                  <div style={{ color: "var(--text-primary)", fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>
+                    {(Number(taskEconomy.interactionStake) / 1e6).toFixed(3)} USDC
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>REWARD PER APPROVAL</div>
+                  <div style={{ color: "var(--pulse)", fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>
+                    {taskEconomy.interactionPool > 0n
+                      ? `~${(Number(taskEconomy.interactionReward) / 1e6).toFixed(3)} USDC`
+                      : "No pool"}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>POOL REMAINING</div>
+                  <div style={{ color: "var(--gold)", fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>
+                    {(Number(taskEconomy.poolRemaining) / 1e6).toFixed(3)} USDC
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {viewMode === "signal" ? (
             <div className="panel">
               {isRevealActive && isRevealPhase ? (
@@ -1194,19 +1317,19 @@ export default function JobDetailsPage() {
               >
                 Deadline Passed - Auto-Start Available
               </div>
-              <div
-                style={{
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: 12,
-                  color: "var(--text-secondary)",
-                  marginBottom: 12,
-                  lineHeight: 1.5
-                }}
-              >
+                <div
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: 12,
+                    color: "var(--text-secondary)",
+                    marginBottom: 12,
+                    lineHeight: 1.5
+                  }}
+                >
                 This task has {safeSubmissions.length} submission{safeSubmissions.length !== 1 ? "s" : ""} - under
-                the {maxApprovals + 5} finalist threshold. The deployed contract does not expose autoStartReveal, so
-                Archon will call selectFinalists with every valid submission and begin the reveal phase that way.
-              </div>
+                the {maxApprovals + 5} finalist threshold. Anyone can trigger reveal phase automatically and promote
+                every valid submission to finalist status.
+                </div>
               <button
                 type="button"
                 className="btn-primary w-full"
@@ -1338,7 +1461,9 @@ export default function JobDetailsPage() {
                         onClick={() => void handleRespond()}
                         disabled={!canInteract || busyAction === "respond" || responseContent.trim().length < 10}
                       >
-                        {busyAction === "respond" ? "Submitting..." : "Submit Response - Stake 2 USDC"}
+                        {busyAction === "respond"
+                          ? "Submitting..."
+                          : `Submit Response - Stake ${(Number(taskEconomy.interactionStake > 0n ? taskEconomy.interactionStake : 2_000_000n) / 1e6).toFixed(2)} USDC`}
                       </button>
                     </div>
                   ) : null}

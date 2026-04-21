@@ -1,7 +1,7 @@
-import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
+import { BrowserProvider, JsonRpcProvider } from "ethers";
 import {
-  contractAddresses,
   getReadProvider,
+  getJobContract,
   isValidSubmission,
   parseSubmission,
   ZERO_ADDRESS
@@ -56,17 +56,7 @@ export async function buildTaskHeatmap(
 ): Promise<TaskHeatmap> {
   console.log("[heatmap] Building for task:", taskId);
   const readProvider = provider ?? getReadProvider();
-  const jobContract = new Contract(
-    contractAddresses.job,
-    [
-      "function getSubmissions(uint256 jobId) view returns (tuple(uint256 submissionId,address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward,uint256 buildOnBonus,bool isBuildOnWinner)[])",
-      "function getSubmissionResponses(uint256 submissionId) view returns (uint256[])",
-      "function getResponse(uint256 responseId) view returns (tuple(uint256 responseId,uint256 parentSubmissionId,uint256 taskId,address responder,uint8 responseType,string contentURI,uint256 stakedAmount,uint256 createdAt,bool stakeSlashed,bool stakeReturned))",
-      "function getRevealPhaseEnd(uint256 jobId) view returns (uint256)",
-      "function isInRevealPhase(uint256 jobId) view returns (bool)"
-    ],
-    readProvider
-  );
+  const jobContract = getJobContract(readProvider);
 
   const peopleMap = new Map<string, PersonSignal>();
 
