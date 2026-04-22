@@ -191,9 +191,8 @@ async function readTask(rawJobId: string) {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const contracts = (contractsJson as { contracts?: Record<string, { address?: string; abi?: ethers.InterfaceAbi }> }).contracts ?? {};
   const jobConfig = contracts.jobContract ?? contracts.job;
-  const readCurrentShape = (job: Record<string, unknown> & unknown[], source: string) => ({
+  const readCurrentShape = (job: Record<string, unknown> & unknown[]) => ({
     jobId,
-    source,
     title: String(job.title ?? job[2] ?? ""),
     description: String(job.description ?? job[3] ?? ""),
     acceptanceCriteria: String(job.description ?? job[3] ?? ""),
@@ -209,7 +208,7 @@ async function readTask(rawJobId: string) {
       const job = await jobContract.getJob(jobId);
       const client = String(job.client ?? job[1] ?? "");
       if (client && client !== ethers.ZeroAddress) {
-        return readCurrentShape(job as Record<string, unknown> & unknown[], "current-v2");
+        return readCurrentShape(job as Record<string, unknown> & unknown[]);
       }
     } catch {
       // Archived contracts below preserve testnet continuity.
@@ -220,7 +219,7 @@ async function readTask(rawJobId: string) {
       const job = await previousV2.getJob(jobId);
       const client = String(job.client ?? job[1] ?? "");
       if (client && client !== ethers.ZeroAddress) {
-        return readCurrentShape(job as Record<string, unknown> & unknown[], "prev-v2");
+        return readCurrentShape(job as Record<string, unknown> & unknown[]);
       }
     } catch {
       // Fall through to the original V1 contract.
@@ -232,7 +231,7 @@ async function readTask(rawJobId: string) {
     const job = await previousV2.getJob(jobId);
     const client = String(job.client ?? job[1] ?? "");
     if (client && client !== ethers.ZeroAddress) {
-      return readCurrentShape(job as Record<string, unknown> & unknown[], "prev-v2");
+      return readCurrentShape(job as Record<string, unknown> & unknown[]);
     }
     throw new Error("Task not found");
   }
@@ -246,7 +245,6 @@ async function readTask(rawJobId: string) {
 
   return {
     jobId,
-    source: "v1",
     title: String(job.title ?? job[2] ?? ""),
     description: String(job.description ?? job[3] ?? ""),
     acceptanceCriteria: String(job.description ?? job[3] ?? ""),

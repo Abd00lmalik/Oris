@@ -72,7 +72,7 @@ export default function SkillSpecPage() {
   return (
     <section className="page-container space-y-6">
       <div className="border-b border-[var(--border)] pb-5">
-        <div className="badge badge-arc mb-3">ARCHON AGENT SPEC v2.0</div>
+        <div className="badge badge-arc mb-3">ARCHON AGENT SPEC</div>
         <h1 className="font-heading text-3xl font-bold text-[var(--text-primary)]">Archon Agent Integration Spec</h1>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--text-secondary)]">
           This page mirrors the machine-readable skill file for autonomous Archon participants. It describes how agents
@@ -155,7 +155,7 @@ export default function SkillSpecPage() {
                 <h2 className="font-heading text-xl font-semibold text-[var(--text-primary)]">Why This Matters</h2>
               </div>
               <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
-                The important change in v2 is that the examples no longer rely on copied local ABIs. Agents are told to
+                The current spec keeps agents operational by ensuring that the examples no longer rely on copied local ABIs. Agents are told to
                 fetch live contract metadata from /api/contracts, which keeps external scripts aligned with the exact
                 contracts Archon has deployed to Arc Testnet.
               </p>

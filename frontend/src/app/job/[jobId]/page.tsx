@@ -9,28 +9,14 @@ import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
 import {
   deriveDisplayStatus,
   expectedChainId,
-  fetchApprovedAgentCount,
-  fetchIsInRevealPhase,
-  fetchJob,
   fetchJobCredentialCooldownSeconds,
-  fetchJobEscrow,
-  fetchJobsCreatedCount,
   fetchLastJobCredentialClaim,
-  fetchMaxApprovalsForJob,
   fetchPendingReleases,
-  fetchRevealPhaseEnd,
-  fetchSelectedFinalists,
-  fetchSubmissionForAgent,
-  fetchSubmissions,
-  fetchTaskEconomy,
   formatTaskDescription,
   formatTaskTitle,
   formatTimestamp,
   formatUsdc,
-  getJobContract,
-  getJobReadContract,
   getReadProvider,
-  getJobSignalsReadContract,
   isValidSubmission,
   parseSubmission,
   JobRecord,
@@ -38,24 +24,13 @@ import {
   RESPONSE_TYPE,
   SubmissionRecord,
   TaskEconomyRecord,
-  txAcceptJob,
-  txAutoStartReveal,
-  txClaimJobCredential,
   txClaimInteractionReward,
-  txFinalizeWinners,
-  txRespondWithNanopaymentIntent,
-  txSelectFinalists,
-  txSettleRevealPhase,
-  txSlashResponseStake,
-  txSubmitDeliverable,
+  txInteract,
   txReturnStake,
   ZERO_ADDRESS
 } from "@/lib/contracts";
-import {
-  fetchLegacyJob,
-  fetchLegacySubmissions
-} from "@/lib/legacy-contracts";
-import { getDisplayId, parseTaskRouteParam } from "@/lib/task-id";
+import { fetchAllTasks, fetchTaskById, getContractForSource, loadTaskSubmissions, unifiedTaskToJobRecord, UnifiedTask } from "@/lib/task-adapter";
+import { parseTaskRouteParam } from "@/lib/task-id";
 import { useWallet } from "@/lib/wallet-context";
 
 type ViewMode = "signal" | "list" | "timeline";
@@ -87,6 +62,17 @@ function parseUsdcInput(value: string): bigint | null {
   return BigInt(whole || "0") * 1_000_000n + BigInt(frac.slice(0, 6).padEnd(6, "0"));
 }
 
+function coerceBigInt(value: unknown, fallback = 0n): bigint {
+  try {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "number") return BigInt(Math.trunc(value));
+    if (typeof value === "string" && value.trim()) return BigInt(value);
+  } catch {
+    // Fall through to fallback.
+  }
+  return fallback;
+}
+
 function contentToURI(content: string): string {
   const json = JSON.stringify({
     content,
@@ -94,96 +80,6 @@ function contentToURI(content: string): string {
     type: "archon-response"
   });
   return `data:application/json;base64,${btoa(unescape(encodeURIComponent(json)))}`;
-}
-
-async function retryRead<T>(read: () => Promise<T | null>, retries = 3): Promise<T | null> {
-  for (let attempt = 0; attempt < retries; attempt += 1) {
-    const result = await read().catch(() => null);
-    if (result) return result;
-    if (attempt < retries - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
-    }
-  }
-  return null;
-}
-
-async function loadSubmissionsFromContract(
-  contract: ReturnType<typeof getJobContract>,
-  taskId: number
-): Promise<SubmissionRecord[]> {
-  console.log("[submissions] Loading for task:", taskId);
-
-  try {
-    const raw = await contract.getSubmissions(taskId);
-    const arr = Array.from(raw ?? []);
-    console.log("[DIAG:getSubmissions] jobId:", taskId);
-    console.log("[DIAG:getSubmissions] raw length:", arr.length);
-    console.log("[DIAG:getSubmissions] first item:", arr?.[0]);
-    if (arr?.[0]) {
-      const first = arr[0] as Record<string, unknown> & unknown[];
-      console.log("[DIAG:getSubmissions] agent field:", first.agent ?? first[0] ?? first[1]);
-      console.log("[DIAG:getSubmissions] all keys:", Object.keys(first));
-    }
-    try {
-      const countJob = await contract.getJob(taskId);
-      console.log("[DIAG:submissionCount]:", String(countJob.submissionCount ?? countJob[8] ?? ""));
-    } catch (error) {
-      console.log("[DIAG:submissionCount] not readable:", error instanceof Error ? error.message.slice(0, 80) : String(error).slice(0, 80));
-    }
-    try {
-      const agent0 = await contract.submittedAgents(taskId, 0);
-      console.log("[DIAG:submittedAgents[0]]:", agent0);
-    } catch (error) {
-      console.log("[DIAG:submittedAgents] not readable:", error instanceof Error ? error.message.slice(0, 80) : String(error).slice(0, 80));
-    }
-    console.log("[submissions] getSubmissions returned:", arr.length);
-    const valid = arr.filter((submission) => isValidSubmission(submission)).map((submission) => parseSubmission(submission));
-    if (valid.length > 0) {
-      console.log("[submissions] Valid count:", valid.length);
-      return valid;
-    }
-  } catch (error) {
-    console.warn("[submissions] getSubmissions failed:", error);
-  }
-
-  try {
-    const fallback = await fetchSubmissions(taskId);
-    if (fallback.length > 0) {
-      console.log("[submissions] Fallback helper count:", fallback.length);
-      return fallback;
-    }
-  } catch (error) {
-    console.warn("[submissions] helper fallback failed:", error);
-  }
-
-  try {
-    const filter = contract.filters?.DeliverableSubmitted?.(taskId);
-    const events = filter ? await contract.queryFilter(filter) : [];
-    console.log("[submissions] Events found:", events.length);
-    const fromEvents: SubmissionRecord[] = [];
-
-    for (const event of events) {
-      const agent = String((event as { args?: unknown[] }).args?.[1] ?? "");
-      if (!agent) continue;
-      try {
-        const rawSubmission = await contract.getSubmission(taskId, agent);
-        if (isValidSubmission(rawSubmission)) {
-          fromEvents.push(parseSubmission(rawSubmission));
-        }
-      } catch {
-        // Skip agents whose submission rows cannot be read.
-      }
-    }
-
-    if (fromEvents.length > 0) {
-      return fromEvents;
-    }
-  } catch (error) {
-    console.warn("[submissions] event fallback failed:", error);
-  }
-
-  console.warn("[submissions] All methods failed - returning empty");
-  return [];
 }
 
 function DeadlineCountdown({ deadline }: { deadline: number }) {
@@ -519,13 +415,14 @@ export default function JobDetailsPage() {
   const { account, browserProvider, connect, signer } = useWallet();
   const rawJobParam = params.jobId ?? "";
   const routeInfo = useMemo(() => parseTaskRouteParam(rawJobParam), [rawJobParam]);
-  const jobId = routeInfo.jobId;
+  const routeJobId = routeInfo.jobId;
   const forceLegacy = routeInfo.isArchived || searchParams.get("source") === "legacy";
   const archiveKey = routeInfo.archiveKey;
 
+  const [task, setTask] = useState<UnifiedTask | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
-  const [isPastTask, setIsPastTask] = useState(false);
-  const [displayTaskId, setDisplayTaskId] = useState(`#${Number.isFinite(jobId) ? jobId : rawJobParam}`);
+  const jobId = task?.jobId ?? routeJobId;
+  const [displayTaskId, setDisplayTaskId] = useState(`#${Number.isFinite(routeJobId) ? routeJobId : rawJobParam}`);
   const [jobLoading, setJobLoading] = useState(true);
   const [jobError, setJobError] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
@@ -621,8 +518,14 @@ export default function JobDetailsPage() {
     return provider;
   };
 
+  const getTaskWriteContract = async () => {
+    if (!task) throw new Error("Task is still loading.");
+    const provider = await withProvider();
+    return getContractForSource(task.sourceId, await provider.getSigner());
+  };
+
   const loadTask = useCallback(async () => {
-    if (!Number.isInteger(jobId) || jobId < 0) {
+    if (!Number.isInteger(routeJobId) || routeJobId < 0) {
       setJobLoading(false);
       setJobError(`Invalid task ID: ${rawJobParam}`);
       setJob(null);
@@ -634,113 +537,72 @@ export default function JobDetailsPage() {
 
     try {
       const readProvider = browserProvider ?? getReadProvider();
-      if (forceLegacy) {
-        const legacyJob = await retryRead(() => fetchLegacyJob(getReadProvider(), jobId, archiveKey));
+      const allTasksPromise = fetchAllTasks(getReadProvider());
+      const displayId = Number(rawJobParam);
+      let unifiedTask =
+        !forceLegacy && Number.isInteger(displayId) && displayId > 0
+          ? await fetchTaskById(displayId, getReadProvider())
+          : null;
 
-        if (!legacyJob) {
-          setJobError(`Archived task #${jobId} not found`);
-          setJob(null);
-          return;
-        }
-        const legacySubmissions = await fetchLegacySubmissions(getReadProvider(), jobId, legacyJob.archiveKey);
+      if (!unifiedTask) {
+        const allTasks = await allTasksPromise;
+        const sourceId = archiveKey === "prev-v2" ? "prev" : archiveKey === "v1" ? "archive" : "current";
+        unifiedTask = forceLegacy
+          ? allTasks.find((candidate) => candidate.sourceId === sourceId && candidate.jobId === routeJobId) ?? null
+          : allTasks.find((candidate) => candidate.sourceId === "current" && candidate.jobId === routeJobId) ?? null;
+      }
 
-        setIsPastTask(true);
-        setJob(legacyJob);
-        setSubmissions(legacySubmissions);
-        setEscrowLocked(BigInt(legacyJob.rewardUSDC || "0") - BigInt(legacyJob.paidOutUSDC || "0"));
-        setApprovalsUsed(legacyJob.approvedCount);
-        setMaxApprovals(Math.max(1, legacyJob.maxApprovals || legacyJob.approvedCount || 1));
-        setSelectedFinalists([]);
-        setRevealPhaseEnd(0);
-        setIsRevealPhase(false);
-        setTaskEconomy({
-          interactionStake: 2_000_000n,
-          interactionReward: 0n,
-          interactionPool: 0n,
-          interactionPoolFunded: false,
-          poolRemaining: 0n
-        });
-        setCreatorPostedCount(0);
-        setBuildOnParents({});
-        if (account) {
-          setMySubmission(
-            legacySubmissions.find((submission) => submission.agent.toLowerCase() === account.toLowerCase()) ?? null
-          );
-        } else {
-          setMySubmission(null);
-        }
-        setIsAccepted(false);
-        setClaimReadyAt(null);
+      if (!unifiedTask) {
+        setJobError(`Task #${rawJobParam} not found`);
+        setJob(null);
+        setTask(null);
         return;
       }
 
-      const jobData = await retryRead(() => fetchJob(jobId));
-      if (!jobData) {
-        const legacyJob = await retryRead(() => fetchLegacyJob(getReadProvider(), jobId));
+      setTask(unifiedTask);
 
-        if (!legacyJob) {
-          setJobError(`Task #${jobId} not found`);
-          setJob(null);
-          return;
-        }
-        const legacySubmissions = await fetchLegacySubmissions(getReadProvider(), jobId, legacyJob.archiveKey);
+      const readContract = getContractForSource(unifiedTask.sourceId, readProvider);
+      const jobData = unifiedTaskToJobRecord(unifiedTask);
+      const rawSubmissions = await loadTaskSubmissions(unifiedTask, readProvider);
 
-        setIsPastTask(true);
-        setJob(legacyJob);
-        setSubmissions(legacySubmissions);
-        setEscrowLocked(BigInt(legacyJob.rewardUSDC || "0") - BigInt(legacyJob.paidOutUSDC || "0"));
-        setApprovalsUsed(legacyJob.approvedCount);
-        setMaxApprovals(Math.max(1, legacyJob.maxApprovals || legacyJob.approvedCount || 1));
-        setSelectedFinalists([]);
-        setRevealPhaseEnd(0);
-        setIsRevealPhase(false);
-        setTaskEconomy({
-          interactionStake: 2_000_000n,
-          interactionReward: 0n,
-          interactionPool: 0n,
-          interactionPoolFunded: false,
-          poolRemaining: 0n
-        });
-        setCreatorPostedCount(0);
-        setBuildOnParents({});
-        if (account) {
-          setMySubmission(
-            legacySubmissions.find((submission) => submission.agent.toLowerCase() === account.toLowerCase()) ?? null
-          );
-        } else {
-          setMySubmission(null);
-        }
-        setIsAccepted(false);
-        setClaimReadyAt(null);
-        return;
-      }
+      let finals: string[] = [];
+      let revealEnd = Number(unifiedTask.revealPhaseEnd);
+      let revealOpen = unifiedTask.isInRevealPhase;
+      let economy: TaskEconomyRecord = {
+        interactionStake: 2_000_000n,
+        interactionReward: 0n,
+        interactionPool: 0n,
+        interactionPoolFunded: false,
+        poolRemaining: 0n
+      };
 
-      setIsPastTask(false);
-      let readContract = getJobContract(readProvider);
-      if (account && browserProvider) {
-        try {
-          readContract = getJobContract(await browserProvider.getSigner());
-        } catch {
-          readContract = getJobContract(readProvider);
-        }
-      }
-      const [rawSubmissions, escrow, used, maxAllowed, finals, revealEnd, revealOpen, economy] =
-        await Promise.all([
-          loadSubmissionsFromContract(readContract, jobId),
-          fetchJobEscrow(jobId),
-          fetchApprovedAgentCount(jobId),
-          fetchMaxApprovalsForJob(jobId),
-          fetchSelectedFinalists(jobId),
-          fetchRevealPhaseEnd(jobId),
-          fetchIsInRevealPhase(jobId),
-          fetchTaskEconomy(readProvider, jobId)
+      if (unifiedTask.caps.hasSignalMap || unifiedTask.caps.canSelectFinalists || unifiedTask.caps.canInteract) {
+        const [finalRows, revealEndRaw, revealOpenRaw, economyRaw, poolRemainingRaw] = await Promise.all([
+          readContract.getSelectedFinalists(unifiedTask.jobId).catch(() => []),
+          readContract.getRevealPhaseEnd(unifiedTask.jobId).catch(() => unifiedTask.revealPhaseEnd),
+          readContract.isInRevealPhase(unifiedTask.jobId).catch(() => unifiedTask.isInRevealPhase),
+          readContract.getTaskEconomy(unifiedTask.jobId).catch(() => null),
+          readContract.getInteractionPoolRemaining(unifiedTask.jobId).catch(() => 0n)
         ]);
+        finals = Array.from(finalRows as string[]);
+        revealEnd = Number(revealEndRaw);
+        revealOpen = Boolean(revealOpenRaw);
+        if (economyRaw) {
+          const raw = economyRaw as Record<string, unknown> & unknown[];
+          economy = {
+            interactionStake: coerceBigInt(raw.interactionStake ?? raw[0] ?? 2_000_000n, 2_000_000n),
+            interactionReward: coerceBigInt(raw.interactionReward ?? raw[1] ?? 0n),
+            interactionPool: coerceBigInt(raw.interactionPool ?? raw[2] ?? 0n),
+            interactionPoolFunded: Boolean(raw.interactionPoolFunded ?? raw[3] ?? false),
+            poolRemaining: coerceBigInt(poolRemainingRaw)
+          };
+        }
+      }
 
-      const contract = getJobSignalsReadContract();
       const parentEntries = await Promise.all(
         finals.map(async (finalist) => {
           try {
-            const parent = String(await contract.buildOnParentByResponder(jobId, finalist));
+            const parent = String(await readContract.buildOnParentByResponder(unifiedTask.jobId, finalist));
             return [finalist.toLowerCase(), parent] as const;
           } catch {
             return [finalist.toLowerCase(), ZERO_ADDRESS] as const;
@@ -750,14 +612,14 @@ export default function JobDetailsPage() {
 
       setJob({ ...jobData, revealPhaseEnd: BigInt(revealEnd || 0) });
       setSubmissions(rawSubmissions);
-      setEscrowLocked(escrow);
-      setApprovalsUsed(used);
-      setMaxApprovals(Math.max(1, maxAllowed || 1));
+      setEscrowLocked(coerceBigInt(jobData.rewardUSDC) - coerceBigInt(jobData.paidOutUSDC));
+      setApprovalsUsed(jobData.approvedCount);
+      setMaxApprovals(Math.max(1, jobData.maxApprovals || 1));
       setSelectedFinalists(finals);
       setRevealPhaseEnd(revealEnd);
       setIsRevealPhase(revealOpen);
       setTaskEconomy(economy);
-      setCreatorPostedCount(await fetchJobsCreatedCount(jobData.client));
+      setCreatorPostedCount((await allTasksPromise).filter((candidate) => candidate.client.toLowerCase() === jobData.client.toLowerCase()).length);
       setBuildOnParents(
         parentEntries.reduce<Record<string, string>>((acc, [key, value]) => {
           acc[key] = value;
@@ -766,10 +628,9 @@ export default function JobDetailsPage() {
       );
 
       if (account) {
-        const readContract = getJobReadContract();
-        const [accepted, mine, lastClaim, cooldown] = await Promise.all([
-          readContract.isAccepted(jobId, account).catch(() => false),
-          fetchSubmissionForAgent(jobId, account),
+        const mine = rawSubmissions.find((submission) => submission.agent.toLowerCase() === account.toLowerCase()) ?? null;
+        const [accepted, lastClaim, cooldown] = await Promise.all([
+          readContract.isAccepted(unifiedTask.jobId, account).catch(() => Boolean(mine)),
           fetchLastJobCredentialClaim(account),
           fetchJobCredentialCooldownSeconds()
         ]);
@@ -788,10 +649,10 @@ export default function JobDetailsPage() {
     } finally {
       setJobLoading(false);
     }
-  }, [account, archiveKey, browserProvider, forceLegacy, jobId, rawJobParam]);
+  }, [account, archiveKey, browserProvider, forceLegacy, rawJobParam, routeJobId]);
 
   const loadHeatmap = useCallback(async () => {
-    if (!Number.isInteger(jobId) || jobId < 0 || forceLegacy) {
+    if (!task?.caps.hasSignalMap || !Number.isInteger(task.jobId) || task.jobId < 0) {
       setHeatmap({ people: [], totalActivity: 0, revealPhaseEnd: 0, isRevealPhase: false });
       setHeatmapLoading(false);
       return;
@@ -799,7 +660,7 @@ export default function JobDetailsPage() {
     setHeatmapLoading(true);
     try {
       const provider = browserProvider ?? getReadProvider();
-      const data = await buildTaskHeatmap(provider, Number(jobId));
+      const data = await buildTaskHeatmap(provider, Number(task.jobId), task.sourceId);
       setHeatmap(data);
     } catch (error) {
       console.warn("[heatmap] load error:", error);
@@ -807,12 +668,18 @@ export default function JobDetailsPage() {
     } finally {
       setHeatmapLoading(false);
     }
-  }, [browserProvider, forceLegacy, jobId]);
+  }, [browserProvider, task]);
 
   useEffect(() => {
     void loadTask();
     void loadHeatmap();
   }, [loadTask, loadHeatmap]);
+
+  useEffect(() => {
+    if (task && !task.caps.hasSignalMap && viewMode === "signal") {
+      setViewMode("list");
+    }
+  }, [task, viewMode]);
 
   useEffect(() => {
     const element = mapContainerRef.current;
@@ -838,7 +705,7 @@ export default function JobDetailsPage() {
   }, [claimReadyAt]);
 
   const refreshPendingReleases = useCallback(async () => {
-    if (!account || isPastTask || !Number.isInteger(jobId) || jobId < 0) {
+    if (!account || task?.sourceId !== "current" || !Number.isInteger(jobId) || jobId < 0) {
       setPendingReleases([]);
       return;
     }
@@ -851,15 +718,15 @@ export default function JobDetailsPage() {
       console.warn("[releases] load failed:", error);
       setPendingReleases([]);
     }
-  }, [account, browserProvider, isPastTask, jobId]);
+  }, [account, browserProvider, jobId, task?.sourceId]);
 
   useEffect(() => {
     void refreshPendingReleases();
   }, [refreshPendingReleases, job?.status, revealPhaseEnd, selectedFinalists.length]);
 
   useEffect(() => {
-    if (!Number.isInteger(jobId) || jobId < 0 || forceLegacy) return () => undefined;
-    const contract = getJobSignalsReadContract();
+    if (!task?.caps.hasSignalMap || !Number.isInteger(jobId) || jobId < 0) return () => undefined;
+    const contract = getContractForSource(task.sourceId, getReadProvider());
     const refresh = async (id: bigint | number) => {
       if (Number(id) === jobId) {
         await loadTask();
@@ -880,7 +747,7 @@ export default function JobDetailsPage() {
       contract.off("FinalistsSelected", onFinalists);
       contract.off("WinnersFinalized", onWinners);
     };
-  }, [forceLegacy, jobId, loadTask, loadHeatmap]);
+  }, [jobId, loadTask, loadHeatmap, task?.caps.hasSignalMap, task?.sourceId]);
 
   useEffect(() => {
     if (!selectedFinalists.length) {
@@ -890,7 +757,8 @@ export default function JobDetailsPage() {
 
     let active = true;
     const loadFinalists = async () => {
-      const contract = getJobReadContract();
+      if (!task) return;
+      const contract = getContractForSource(task.sourceId, getReadProvider());
       const byAgent: Record<string, SubmissionRecord | null> = {};
       let cachedAllSubmissions: SubmissionRecord[] | null = null;
 
@@ -906,7 +774,7 @@ export default function JobDetailsPage() {
 
         try {
           if (!cachedAllSubmissions) {
-            cachedAllSubmissions = await fetchSubmissions(jobId);
+            cachedAllSubmissions = await loadTaskSubmissions(task, getReadProvider());
           }
           byAgent[key] =
             cachedAllSubmissions.find(
@@ -924,13 +792,13 @@ export default function JobDetailsPage() {
     return () => {
       active = false;
     };
-  }, [jobId, selectedFinalists]);
+  }, [jobId, selectedFinalists, task]);
 
   const handleAccept = async () => {
     try {
       setBusyAction("accept");
-      const provider = await withProvider();
-      const tx = await txAcceptJob(provider, jobId);
+      const contract = await getTaskWriteContract();
+      const tx = await contract.acceptJob(jobId);
       setStatusMessage(`Accept tx: ${tx.hash}`);
       await tx.wait();
       await loadTask();
@@ -945,8 +813,10 @@ export default function JobDetailsPage() {
     event.preventDefault();
     try {
       setBusyAction("submit");
-      const provider = await withProvider();
-      const tx = await txSubmitDeliverable(provider, jobId, deliverableLink.trim());
+      const contract = await getTaskWriteContract();
+      const tx = typeof contract.interface.hasFunction === "function" && contract.interface.hasFunction("submitDirect")
+        ? await contract.submitDirect(BigInt(jobId), deliverableLink.trim())
+        : await contract.submitDeliverable(jobId, deliverableLink.trim());
       setStatusMessage(`Submit tx: ${tx.hash}`);
       await tx.wait();
       setDeliverableLink("");
@@ -997,13 +867,14 @@ export default function JobDetailsPage() {
       }
 
       const contentUri = contentToURI(responseContent.trim());
-      const { txHash, paymentIntent } = await txRespondWithNanopaymentIntent(
+      const { txHash, path } = await txInteract(
         signer,
+        task?.sourceId ?? "current",
         BigInt(selectedSubmission.submissionId),
         responseType,
         contentUri
       );
-      console.log("[nanopayment:intent]", paymentIntent);
+      console.log("[interact] path:", path);
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
@@ -1024,7 +895,10 @@ export default function JobDetailsPage() {
 
     try {
       setBusyAction("slash");
-      const txHash = await txSlashResponseStake(signer, responseId);
+      const contract = getContractForSource(task?.sourceId ?? "current", signer);
+      const tx = await contract.slashResponseStake(responseId);
+      await tx.wait();
+      const txHash = tx.hash as string;
       setStatusMessage(`Stake slashed: ${txHash}`);
       await loadHeatmap();
       await loadTask();
@@ -1039,8 +913,6 @@ export default function JobDetailsPage() {
     if (!agents.length) return;
     try {
       setBusyAction("select");
-      const provider = await withProvider();
-      const activeSigner = await provider.getSigner();
       const unique = [
         ...new Set(
           agents
@@ -1049,7 +921,10 @@ export default function JobDetailsPage() {
             .filter((value): value is string => Boolean(value))
         )
       ];
-      const txHash = await txSelectFinalists(activeSigner, BigInt(jobId), unique);
+      const contract = await getTaskWriteContract();
+      const tx = await contract.selectFinalists(BigInt(jobId), unique);
+      await tx.wait();
+      const txHash = tx.hash as string;
       setStatusMessage(`Finalists tx: ${txHash}`);
       await loadTask();
       await loadHeatmap();
@@ -1068,7 +943,10 @@ export default function JobDetailsPage() {
     try {
       setBusyAction("autoReveal");
       try {
-        const txHash = await txAutoStartReveal(signer, BigInt(jobId));
+        const contract = getContractForSource(task?.sourceId ?? "current", signer);
+        const tx = await contract.autoStartReveal(BigInt(jobId));
+        await tx.wait();
+        const txHash = tx.hash as string;
         setStatusMessage(`Reveal phase started automatically: ${txHash}`);
       } catch (error) {
         const allAgents = [
@@ -1082,7 +960,10 @@ export default function JobDetailsPage() {
         if (!allAgents.length) {
           throw new Error("No valid submissions available to promote.");
         }
-        const txHash = await txSelectFinalists(signer, BigInt(jobId), allAgents);
+        const contract = getContractForSource(task?.sourceId ?? "current", signer);
+        const tx = await contract.selectFinalists(BigInt(jobId), allAgents);
+        await tx.wait();
+        const txHash = tx.hash as string;
         setStatusMessage(`Reveal phase started via selectFinalists fallback: ${txHash}`);
       }
       await loadTask();
@@ -1106,9 +987,10 @@ export default function JobDetailsPage() {
           amounts.push(parsed);
         }
       }
-      const provider = await withProvider();
-      const activeSigner = await provider.getSigner();
-      const txHash = await txFinalizeWinners(activeSigner, BigInt(jobId), winners, amounts);
+      const contract = await getTaskWriteContract();
+      const tx = await contract.finalizeWinners(BigInt(jobId), winners, amounts);
+      await tx.wait();
+      const txHash = tx.hash as string;
       setStatusMessage(`Finalize tx: ${txHash}`);
       await loadTask();
       await loadHeatmap();
@@ -1122,8 +1004,8 @@ export default function JobDetailsPage() {
   const handleClaim = async () => {
     try {
       setBusyAction("claim");
-      const provider = await withProvider();
-      const tx = await txClaimJobCredential(provider, jobId);
+      const contract = await getTaskWriteContract();
+      const tx = await contract.claimCredential(jobId);
       setStatusMessage(`Claim tx: ${tx.hash}`);
       await tx.wait();
       await loadTask();
@@ -1166,7 +1048,10 @@ export default function JobDetailsPage() {
 
     try {
       setBusyAction("settle");
-      const txHash = await txSettleRevealPhase(signer, BigInt(jobId));
+      const contract = getContractForSource(task?.sourceId ?? "current", signer);
+      const tx = await contract.settleRevealPhase(BigInt(jobId));
+      await tx.wait();
+      const txHash = tx.hash as string;
       setStatusMessage(`Reveal phase settled: ${txHash}`);
       await refreshPendingReleases();
       await loadTask();
@@ -1195,8 +1080,8 @@ export default function JobDetailsPage() {
   );
   const awaitingSelection = Boolean(job && submissionDeadlinePassed && (job.status === 2 || job.status === 0 || job.status === 1));
   const canAutoReveal = Boolean(
-    !isPastTask &&
-    job &&
+    task?.caps.canAutoReveal &&
+      job &&
       displayStatus?.canAutoReveal &&
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
@@ -1204,15 +1089,15 @@ export default function JobDetailsPage() {
       safeSubmissions.length <= Number(maxApprovals) + 5
   );
   const canManualReveal = Boolean(
-    !isPastTask &&
-    job &&
+    task?.caps.canSelectFinalists &&
+      job &&
       submissionDeadlinePassed &&
       (job.status === 0 || job.status === 1 || job.status === 2) &&
       safeSubmissions.length > Number(maxApprovals) + 5
   );
   const nowSeconds = Math.floor(Date.now() / 1000);
   const isRevealActive = Boolean(job?.status === 4 && revealEndValue > 0 && nowSeconds <= revealEndValue);
-  const shouldShowSignalMap = Boolean(job?.status === 4 || job?.status === 5);
+  const shouldShowSignalMap = Boolean(task?.caps.hasSignalMap);
   const isSelectedFinalist = Boolean(
     selectedSubmission && finalistSet.has(selectedSubmission.agent.toLowerCase())
   );
@@ -1220,7 +1105,7 @@ export default function JobDetailsPage() {
     account && selectedSubmission && account.toLowerCase() === selectedSubmission.agent.toLowerCase()
   );
   const canInteract = Boolean(
-    !isPastTask &&
+    task?.caps.canInteract &&
       displayStatus?.canInteract &&
       isRevealActive &&
       signer &&
@@ -1230,14 +1115,14 @@ export default function JobDetailsPage() {
       !isOwnSelectedSubmission
   );
   const canSettle = Boolean(
-    !isPastTask &&
+    task?.caps.canSettleRevealPhase &&
       job &&
       isConnected &&
       signer &&
       (job.status === 5 ||
         (job.status === 4 && revealEndValue > 0 && nowSeconds > revealEndValue + 2 * 24 * 60 * 60))
   );
-  const postRevealComplete = Boolean(!isPastTask && job && (job.status === 5 || revealEnded));
+  const postRevealComplete = Boolean(task?.sourceId === "current" && job && (job.status === 5 || revealEnded));
   const isParticipant = Boolean(hasSubmitted || pendingReleases.length > 0);
   const totalPendingRelease = pendingReleases.reduce(
     (sum, release) => sum + release.stakeAmount + release.rewardAmount,
@@ -1245,21 +1130,19 @@ export default function JobDetailsPage() {
   );
   useEffect(() => {
     let active = true;
-    if (!job) {
-      setDisplayTaskId(`#${Number.isFinite(jobId) ? jobId : rawJobParam}`);
+    if (!job || !task) {
+      setDisplayTaskId(`#${Number.isFinite(routeJobId) ? routeJobId : rawJobParam}`);
       return () => {
         active = false;
       };
     }
 
-    getDisplayId(job.jobId, isPastTask, (job as JobRecord & { archiveKey?: string }).archiveKey ?? archiveKey).then((value) => {
-      if (active) setDisplayTaskId(value);
-    });
+    if (active) setDisplayTaskId(`#${task.displayId}`);
 
     return () => {
       active = false;
     };
-  }, [archiveKey, isPastTask, job, jobId, rawJobParam]);
+  }, [job, rawJobParam, routeJobId, task]);
 
   useEffect(() => {
     console.log("[revealCheck]", {
@@ -1354,13 +1237,15 @@ export default function JobDetailsPage() {
 
         <div className="space-y-4">
           <div className="panel-elevated flex gap-2">
-            <button
-              type="button"
-              className={viewMode === "signal" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"}
-              onClick={() => setViewMode("signal")}
-            >
-              SIGNAL MAP
-            </button>
+            {task?.caps.hasSignalMap ? (
+              <button
+                type="button"
+                className={viewMode === "signal" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"}
+                onClick={() => setViewMode("signal")}
+              >
+                SIGNAL MAP
+              </button>
+            ) : null}
             <button
               type="button"
               className={viewMode === "list" ? "btn-primary px-3 py-2 text-xs" : "btn-ghost px-3 py-2 text-xs"}
@@ -1404,6 +1289,10 @@ export default function JobDetailsPage() {
               >
                 INTERACTION ECONOMY
               </div>
+              <div className="mb-3 text-xs text-[var(--text-secondary)]">
+                Arc settles task state and USDC movement. Circle authorizes paid access and EIP-3009 interaction
+                transfers where the deployed task contract supports it.
+              </div>
               <div className="flex flex-wrap gap-6 text-xs">
                 <div>
                   <div style={{ color: "var(--text-muted)", fontSize: 10 }}>STAKE PER RESPONSE</div>
@@ -1446,6 +1335,7 @@ export default function JobDetailsPage() {
                     containerWidth={Math.max(300, mapDimensions.w - 4)}
                     containerHeight={Math.max(320, mapDimensions.h)}
                     taskId={jobId}
+                    sourceId={task?.sourceId}
                     provider={browserProvider ?? getReadProvider()}
                     isCreator={isCreator}
                     onViewSubmissions={(address) => {
@@ -1469,7 +1359,7 @@ export default function JobDetailsPage() {
           ) : null}
 
           {viewMode === "list" ? (
-            !isPastTask && !isCreator && !shouldShowSignalMap ? (
+            !task?.caps.showsSubmissionsToAll && !isCreator && !shouldShowSignalMap ? (
               <div className="flex h-48 flex-col items-center justify-center border border-[var(--border)] p-6 text-center">
                 <div className="mb-3 font-mono text-2xl text-[var(--arc)]">?</div>
                 <div className="font-heading mb-2 text-base font-semibold">Submissions are sealed</div>
@@ -1579,7 +1469,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {!isPastTask && canAutoReveal ? (
+          {canAutoReveal ? (
             <div
               className="border p-4"
               style={{
@@ -1652,7 +1542,7 @@ export default function JobDetailsPage() {
             </div>
           ) : null}
 
-          {!isPastTask && isConnected && !isCreator ? (
+          {isConnected && !isCreator ? (
             <>
               <div className="section-header">YOUR ACTIONS</div>
 
@@ -1808,6 +1698,12 @@ export default function JobDetailsPage() {
                         placeholder="Explain your response..."
                       />
 
+                      <div className="font-mono text-[11px] text-[var(--text-muted)]">
+                        {task?.caps.canRespondWithAuthorization
+                          ? "Authorization path: EIP-3009 is attempted first; classic USDC approval is used if the token rejects it."
+                          : "Authorization path: USDC approval, then onchain response transaction."}
+                      </div>
+
                       <button
                         type="button"
                         className="btn-primary w-full"
@@ -1826,7 +1722,7 @@ export default function JobDetailsPage() {
             </>
           ) : null}
 
-          {!isPastTask && isConnected && isCreator ? (
+          {isConnected && isCreator ? (
             <>
               {canManualReveal ? (
                 <FinalistSelectionPanel

@@ -5,7 +5,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UserDisplay } from "@/components/ui/user-display";
 import {
-  getJobContract,
   isValidSubmission,
   parseSubmission,
   SubmissionRecord,
@@ -13,6 +12,7 @@ import {
 } from "@/lib/contracts";
 import { DecodedInteraction, decodeInteractionContent } from "@/lib/content-decoder";
 import { PersonSignal, TaskHeatmap } from "@/lib/signal-map";
+import { getContractForSource } from "@/lib/task-adapter";
 import { getProfile } from "@/lib/user-profiles";
 
 type Rect = {
@@ -51,6 +51,7 @@ interface Props {
   containerWidth?: number;
   containerHeight?: number;
   taskId?: number;
+  sourceId?: string;
   provider?: BrowserProvider | JsonRpcProvider | null;
   isCreator?: boolean;
   onViewSubmissions?: (address: string) => void;
@@ -205,9 +206,10 @@ function MiniSignalBar({ buildsOn, critiques }: { buildsOn: number; critiques: n
 async function fetchSubmissionDetail(
   person: PersonSignal,
   taskId: number,
-  provider: BrowserProvider | JsonRpcProvider
+  provider: BrowserProvider | JsonRpcProvider,
+  sourceId: string
 ): Promise<SubmissionDetail> {
-  const contract = getJobContract(provider);
+  const contract = getContractForSource(sourceId, provider);
   let submission: Partial<SubmissionRecord> = {
     submissionId: person.submissionId,
     agent: person.address,
@@ -517,6 +519,7 @@ function PersonBox({
 function SubmissionDetailPanel({
   person,
   taskId,
+  sourceId = "current",
   provider,
   isCreator,
   onClose,
@@ -525,6 +528,7 @@ function SubmissionDetailPanel({
 }: {
   person: PersonSignal;
   taskId?: number;
+  sourceId?: string;
   provider?: BrowserProvider | JsonRpcProvider | null;
   isCreator: boolean;
   onClose: () => void;
@@ -552,7 +556,7 @@ function SubmissionDetailPanel({
     }
 
     setLoading(true);
-    fetchSubmissionDetail(person, taskId, provider)
+    fetchSubmissionDetail(person, taskId, provider, sourceId)
       .then((nextDetail) => {
         if (active) setDetail(nextDetail);
       })
@@ -563,14 +567,14 @@ function SubmissionDetailPanel({
     return () => {
       active = false;
     };
-  }, [person, provider, taskId]);
+  }, [person, provider, sourceId, taskId]);
 
   const handleSlash = async (responseId: bigint) => {
     await onSlashResponse?.(responseId);
     if (provider && taskId !== undefined) {
       setLoading(true);
       try {
-        setDetail(await fetchSubmissionDetail(person, taskId, provider));
+        setDetail(await fetchSubmissionDetail(person, taskId, provider, sourceId));
       } finally {
         setLoading(false);
       }
@@ -668,6 +672,7 @@ export default function SignalMap({
   containerWidth,
   containerHeight,
   taskId,
+  sourceId = "current",
   provider,
   isCreator = false,
   onViewSubmissions,
@@ -793,6 +798,7 @@ export default function SignalMap({
           <SubmissionDetailPanel
             person={selected}
             taskId={taskId}
+            sourceId={sourceId}
             provider={provider}
             isCreator={isCreator}
             onClose={() => setSelected(null)}

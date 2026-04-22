@@ -1,11 +1,11 @@
 import { BrowserProvider, JsonRpcProvider } from "ethers";
 import {
   getReadProvider,
-  getJobContract,
   isValidSubmission,
   parseSubmission,
   ZERO_ADDRESS
 } from "@/lib/contracts";
+import { getContractForSource } from "@/lib/task-adapter";
 import { fetchUserProfile } from "@/lib/user-profiles";
 
 export interface PersonSignal {
@@ -55,11 +55,12 @@ function generateBlockie(address: string): string {
 
 export async function buildTaskHeatmap(
   provider: BrowserProvider | JsonRpcProvider,
-  taskId: number
+  taskId: number,
+  sourceId = "current"
 ): Promise<TaskHeatmap> {
   console.log("[heatmap] Building for task:", taskId);
   const readProvider = provider ?? getReadProvider();
-  const jobContract = getJobContract(readProvider);
+  const jobContract = getContractForSource(sourceId, readProvider);
 
   const peopleMap = new Map<string, PersonSignal>();
 

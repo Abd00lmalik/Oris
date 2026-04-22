@@ -4,26 +4,19 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   fetchAgentTasksByAddress,
-  fetchJobsByAgent,
-  fetchJobsByClient,
   getReadProvider,
-  fetchSubmissionForAgent,
   formatTaskTitle,
-  JobRecord,
   statusLabel,
   SubmissionRecord
 } from "@/lib/contracts";
-import { fetchLegacySubmissions, fetchLegacyTasks } from "@/lib/legacy-contracts";
 import { UserDisplay } from "@/components/ui/user-display";
-import { getDisplayId, makeTaskUrl } from "@/lib/task-id";
+import { fetchAllTasks, getTaskUrl, loadTaskSubmissions, UnifiedTask } from "@/lib/task-adapter";
 import { useWallet } from "@/lib/wallet-context";
 
 type JobWithSubmission = {
-  job: DisplayWorkJob;
+  job: UnifiedTask;
   submission: SubmissionRecord | null;
 };
-
-type DisplayWorkJob = JobRecord & { isPastTask?: boolean; archiveKey?: string };
 
 function submissionActionLabel(submission: SubmissionRecord | null) {
   if (!submission) return "Submit Work";
@@ -34,16 +27,11 @@ function submissionActionLabel(submission: SubmissionRecord | null) {
   return "Open Job";
 }
 
-function taskDisplayKey(job: DisplayWorkJob) {
-  return `task-${job.isPastTask ? job.archiveKey ?? "v1" : "current"}-${job.jobId}`;
-}
-
 export default function MyWorkPage() {
   const { account } = useWallet();
-  const [jobsPosted, setJobsPosted] = useState<DisplayWorkJob[]>([]);
+  const [jobsPosted, setJobsPosted] = useState<UnifiedTask[]>([]);
   const [jobsWorking, setJobsWorking] = useState<JobWithSubmission[]>([]);
   const [agentTasks, setAgentTasks] = useState<Awaited<ReturnType<typeof fetchAgentTasksByAddress>>>([]);
-  const [displayIds, setDisplayIds] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -69,37 +57,27 @@ export default function MyWorkPage() {
       setLoading(true);
       setError("");
       try {
-        const [posted, working, tasks, legacyTasks] = await Promise.all([
-          fetchJobsByClient(account),
-          fetchJobsByAgent(account),
-          fetchAgentTasksByAddress(account),
-          fetchLegacyTasks(getReadProvider())
+        const provider = getReadProvider();
+        const [tasks, agentTaskRows] = await Promise.all([
+          fetchAllTasks(provider),
+          fetchAgentTasksByAddress(account)
         ]);
 
-        const workingWithSubmission = await Promise.all(
-          working.map(async (job): Promise<JobWithSubmission> => ({
-            job,
-            submission: await fetchSubmissionForAgent(job.jobId, account)
-          }))
-        );
-        const archivedPosted = legacyTasks.filter(
-          (job) => job.client.toLowerCase() === account.toLowerCase()
-        );
-        const archivedWorking = (
+        const posted = tasks.filter((task) => task.client.toLowerCase() === account.toLowerCase());
+        const working = (
           await Promise.all(
-            legacyTasks.map(async (job): Promise<JobWithSubmission | null> => {
-              const submissions = await fetchLegacySubmissions(getReadProvider(), job.jobId, job.archiveKey);
-              const submission =
-                submissions.find((entry) => entry.agent.toLowerCase() === account.toLowerCase()) ?? null;
+            tasks.map(async (job): Promise<JobWithSubmission | null> => {
+              const submissions = await loadTaskSubmissions(job, provider);
+              const submission = submissions.find((entry) => entry.agent.toLowerCase() === account.toLowerCase()) ?? null;
               return submission ? { job, submission } : null;
             })
           )
         ).filter((entry): entry is JobWithSubmission => Boolean(entry));
 
         if (!active) return;
-        setJobsPosted([...posted, ...archivedPosted]);
-        setJobsWorking([...workingWithSubmission, ...archivedWorking]);
-        setAgentTasks(tasks);
+        setJobsPosted(posted);
+        setJobsWorking(working);
+        setAgentTasks(agentTaskRows);
       } catch (loadError) {
         if (!active) return;
         setError(loadError instanceof Error ? loadError.message : "Failed to load your work dashboard.");
@@ -113,25 +91,6 @@ export default function MyWorkPage() {
       active = false;
     };
   }, [account]);
-
-  useEffect(() => {
-    let active = true;
-    const resolve = async () => {
-      const map: Record<string, string> = {};
-      for (const task of allTasks) {
-        map[taskDisplayKey(task)] = await getDisplayId(task.jobId, task.isPastTask ?? false, task.archiveKey);
-      }
-      if (active) setDisplayIds(map);
-    };
-    if (allTasks.length > 0) {
-      void resolve();
-    } else {
-      setDisplayIds({});
-    }
-    return () => {
-      active = false;
-    };
-  }, [allTasks]);
 
   return (
     <section className="space-y-5">
@@ -162,10 +121,10 @@ export default function MyWorkPage() {
             ) : (
               <div className="mt-3 space-y-3">
                 {jobsPosted.map((job) => (
-                  <article key={taskDisplayKey(job)} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                  <article key={`posted-${job.displayId}`} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="font-semibold text-[#EAEAF0]">
-                        {displayIds[taskDisplayKey(job)] ?? `#${job.jobId}`} {formatTaskTitle(job.title)}
+                        #{job.displayId} {formatTaskTitle(job.title)}
                       </p>
                       <span className="rounded-full bg-white/5 px-2 py-1 text-xs">{statusLabel(job.status)}</span>
                     </div>
@@ -173,7 +132,7 @@ export default function MyWorkPage() {
                     <div className="mt-2">
                       <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
                     </div>
-                    <Link href={makeTaskUrl(job.jobId, job.isPastTask ?? false, job.archiveKey)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                    <Link href={getTaskUrl(job)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       Review Submissions
                     </Link>
                   </article>
@@ -189,16 +148,16 @@ export default function MyWorkPage() {
             ) : (
               <div className="mt-3 space-y-3">
                 {jobsWorking.map(({ job, submission }) => (
-                  <article key={taskDisplayKey(job)} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
+                  <article key={`working-${job.displayId}`} className="rounded-xl border border-white/10 bg-[#111214] p-4 text-sm text-[#9CA3AF]">
                     <p className="font-semibold text-[#EAEAF0]">
-                      {displayIds[taskDisplayKey(job)] ?? `#${job.jobId}`} {formatTaskTitle(job.title)}
+                      #{job.displayId} {formatTaskTitle(job.title)}
                     </p>
                     <p className="mt-1 text-xs">Status: {submission ? submissionActionLabel(submission) : "Accepted"}</p>
                     <div className="mt-2">
                       <UserDisplay address={job.client} showAvatar={true} avatarSize={22} />
                     </div>
                     {submission?.reviewerNote ? <p className="mt-1 text-xs">Reviewer note: {submission.reviewerNote}</p> : null}
-                    <Link href={makeTaskUrl(job.jobId, job.isPastTask ?? false, job.archiveKey)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
+                    <Link href={getTaskUrl(job)} className="archon-button-secondary mt-3 inline-flex px-3 py-2 text-xs">
                       {submissionActionLabel(submission)}
                     </Link>
                   </article>
@@ -230,8 +189,9 @@ export default function MyWorkPage() {
           </div>
         </>
       ) : null}
+
+      {allTasks.length > 0 ? null : null}
     </section>
   );
 }
-
 
