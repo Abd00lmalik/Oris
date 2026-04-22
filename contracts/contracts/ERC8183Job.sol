@@ -5,6 +5,20 @@ import {ICredentialHook} from "./interfaces/ICredentialHook.sol";
 import {ICredentialSource} from "./interfaces/ICredentialSource.sol";
 import {IERC20Minimal} from "./interfaces/IERC20Minimal.sol";
 
+interface IERC3009 {
+    function transferWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external;
+}
+
 contract ERC8183Job is ICredentialSource {
     enum JobStatus {
         Open,
@@ -118,9 +132,7 @@ contract ERC8183Job is ICredentialSource {
     uint256 public minJobStake = 5_000_000; // 5 USDC (6 decimals)
     mapping(address => uint256) public lastCredentialClaim;
     mapping(uint256 => Job) private jobs;
-    mapping(uint256 => address[]) private acceptedAgentsByJob;
     mapping(uint256 => mapping(address => bool)) public isAccepted;
-    mapping(uint256 => address[]) private submissionAgentsByJob;
     mapping(uint256 => address[]) public submittedAgents;
     mapping(uint256 => mapping(address => Submission)) private submissions;
     mapping(uint256 => SubmissionResponse) public responses;
@@ -198,6 +210,7 @@ contract ERC8183Job is ICredentialSource {
         address indexed responder,
         uint256 amount
     );
+    event RevealPhaseSettled(uint256 indexed jobId, uint256 settledAt);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "only owner");
@@ -396,7 +409,6 @@ contract ERC8183Job is ICredentialSource {
         );
 
         isAccepted[jobId][msg.sender] = true;
-        acceptedAgentsByJob[jobId].push(msg.sender);
         job.acceptedCount += 1;
         if (uint8(job.status) == uint8(JobStatus.Open)) {
             job.status = JobStatus.InProgress;
@@ -423,7 +435,6 @@ contract ERC8183Job is ICredentialSource {
             nextSubmissionId += 1;
             submission.agent = msg.sender;
             submission.submissionId = sid;
-            submissionAgentsByJob[jobId].push(msg.sender);
             submittedAgents[jobId].push(msg.sender);
             job.submissionCount += 1;
             submissionIdToTaskId[sid] = jobId;
@@ -466,7 +477,6 @@ contract ERC8183Job is ICredentialSource {
 
         if (!isAccepted[jobId][msg.sender]) {
             isAccepted[jobId][msg.sender] = true;
-            acceptedAgentsByJob[jobId].push(msg.sender);
             job.acceptedCount += 1;
             if (uint8(job.status) == uint8(JobStatus.Open)) {
                 job.status = JobStatus.InProgress;
@@ -491,7 +501,6 @@ contract ERC8183Job is ICredentialSource {
         submission.buildOnBonus = 0;
         submission.isBuildOnWinner = false;
 
-        submissionAgentsByJob[jobId].push(msg.sender);
         submittedAgents[jobId].push(msg.sender);
         submissionIdToTaskId[sid] = jobId;
         submissionIdToAgent[sid] = msg.sender;
@@ -712,41 +721,14 @@ contract ERC8183Job is ICredentialSource {
         return submissions[jobId][agent];
     }
 
-    function getAcceptedAgents(uint256 jobId) external view returns (address[] memory) {
-        _getExistingJob(jobId);
-        return acceptedAgentsByJob[jobId];
-    }
-
     function getSubmissions(uint256 jobId) external view returns (SubmissionView[] memory allSubmissions) {
-        Job storage job = _getExistingJob(jobId);
-        bool isCreator = msg.sender == job.client;
-        bool isReveal = uint8(job.status) >= uint8(JobStatus.RevealPhase);
+        _getExistingJob(jobId);
         address[] storage agents = submittedAgents[jobId];
 
-        uint256 visibleCount = 0;
+        allSubmissions = new SubmissionView[](agents.length);
         for (uint256 i = 0; i < agents.length; i++) {
             Submission storage submission = submissions[jobId][agents[i]];
-            if (submission.agent == address(0) || submission.status == SubmissionStatus.None) {
-                continue;
-            }
-            bool isFinalistSub = isFinalist[jobId][agents[i]];
-            if (isCreator || (isReveal && isFinalistSub)) {
-                visibleCount += 1;
-            }
-        }
-
-        allSubmissions = new SubmissionView[](visibleCount);
-        uint256 idx = 0;
-        for (uint256 i = 0; i < agents.length; i++) {
-            Submission storage submission = submissions[jobId][agents[i]];
-            if (submission.agent == address(0) || submission.status == SubmissionStatus.None) {
-                continue;
-            }
-            bool isFinalistSub = isFinalist[jobId][agents[i]];
-            if (!(isCreator || (isReveal && isFinalistSub))) {
-                continue;
-            }
-            allSubmissions[idx] = SubmissionView({
+            allSubmissions[i] = SubmissionView({
                 submissionId: submission.submissionId,
                 agent: submission.agent,
                 deliverableLink: submission.deliverableLink,
@@ -758,7 +740,6 @@ contract ERC8183Job is ICredentialSource {
                 buildOnBonus: submission.buildOnBonus,
                 isBuildOnWinner: submission.isBuildOnWinner
             });
-            idx += 1;
         }
     }
 
@@ -771,6 +752,50 @@ contract ERC8183Job is ICredentialSource {
         require(usdc.transferFrom(msg.sender, address(this), stake), "stake transfer failed");
 
         return _createResponse(parentSubmissionId, responseType, contentURI, msg.sender, stake);
+    }
+
+    /**
+     * @dev Gas-free stake authorization for reveal interactions.
+     * The responder signs EIP-3009 offchain; this call pulls USDC with that
+     * authorization and records the same response as respondToSubmission.
+     */
+    function respondWithAuthorization(
+        uint256 parentSubmissionId,
+        ResponseType responseType,
+        string memory contentURI,
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant returns (uint256 responseId) {
+        uint256 taskId = submissionIdToTaskId[parentSubmissionId];
+        address parentAgent = submissionIdToAgent[parentSubmissionId];
+
+        require(parentAgent != address(0), "submission not found");
+        require(from != address(0), "invalid payer");
+        require(to == address(this), "wrong recipient");
+
+        uint256 requiredStake = _requiredInteractionStake(taskId);
+        require(value >= requiredStake, "insufficient stake");
+
+        IERC3009(address(usdc)).transferWithAuthorization(
+            from,
+            to,
+            value,
+            validAfter,
+            validBefore,
+            nonce,
+            v,
+            r,
+            s
+        );
+
+        return _createResponse(parentSubmissionId, responseType, contentURI, from, value);
     }
 
     function _requiredInteractionStake(uint256 taskId) internal view returns (uint256) {
@@ -903,6 +928,73 @@ contract ERC8183Job is ICredentialSource {
         emit InteractionRewardClaimed(responseId, msg.sender, payout);
     }
 
+    /**
+     * @dev settleRevealPhase returns stakes and pays interaction rewards in one
+     * permissionless call after finalization or after a two-day post-reveal
+     * slash grace period.
+     */
+    function settleRevealPhase(uint256 jobId) external nonReentrant {
+        Job storage job = _getExistingJob(jobId);
+        require(
+            uint8(job.status) == uint8(JobStatus.Approved) ||
+                (
+                    uint8(job.status) == uint8(JobStatus.RevealPhase) &&
+                        block.timestamp > revealPhaseEnd[jobId] + 2 days
+                ),
+            "not ready for settlement"
+        );
+
+        TaskEconomyConfig storage economy = taskEconomy[jobId];
+        address[] memory finalists = selectedFinalists[jobId];
+
+        for (uint256 i = 0; i < finalists.length; i++) {
+            uint256 submissionId = submissions[jobId][finalists[i]].submissionId;
+            uint256[] memory responseIds = submissionResponses[submissionId];
+
+            for (uint256 j = 0; j < responseIds.length; j++) {
+                uint256 responseId = responseIds[j];
+                SubmissionResponse storage response = responses[responseId];
+
+                if (response.stakeSlashed) {
+                    continue;
+                }
+
+                if (!response.stakeReturned && response.stakedAmount > 0) {
+                    response.stakeReturned = true;
+                    require(
+                        usdc.transfer(response.responder, response.stakedAmount),
+                        "stake return failed"
+                    );
+                    emit StakeReturned(responseId, response.responder, response.stakedAmount);
+                }
+
+                if (
+                    !response.interactionRewardClaimed &&
+                    economy.interactionPool > 0 &&
+                    economy.interactionReward > 0 &&
+                    interactionPoolUsed[jobId] + economy.interactionReward <= economy.interactionPool
+                ) {
+                    response.interactionRewardClaimed = true;
+                    interactionPoolUsed[jobId] += economy.interactionReward;
+
+                    uint256 fee = (economy.interactionReward * platformFeeBps) / BASIS_POINTS;
+                    uint256 payout = economy.interactionReward - fee;
+
+                    if (fee > 0) {
+                        require(usdc.transfer(platformTreasury, fee), "interaction fee transfer failed");
+                    }
+                    if (payout > 0) {
+                        require(usdc.transfer(response.responder, payout), "interaction reward transfer failed");
+                    }
+
+                    emit InteractionRewardClaimed(responseId, response.responder, payout);
+                }
+            }
+        }
+
+        emit RevealPhaseSettled(jobId, block.timestamp);
+    }
+
     function getSubmissionResponses(uint256 submissionId) external view returns (uint256[] memory) {
         return submissionResponses[submissionId];
     }
@@ -948,16 +1040,4 @@ contract ERC8183Job is ICredentialSource {
         return job;
     }
 
-    function _reservedUnclaimed(uint256 jobId) internal view returns (uint256 total) {
-        address[] storage agents = submissionAgentsByJob[jobId];
-        for (uint256 i = 0; i < agents.length; i++) {
-            Submission storage sub = submissions[jobId][agents[i]];
-            if (sub.status == SubmissionStatus.Approved && !sub.credentialClaimed) {
-                total += sub.allocatedReward;
-            }
-            if (sub.buildOnBonus > 0 && !sub.credentialClaimed) {
-                total += sub.buildOnBonus;
-            }
-        }
-    }
 }

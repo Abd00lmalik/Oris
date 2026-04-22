@@ -7,7 +7,6 @@ import SignalMap from "@/components/signal-map";
 import { UserDisplay } from "@/components/ui/user-display";
 import { buildTaskHeatmap, TaskHeatmap } from "@/lib/signal-map";
 import {
-  approveUSDC,
   deriveDisplayStatus,
   expectedChainId,
   fetchApprovedAgentCount,
@@ -28,7 +27,6 @@ import {
   formatTaskTitle,
   formatTimestamp,
   formatUsdc,
-  getJobContractAddress,
   getJobContract,
   getJobReadContract,
   getReadProvider,
@@ -45,8 +43,9 @@ import {
   txClaimJobCredential,
   txClaimInteractionReward,
   txFinalizeWinners,
-  txRespondToSubmission,
+  txRespondWithNanopaymentIntent,
   txSelectFinalists,
+  txSettleRevealPhase,
   txSlashResponseStake,
   txSubmitDeliverable,
   txReturnStake,
@@ -134,28 +133,6 @@ async function loadSubmissionsFromContract(
     }
   } catch (error) {
     console.warn("[submissions] getSubmissions failed:", error);
-  }
-
-  try {
-    const agents = ((await contract.getAcceptedAgents(taskId)) as string[]) ?? [];
-    console.log("[submissions] accepted-agent fallback candidates:", agents.length);
-    const rows: SubmissionRecord[] = [];
-    for (const agent of agents) {
-      try {
-        const row = await contract.getSubmission(taskId, agent);
-        if (isValidSubmission(row)) {
-          rows.push(parseSubmission(row));
-        }
-      } catch {
-        // Skip unreadable rows.
-      }
-    }
-    if (rows.length > 0) {
-      console.log("[submissions] accepted-agent fallback count:", rows.length);
-      return rows;
-    }
-  } catch (error) {
-    console.warn("[submissions] accepted-agent fallback failed:", error);
   }
 
   try {
@@ -1020,15 +997,14 @@ export default function JobDetailsPage() {
         return;
       }
 
-      const responseStake = taskEconomy.interactionStake > 0n ? taskEconomy.interactionStake : 2_000_000n;
       const contentUri = contentToURI(responseContent.trim());
-      await approveUSDC(signer, getJobContractAddress(), responseStake);
-      const txHash = await txRespondToSubmission(
+      const { txHash, paymentIntent } = await txRespondWithNanopaymentIntent(
         signer,
         BigInt(selectedSubmission.submissionId),
         responseType,
         contentUri
       );
+      console.log("[nanopayment:intent]", paymentIntent);
       setStatusMessage(`Response tx: ${txHash}`);
       setResponseContent("");
       setShowResponsePanel(false);
@@ -1183,6 +1159,26 @@ export default function JobDetailsPage() {
     }
   };
 
+  const handleSettleRevealPhase = async () => {
+    if (!signer) {
+      setErrorMessage("Connect wallet to settle reveal rewards.");
+      return;
+    }
+
+    try {
+      setBusyAction("settle");
+      const txHash = await txSettleRevealPhase(signer, BigInt(jobId));
+      setStatusMessage(`Reveal phase settled: ${txHash}`);
+      await refreshPendingReleases();
+      await loadTask();
+      await loadHeatmap();
+    } catch (error) {
+      setErrorMessage(errorText(error, "Settlement failed"));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   const hasSubmitted = Boolean(mySubmission && mySubmission.status !== 0);
   const isApproved = mySubmission?.status === 2;
   const isClaimed = Boolean(mySubmission?.credentialClaimed);
@@ -1233,6 +1229,14 @@ export default function JobDetailsPage() {
       selectedSubmission &&
       isSelectedFinalist &&
       !isOwnSelectedSubmission
+  );
+  const canSettle = Boolean(
+    !isPastTask &&
+      job &&
+      isConnected &&
+      signer &&
+      (job.status === 5 ||
+        (job.status === 4 && revealEndValue > 0 && nowSeconds > revealEndValue + 2 * 24 * 60 * 60))
   );
   const postRevealComplete = Boolean(!isPastTask && job && (job.status === 5 || revealEnded));
   const isParticipant = Boolean(hasSubmitted || pendingReleases.length > 0);
@@ -1436,7 +1440,7 @@ export default function JobDetailsPage() {
               ) : null}
 
               {shouldShowSignalMap ? (
-                <div ref={mapContainerRef} className="signal-map-wrapper w-full overflow-hidden" style={{ height: 380, minHeight: 380 }}>
+                <div ref={mapContainerRef} className="signal-map-wrapper w-full overflow-hidden" style={{ height: 400, minHeight: 400 }}>
                   <SignalMap
                     heatmap={heatmap}
                     loading={heatmapLoading}
@@ -1624,6 +1628,31 @@ export default function JobDetailsPage() {
             </div>
           ) : null}
 
+          {canSettle ? (
+            <div
+              className="border p-4"
+              style={{
+                borderColor: "color-mix(in srgb, var(--pulse) 35%, transparent)",
+                background: "color-mix(in srgb, var(--pulse) 8%, transparent)"
+              }}
+            >
+              <div className="mb-2 font-heading text-sm font-semibold text-[var(--text-primary)]">
+                Reveal Settlement Ready
+              </div>
+              <div className="mb-3 text-xs leading-5 text-[var(--text-secondary)]">
+                Release all eligible response stakes and interaction rewards in one permissionless transaction.
+              </div>
+              <button
+                type="button"
+                className="btn-primary w-full"
+                onClick={() => void handleSettleRevealPhase()}
+                disabled={busyAction === "settle" || !signer}
+              >
+                {busyAction === "settle" ? "Settling..." : "Settle Reveal Phase"}
+              </button>
+            </div>
+          ) : null}
+
           {!isPastTask && isConnected && !isCreator ? (
             <>
               <div className="section-header">YOUR ACTIONS</div>
@@ -1774,6 +1803,7 @@ export default function JobDetailsPage() {
                       <textarea
                         className="input-field resize-none"
                         rows={4}
+                        style={{ minHeight: 80, maxHeight: 160 }}
                         value={responseContent}
                         onChange={(event) => setResponseContent(event.target.value)}
                         placeholder="Explain your response..."

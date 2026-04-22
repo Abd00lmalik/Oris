@@ -271,6 +271,122 @@ async function fetchSubmissionDetail(
   return { submission, responses };
 }
 
+function ResponseThread({
+  responses,
+  isCreator,
+  onSlash
+}: {
+  responses: ParsedInteraction[];
+  isCreator: boolean;
+  onSlash?: (responseId: bigint) => Promise<void> | void;
+}) {
+  if (responses.length === 0) {
+    return (
+      <div className="px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">
+        No interactions yet on this submission.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-px">
+      {responses.map((response, index) => {
+        const isBuild = response.responseType === "builds_on";
+        const accent =
+          response.responseType === "alternative" ? "#F5A623" : isBuild ? "#00FFA3" : "#FF3366";
+        const label =
+          response.responseType === "alternative" ? "ALTERNATIVE" : isBuild ? "BUILD-ON" : "CRITIQUE";
+        const status = response.stakeSlashed
+          ? "Slashed"
+          : response.stakeReturned
+            ? "Stake Returned"
+            : response.interactionRewardClaimed
+              ? "Reward Claimed"
+              : "Active";
+
+        return (
+          <div
+            key={response.responseId?.toString() ?? index}
+            style={{
+              padding: "12px 16px",
+              background: "var(--surface)",
+              borderLeft: `3px solid ${response.stakeSlashed ? "#FF336640" : accent}`,
+              borderBottom: "1px solid var(--border)",
+              opacity: response.stakeSlashed ? 0.58 : 1,
+              maxWidth: "100%",
+              overflow: "hidden"
+            }}
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <span
+                style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                  color: response.stakeSlashed ? "var(--text-muted)" : accent,
+                  padding: "2px 6px",
+                  border: `1px solid ${response.stakeSlashed ? "var(--border-bright)" : `${accent}50`}`
+                }}
+              >
+                {response.stakeSlashed ? "SLASHED" : label}
+              </span>
+              <UserDisplay address={response.responder} showAvatar={true} avatarSize={16} className="min-w-0" />
+              <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">
+                {response.createdAt > 0
+                  ? new Date(response.createdAt * 1000).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric"
+                    })
+                  : ""}
+              </span>
+            </div>
+
+            <p
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: 13,
+                color: "var(--text-secondary)",
+                lineHeight: 1.5,
+                margin: "0 0 6px",
+                wordBreak: "break-word"
+              }}
+            >
+              {response.decoded.content || response.decoded.summary || "No readable content provided."}
+            </p>
+
+            {response.decoded.evidence ? (
+              <a
+                href={response.decoded.evidence}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mb-2 inline-block max-w-full break-all font-mono text-[11px] text-[var(--arc)]"
+              >
+                View evidence {"\u2197"}
+              </a>
+            ) : null}
+
+            <div className="flex items-center gap-2 font-mono text-[10px] text-[var(--text-muted)]">
+              <span>{(Number(response.stakedAmount) / 1e6).toFixed(3)} USDC staked</span>
+              <span>{"\u00b7"}</span>
+              <span>{status}</span>
+              {isCreator && !response.stakeSlashed && !response.stakeReturned && onSlash ? (
+                <button
+                  type="button"
+                  onClick={() => void onSlash(response.responseId)}
+                  className="ml-auto border border-[var(--danger)]/40 px-2 py-1 font-mono text-[9px] tracking-[0.06em] text-[var(--danger)]"
+                >
+                  SLASH
+                </button>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PersonBox({
   item,
   isTop,
@@ -447,31 +563,42 @@ function SubmissionDetailPanel({
     };
   }, [person, provider, taskId]);
 
-  const responseColors = {
-    builds_on: "#00C851",
-    critiques: "#FF3366",
-    alternative: "#F5A623"
-  } as const;
+  const handleSlash = async (responseId: bigint) => {
+    await onSlashResponse?.(responseId);
+    if (provider && taskId !== undefined) {
+      setLoading(true);
+      try {
+        setDetail(await fetchSubmissionDetail(person, taskId, provider));
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
 
   return (
     <motion.div
-      initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 380, opacity: 1 }}
-      exit={{ width: 0, opacity: 0 }}
+      initial={{ x: 360, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: 360, opacity: 0 }}
       transition={{ duration: 0.2 }}
-      className="tile-detail-panel shrink-0 overflow-hidden"
+      className="tile-detail-panel"
       style={{
+        position: "fixed",
+        right: 0,
+        top: 80,
+        bottom: 0,
+        width: 340,
+        maxWidth: "100vw",
         background: "var(--surface)",
-        borderTop: "1px solid var(--border)",
-        borderRight: "1px solid var(--border)",
-        borderBottom: "1px solid var(--border)",
-        marginTop: 22,
-        maxHeight: "calc(100vh - 120px)",
-        overflowY: "auto"
+        borderLeft: "1px solid var(--border)",
+        boxShadow: "-10px 0 30px rgba(0,0,0,0.28)",
+        maxHeight: "calc(100vh - 80px)",
+        overflowY: "auto",
+        zIndex: 60
       }}
     >
-      <div style={{ width: 380, maxWidth: "100%", overflowY: "auto" }}>
-        <div className="flex items-start justify-between border-b border-[var(--border)] px-5 py-4">
+      <div style={{ width: 340, maxWidth: "100%", overflowY: "auto" }}>
+        <div className="flex items-start justify-between border-b border-[var(--border)] px-4 py-4">
           <div>
             <div className="font-heading text-[15px] font-bold text-[var(--text-primary)]">Submission Detail</div>
             <UserDisplay address={person.address} showAvatar={true} avatarSize={18} className="mt-2" />
@@ -485,7 +612,7 @@ function SubmissionDetailPanel({
           </button>
         </div>
 
-        <div className="border-b border-[var(--border)] px-5 py-4">
+        <div className="border-b border-[var(--border)] px-4 py-4">
           <div className="mb-2 font-mono text-[10px] tracking-[0.1em] text-[var(--text-muted)]">DELIVERABLE</div>
           {detail?.submission?.deliverableLink ? (
             <a
@@ -507,11 +634,10 @@ function SubmissionDetailPanel({
           ) : null}
         </div>
 
-        <div className="px-5 py-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="font-mono text-[10px] tracking-[0.1em] text-[var(--text-muted)]">
-              {loading ? "LOADING..." : `INTERACTIONS (${detail?.responses.length ?? 0})`}
-            </div>
+        <div>
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3 font-mono text-[10px] tracking-[0.1em] text-[var(--text-muted)]">
+            <span>{loading ? "LOADING..." : "INTERACTIONS"}</span>
+            <span>{detail?.responses.length ?? 0} total</span>
             {onViewSubmissions ? (
               <button
                 type="button"
@@ -523,99 +649,11 @@ function SubmissionDetailPanel({
             ) : null}
           </div>
 
-          {loading ? <div className="text-xs text-[var(--text-muted)]">Loading interactions...</div> : null}
-
-          {!loading && (!detail?.responses || detail.responses.length === 0) ? (
-            <div className="text-xs text-[var(--text-muted)]">No critiques or build-ons yet. Reveal phase is open.</div>
-          ) : null}
-
-          {detail?.responses.map((response) => {
-            const color = responseColors[response.responseType];
-            const label =
-              response.responseType === "builds_on"
-                ? "BUILD-ON"
-                : response.responseType === "critiques"
-                  ? "CRITIQUE"
-                  : "ALTERNATIVE";
-            const evidence = response.decoded.evidence ?? "";
-            const status = response.stakeSlashed
-              ? "Slashed"
-              : response.stakeReturned
-                ? "Stake Returned"
-                : response.interactionRewardClaimed
-                  ? "Reward Claimed"
-                  : "Active";
-
-            return (
-              <div
-                key={response.responseId.toString()}
-                className="mb-3 max-w-full break-words p-3"
-                style={{
-                  border: `1px solid ${color}40`,
-                  background: `${color}08`
-                }}
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="font-mono text-[10px] font-bold tracking-[0.08em]" style={{ color }}>
-                    {label}
-                  </span>
-                  {response.stakeSlashed ? (
-                    <span className="border border-[var(--danger)]/40 px-1 py-0.5 font-mono text-[9px] text-[var(--danger)]">
-                      SLASHED
-                    </span>
-                  ) : null}
-                </div>
-
-                <UserDisplay address={response.responder} showAvatar={true} avatarSize={16} />
-
-                <div className="mt-3 text-[10px] font-mono tracking-[0.08em] text-[var(--text-muted)]">CONTENT</div>
-                {response.decoded.content ? (
-                  <div className="mt-1 max-w-full break-words text-xs leading-5 text-[var(--text-secondary)]">
-                    {response.decoded.content}
-                  </div>
-                ) : response.contentURI ? (
-                  <a
-                    href={response.contentURI}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 block break-all font-mono text-[11px] text-[var(--arc)]"
-                  >
-                    {response.contentURI.slice(0, 96)}
-                    {response.contentURI.length > 96 ? "..." : ""} {"\u2197"}
-                  </a>
-                ) : null}
-
-                {evidence ? (
-                  <a
-                    href={evidence}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 block font-mono text-[11px] text-[var(--arc)]"
-                  >
-                    View evidence {"\u2197"}
-                  </a>
-                ) : null}
-
-                <div className="mt-2 flex gap-3 font-mono text-[10px] text-[var(--text-muted)]">
-                  <span>Stake: {(Number(response.stakedAmount) / 1e6).toFixed(3)} USDC</span>
-                  {response.createdAt > 0 ? (
-                    <span>{new Date(response.createdAt * 1000).toLocaleDateString()}</span>
-                  ) : null}
-                </div>
-                <div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">Status: {status}</div>
-
-                {isCreator && !response.stakeSlashed && !response.stakeReturned && onSlashResponse ? (
-                  <button
-                    type="button"
-                    onClick={() => void onSlashResponse(response.responseId)}
-                    className="mt-3 border border-[var(--danger)]/40 px-2 py-1 font-mono text-[10px] text-[var(--danger)]"
-                  >
-                    Slash Stake
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
+          {loading ? (
+            <div className="px-4 py-6 text-center font-mono text-xs text-[var(--text-muted)]">Loading...</div>
+          ) : (
+            <ResponseThread responses={detail?.responses ?? []} isCreator={isCreator} onSlash={handleSlash} />
+          )}
         </div>
       </div>
     </motion.div>
@@ -653,7 +691,7 @@ export default function SignalMap({
 
   const resolvedHeight = containerHeight ?? measured.h;
   const resolvedWidth = containerWidth ?? measured.w;
-  const detailWidth = selected ? 380 : 0;
+  const detailWidth = 0;
   const mapWidth = Math.max(260, resolvedWidth - detailWidth);
 
   const sortedPeople = useMemo(

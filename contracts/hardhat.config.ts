@@ -26,10 +26,13 @@ const config: HardhatUserConfig = {
       {
         version: "0.8.20",
         settings: {
+          debug: {
+            revertStrings: "strip"
+          },
           viaIR: true,
           optimizer: {
             enabled: true,
-            runs: 1
+            runs: 0
           }
         },
         // Use wasm compiler to avoid native solc spawn issues on locked-down Windows hosts.

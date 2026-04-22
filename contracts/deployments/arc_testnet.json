@@ -1,7 +1,7 @@
 {
   "network": "arc_testnet",
   "chainId": 5042002,
-  "deployedAt": "2026-04-21T06:04:10.773Z",
+  "deployedAt": "2026-04-22T06:22:11.744Z",
   "rpcUrl": "https://rpc.testnet.arc.network",
   "usdcAddress": "0x3600000000000000000000000000000000000000",
   "platformTreasury": "0x25265b9dBEb6c653b0CA281110Bb0697a9685107",
@@ -12,7 +12,7 @@
   },
   "contracts": {
     "sourceRegistry": {
-      "address": "0xB079917189AdC25904AA6438252C4253B239598a",
+      "address": "0x8260EBb815684471912F5CA0D9355500B441B424",
       "abi": [
         {
           "inputs": [],
@@ -337,7 +337,7 @@
       ]
     },
     "validationRegistry": {
-      "address": "0xaA11b92a4E7628D9CFB06C6eF3b6FC27A76D1BdA",
+      "address": "0x2f3771662D26D49D285fb364560f5b500784C121",
       "abi": [
         {
           "inputs": [],
@@ -798,7 +798,7 @@
       ]
     },
     "credentialHook": {
-      "address": "0x3b06c52AE114228e216F92758E2496ba82D0b9cb",
+      "address": "0xDC36aC35C7B096f4fC027D1FD089B3C7dB4221eB",
       "abi": [
         {
           "inputs": [
@@ -1148,7 +1148,7 @@
       ]
     },
     "jobContract": {
-      "address": "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363",
+      "address": "0xf45766cFF699afeb5E242FFfc6e0d1B4750C2F11",
       "abi": [
         {
           "inputs": [
@@ -1448,6 +1448,25 @@
             }
           ],
           "name": "PlatformConfigUpdated",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "settledAt",
+              "type": "uint256"
+            }
+          ],
+          "name": "RevealPhaseSettled",
           "type": "event"
         },
         {
@@ -2009,25 +2028,6 @@
           "name": "finalizeWinners",
           "outputs": [],
           "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "jobId",
-              "type": "uint256"
-            }
-          ],
-          "name": "getAcceptedAgents",
-          "outputs": [
-            {
-              "internalType": "address[]",
-              "name": "",
-              "type": "address[]"
-            }
-          ],
-          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -2745,6 +2745,80 @@
           "inputs": [
             {
               "internalType": "uint256",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            },
+            {
+              "internalType": "string",
+              "name": "contentURI",
+              "type": "string"
+            },
+            {
+              "internalType": "address",
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "validAfter",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "validBefore",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "nonce",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint8",
+              "name": "v",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "r",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "s",
+              "type": "bytes32"
+            }
+          ],
+          "name": "respondWithAuthorization",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
               "name": "",
               "type": "uint256"
             }
@@ -2943,6 +3017,19 @@
             }
           ],
           "name": "setValidationRegistry",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "settleRevealPhase",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -3216,7 +3303,7 @@
       ]
     },
     "job": {
-      "address": "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363",
+      "address": "0xf45766cFF699afeb5E242FFfc6e0d1B4750C2F11",
       "abi": [
         {
           "inputs": [
@@ -3516,6 +3603,25 @@
             }
           ],
           "name": "PlatformConfigUpdated",
+          "type": "event"
+        },
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": true,
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "settledAt",
+              "type": "uint256"
+            }
+          ],
+          "name": "RevealPhaseSettled",
           "type": "event"
         },
         {
@@ -4077,25 +4183,6 @@
           "name": "finalizeWinners",
           "outputs": [],
           "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "jobId",
-              "type": "uint256"
-            }
-          ],
-          "name": "getAcceptedAgents",
-          "outputs": [
-            {
-              "internalType": "address[]",
-              "name": "",
-              "type": "address[]"
-            }
-          ],
-          "stateMutability": "view",
           "type": "function"
         },
         {
@@ -4813,6 +4900,80 @@
           "inputs": [
             {
               "internalType": "uint256",
+              "name": "parentSubmissionId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum ERC8183Job.ResponseType",
+              "name": "responseType",
+              "type": "uint8"
+            },
+            {
+              "internalType": "string",
+              "name": "contentURI",
+              "type": "string"
+            },
+            {
+              "internalType": "address",
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "validAfter",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "validBefore",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "nonce",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint8",
+              "name": "v",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "r",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "s",
+              "type": "bytes32"
+            }
+          ],
+          "name": "respondWithAuthorization",
+          "outputs": [
+            {
+              "internalType": "uint256",
+              "name": "responseId",
+              "type": "uint256"
+            }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
               "name": "",
               "type": "uint256"
             }
@@ -5011,6 +5172,19 @@
             }
           ],
           "name": "setValidationRegistry",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        },
+        {
+          "inputs": [
+            {
+              "internalType": "uint256",
+              "name": "jobId",
+              "type": "uint256"
+            }
+          ],
+          "name": "settleRevealPhase",
           "outputs": [],
           "stateMutability": "nonpayable",
           "type": "function"
@@ -5284,7 +5458,7 @@
       ]
     },
     "githubSource": {
-      "address": "0xd8b01e03E23620a3FFFfa9251FE2F1076ce6929e",
+      "address": "0x104329a3399959abD28d1aAEFA88A926A8eFD914",
       "abi": [
         {
           "inputs": [
@@ -5835,7 +6009,7 @@
       ]
     },
     "communitySource": {
-      "address": "0xdA1Bf30dA93A8B7397ec7a3eB55cd75f3FF49fB0",
+      "address": "0x3ec45004fFcBa6EfB20B0e5118DB018dB15f5ced",
       "abi": [
         {
           "inputs": [
@@ -6825,7 +6999,7 @@
       ]
     },
     "agentTaskSource": {
-      "address": "0x5b0978E54b4E5277F22716ed27AC641DBe014DDC",
+      "address": "0x4C716578c18B85e43BF9660c1d888edB1e60b6A1",
       "abi": [
         {
           "inputs": [
@@ -7570,7 +7744,7 @@
       ]
     },
     "milestoneEscrow": {
-      "address": "0xf8C90f3c3d582272Cdf0f5853eF8d68Df78Fe644",
+      "address": "0xC0371d4d749EAEfca657304e58B5E5c71b6D207e",
       "abi": [
         {
           "inputs": [
@@ -8627,7 +8801,7 @@
       ]
     },
     "peerAttestationSource": {
-      "address": "0x114feA150292EE17faf86CdDcb72a7bb3125585C",
+      "address": "0x276cC671E786Fa50640055d2003bc1aD32a60e0C",
       "abi": [
         {
           "inputs": [
@@ -9047,7 +9221,7 @@
       ]
     },
     "daoGovernanceSource": {
-      "address": "0xBFC24e2426b3c5E99B747A283c019a2e414623e6",
+      "address": "0xe3cB024098074569e49925ADaCe7f80178db3563",
       "abi": [
         {
           "inputs": [

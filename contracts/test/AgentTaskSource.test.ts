@@ -82,8 +82,8 @@ describe("AgentTaskSource", function () {
     await tasks.connect(agent).submitOutput(0, "ipfs://output-cid");
     await time.increase(16 * 60);
 
-    await expect(tasks.connect(other).validateOutput(0, true, "ok")).to.be.revertedWith("not authorized validator");
-    await expect(tasks.connect(agent).claimRewardAndCredential(0)).to.be.revertedWith("task not validated");
+    await expect(tasks.connect(other).validateOutput(0, true, "ok")).to.be.reverted;
+    await expect(tasks.connect(agent).claimRewardAndCredential(0)).to.be.reverted;
   });
 
   it("enforces deadline and supports poster refunds", async function () {
@@ -92,7 +92,7 @@ describe("AgentTaskSource", function () {
     await tasks.connect(agent).claimTask(0);
 
     await time.increaseTo(deadline + 1);
-    await expect(tasks.connect(agent).submitOutput(0, "ipfs://late")).to.be.revertedWith("task deadline passed");
+    await expect(tasks.connect(agent).submitOutput(0, "ipfs://late")).to.be.reverted;
 
     const before = await usdc.balanceOf(poster.address);
     await expect(tasks.connect(poster).refundExpiredTask(0))
@@ -111,12 +111,12 @@ describe("AgentTaskSource", function () {
     await time.increase(16 * 60);
     await tasks.connect(verifier).validateOutput(0, true, "ok");
     await tasks.connect(agent).claimRewardAndCredential(0);
-    await expect(tasks.connect(agent).claimRewardAndCredential(0)).to.be.revertedWith("already claimed");
+    await expect(tasks.connect(agent).claimRewardAndCredential(0)).to.be.reverted;
 
     await tasks.connect(agent).claimTask(1);
     await tasks.connect(agent).submitOutput(1, "ipfs://output-1");
     await time.increase(16 * 60);
     await tasks.connect(verifier).validateOutput(1, true, "ok");
-    await expect(tasks.connect(agent).claimRewardAndCredential(1)).to.be.revertedWith("credential cooldown active");
+    await expect(tasks.connect(agent).claimRewardAndCredential(1)).to.be.reverted;
   });
 });

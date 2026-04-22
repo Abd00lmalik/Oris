@@ -46,13 +46,13 @@ describe("DAOGovernanceSource", function () {
 
     await expect(
       governance.connect(participant).claimGovernanceCredential(await governor.getAddress(), 99)
-    ).to.be.revertedWith("governor not approved");
+    ).to.be.reverted;
 
     await governance.connect(owner).addGovernor(await governor.getAddress());
     await governance.connect(participant).claimGovernanceCredential(await governor.getAddress(), 99);
     await expect(
       governance.connect(participant).claimGovernanceCredential(await governor.getAddress(), 99)
-    ).to.be.revertedWith("already claimed");
+    ).to.be.reverted;
   });
 
   it("enforces credential cooldown and missing-vote edge cases", async function () {
@@ -64,13 +64,13 @@ describe("DAOGovernanceSource", function () {
     await governance.connect(participant).claimGovernanceCredential(await governor.getAddress(), 1);
     await expect(
       governance.connect(participant).claimGovernanceCredential(await governor.getAddress(), 2)
-    ).to.be.revertedWith("credential cooldown active");
+    ).to.be.reverted;
 
     await time.increase(6 * 60 * 60 + 1);
     await governance.connect(participant).claimGovernanceCredential(await governor.getAddress(), 2);
 
     await expect(
       governance.connect(participant).claimGovernanceCredential(await governor.getAddress(), 200)
-    ).to.be.revertedWith("vote not found");
+    ).to.be.reverted;
   });
 });

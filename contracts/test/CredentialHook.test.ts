@@ -81,7 +81,7 @@ describe("Archon Hook + ERC8183Job", function () {
             ethers.parseUnits("75", 6)
           ]
         )
-    ).to.be.revertedWith("too many winners");
+    ).to.be.reverted;
   });
 
   it("pays reward + mints weighted credential when approved submitter claims", async function () {
@@ -118,7 +118,7 @@ describe("Archon Hook + ERC8183Job", function () {
     const { hook, other } = await deployFixture();
     await expect(
       hook.connect(other).onActivityComplete(other.address, 1, "job", 100)
-    ).to.be.revertedWith("source contract not registered");
+    ).to.be.reverted;
   });
 
   async function hookIssuer(job: any) {

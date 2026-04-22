@@ -262,6 +262,18 @@ export type PendingReleaseRecord = {
   canClaimReward: boolean;
 };
 
+export type NanopaymentIntentRecord = {
+  from: string;
+  to: string;
+  value: string;
+  validAfter: number;
+  validBefore: number;
+  nonce: string;
+  scheme: "eip3009_transferWithAuthorization";
+  settlement: "erc3009_onchain" | "approve_fallback";
+  generatedAt: string;
+};
+
 export const RESPONSE_TYPE = {
   BuildsOn: 0,
   Critiques: 1,
@@ -1462,8 +1474,11 @@ async function fetchSubmissionsFallback(contract: ethers.Contract, jobId: number
   const collected: unknown[] = [];
 
   try {
-    const acceptedAgents = ((await contract.getAcceptedAgents(jobId)) as string[]) ?? [];
-    for (const agent of acceptedAgents) {
+    const filter = contract.filters?.DeliverableSubmitted?.(jobId);
+    const events = filter ? await contract.queryFilter(filter) : [];
+    for (const event of events) {
+      const agent = String((event as { args?: unknown[] }).args?.[1] ?? "");
+      if (!agent) continue;
       try {
         const row = await contract.getSubmission(jobId, agent);
         if (isValidSubmission(row)) {
@@ -1474,7 +1489,7 @@ async function fetchSubmissionsFallback(contract: ethers.Contract, jobId: number
       }
     }
   } catch (error) {
-    console.warn("[submissions] fallback getAcceptedAgents failed:", error);
+    console.warn("[submissions] fallback DeliverableSubmitted scan failed:", error);
   }
 
   return collected;
@@ -2374,6 +2389,103 @@ export async function txRespondToSubmission(
   return tx.hash;
 }
 
+export async function txRespondWithNanopaymentIntent(
+  signer: ethers.JsonRpcSigner,
+  parentSubmissionId: bigint,
+  responseType: number,
+  contentURI: string
+): Promise<{ txHash: string; paymentIntent: NanopaymentIntentRecord }> {
+  const contract = getJobContract(signer);
+  const from = await signer.getAddress();
+  const to = getJobContractAddress();
+
+  const taskId = (await contract.submissionIdToTaskId(parentSubmissionId).catch(() => 0n)) as bigint;
+  let stakeAmount = 2_000_000n;
+  try {
+    const economy = await contract.getTaskEconomy(taskId);
+    const configuredStake = toBigInt(economy.interactionStake ?? economy[0] ?? 0n);
+    if (configuredStake > 0n) stakeAmount = configuredStake;
+  } catch {
+    // The default mirrors ERC8183Job.DEFAULT_INTERACTION_STAKE.
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const validAfter = now - 60;
+  const validBefore = now + 3600;
+  const nonce = ethers.hexlify(ethers.randomBytes(32));
+  const domain = {
+    name: "USDC",
+    version: "2",
+    chainId: expectedChainId,
+    verifyingContract: contractAddresses.usdc
+  };
+  const types = {
+    TransferWithAuthorization: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" }
+    ]
+  };
+  const message = {
+    from,
+    to,
+    value: stakeAmount,
+    validAfter: BigInt(validAfter),
+    validBefore: BigInt(validBefore),
+    nonce
+  };
+
+  const paymentIntent: NanopaymentIntentRecord = {
+    from,
+    to,
+    value: stakeAmount.toString(),
+    validAfter,
+    validBefore,
+    nonce,
+    scheme: "eip3009_transferWithAuthorization",
+    settlement: "erc3009_onchain",
+    generatedAt: new Date().toISOString()
+  };
+
+  const supportsAuthorization =
+    typeof contract.interface.hasFunction === "function" &&
+    contract.interface.hasFunction("respondWithAuthorization");
+
+  if (supportsAuthorization) {
+    try {
+      const signature = await signer.signTypedData(domain, types, message);
+      const { v, r, s } = ethers.Signature.from(signature);
+      const tx = await contract.respondWithAuthorization(
+        parentSubmissionId,
+        responseType,
+        contentURI,
+        from,
+        to,
+        stakeAmount,
+        BigInt(validAfter),
+        BigInt(validBefore),
+        nonce,
+        v,
+        r,
+        s
+      );
+      await tx.wait();
+      return { txHash: tx.hash as string, paymentIntent };
+    } catch (error) {
+      console.warn("[nanopayment] respondWithAuthorization failed, falling back:", error);
+    }
+  }
+
+  paymentIntent.settlement = "approve_fallback";
+  await approveUSDC(signer, to, stakeAmount);
+  const fallbackTx = await contract.respondToSubmission(parentSubmissionId, responseType, contentURI);
+  await fallbackTx.wait();
+  return { txHash: fallbackTx.hash as string, paymentIntent };
+}
+
 export async function txReturnStake(signer: ethers.JsonRpcSigner, responseId: bigint): Promise<string> {
   const contract = getJobContract(signer);
   const tx = await contract.returnResponseStake(responseId);
@@ -2394,6 +2506,16 @@ export async function txClaimInteractionReward(
 ): Promise<string> {
   const contract = getJobContract(signer);
   const tx = await contract.claimInteractionReward(responseId);
+  await tx.wait();
+  return tx.hash as string;
+}
+
+export async function txSettleRevealPhase(
+  signer: ethers.JsonRpcSigner,
+  jobId: bigint
+): Promise<string> {
+  const contract = getJobContract(signer);
+  const tx = await contract.settleRevealPhase(jobId);
   await tx.wait();
   return tx.hash as string;
 }

@@ -748,6 +748,30 @@ pre,
   background: #A8B8CC;
 }
 
+.task-detail-grid {
+  align-items: start;
+}
+
+.task-right-panel {
+  min-width: 0;
+}
+
+.signal-map-wrapper {
+  height: 400px;
+  min-height: 400px;
+  overflow: hidden;
+}
+
+.tile-detail-panel {
+  max-width: 340px;
+  word-break: break-word;
+}
+
+.tile-detail-panel a,
+.task-detail-grid a {
+  max-width: 100%;
+}
+
 @media (max-width: 640px) {
   h1 {
     font-size: clamp(32px, 9vw, 48px) !important;
@@ -803,6 +827,7 @@ pre,
 
   .tile-detail-panel {
     position: fixed !important;
+    top: auto !important;
     bottom: 0 !important;
     left: 0 !important;
     right: 0 !important;

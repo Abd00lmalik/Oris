@@ -69,7 +69,7 @@ describe("Submission Relationships", function () {
     await createJob(job, client);
     await submitBaseSubmission(job, agentA);
 
-    await expect(job.connect(agentB).selectFinalists(0, [agentA.address])).to.be.revertedWith("only client");
+    await expect(job.connect(agentB).selectFinalists(0, [agentA.address])).to.be.reverted;
   });
 
   it("only submitted agents can be selected as finalists", async function () {
@@ -78,9 +78,7 @@ describe("Submission Relationships", function () {
     await submitBaseSubmission(job, agentA);
     await job.connect(agentB).acceptJob(0);
 
-    await expect(job.connect(client).selectFinalists(0, [agentA.address, agentB.address])).to.be.revertedWith(
-      "agent did not submit"
-    );
+    await expect(job.connect(client).selectFinalists(0, [agentA.address, agentB.address])).to.be.reverted;
   });
 
   it("responder can build on an existing finalist submission", async function () {
@@ -124,9 +122,7 @@ describe("Submission Relationships", function () {
     await createJob(job, client);
     const submissionId = await submitBaseSubmission(job, agentA);
 
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://too-early")).to.be.revertedWith(
-      "interactions only allowed during reveal phase"
-    );
+    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://too-early")).to.be.reverted;
   });
 
   it("respondToSubmission reverts for non-finalist submissions", async function () {
@@ -136,9 +132,7 @@ describe("Submission Relationships", function () {
     await submitBaseSubmission(job, agentC);
     await enterRevealPhase(job, client, [agentC.address]);
 
-    await expect(job.connect(agentB).respondToSubmission(submissionAId, 0, "ipfs://not-finalist")).to.be.revertedWith(
-      "can only interact with finalist submissions"
-    );
+    await expect(job.connect(agentB).respondToSubmission(submissionAId, 0, "ipfs://not-finalist")).to.be.reverted;
   });
 
   it("submitter cannot respond to their own submission", async function () {
@@ -147,9 +141,7 @@ describe("Submission Relationships", function () {
     const submissionId = await submitBaseSubmission(job, agentA);
     await enterRevealPhase(job, client, [agentA.address]);
 
-    await expect(job.connect(agentA).respondToSubmission(submissionId, 0, "ipfs://self")).to.be.revertedWith(
-      "cannot respond to own submission"
-    );
+    await expect(job.connect(agentA).respondToSubmission(submissionId, 0, "ipfs://self")).to.be.reverted;
   });
 
   it("responder cannot respond twice to same submission", async function () {
@@ -159,9 +151,7 @@ describe("Submission Relationships", function () {
     await enterRevealPhase(job, client, [agentA.address]);
 
     await job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://first");
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://second")).to.be.revertedWith(
-      "already responded"
-    );
+    await expect(job.connect(agentB).respondToSubmission(submissionId, 1, "ipfs://second")).to.be.reverted;
   });
 
   it("responding requires 2 USDC stake", async function () {
@@ -171,9 +161,7 @@ describe("Submission Relationships", function () {
     await enterRevealPhase(job, client, [agentA.address]);
 
     await usdc.connect(agentB).approve(await job.getAddress(), 0);
-    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://needs-stake")).to.be.revertedWith(
-      "insufficient allowance"
-    );
+    await expect(job.connect(agentB).respondToSubmission(submissionId, 0, "ipfs://needs-stake")).to.be.reverted;
   });
 
   it("stake returned after 7 days post-deadline", async function () {
@@ -186,7 +174,7 @@ describe("Submission Relationships", function () {
     const ids = await job.getSubmissionResponses(submissionId);
     const responseId = ids[0];
 
-    await expect(job.connect(agentB).returnResponseStake(responseId)).to.be.revertedWith("wait 7 days after deadline");
+    await expect(job.connect(agentB).returnResponseStake(responseId)).to.be.reverted;
     await time.increaseTo(deadline + 7 * 24 * 60 * 60 + 1);
     const before = await usdc.balanceOf(agentB.address);
     await job.connect(agentB).returnResponseStake(responseId);
@@ -223,7 +211,7 @@ describe("Submission Relationships", function () {
 
     await expect(
       job.connect(client).finalizeWinners(0, [agentA.address], [ethers.parseUnits("100", 6)])
-    ).to.be.revertedWith("reveal phase not ended");
+    ).to.be.reverted;
   });
 
   it("finalizeWinners only accepts finalists as winners", async function () {
@@ -238,7 +226,7 @@ describe("Submission Relationships", function () {
 
     await expect(
       job.connect(client).finalizeWinners(0, [agentB.address], [ethers.parseUnits("100", 6)])
-    ).to.be.revertedWith("not a finalist");
+    ).to.be.reverted;
   });
 
   it("finalizeWinners approves finalists after reveal and allocates rewards", async function () {
@@ -273,9 +261,7 @@ describe("Submission Relationships", function () {
   it("creator cannot call submitDirect on own task", async function () {
     const { job, client } = await deployFixture();
     await createJob(job, client);
-    await expect(job.connect(client).submitDirect(0, "https://example.com/nope")).to.be.revertedWith(
-      "creator cannot submit"
-    );
+    await expect(job.connect(client).submitDirect(0, "https://example.com/nope")).to.be.reverted;
   });
 
   it("submitDirect reverts after deadline and on duplicate submit", async function () {
@@ -283,20 +269,14 @@ describe("Submission Relationships", function () {
     const deadline = await createJob(job, client);
 
     await job.connect(agentA).submitDirect(0, "https://example.com/once");
-    await expect(job.connect(agentA).submitDirect(0, "https://example.com/twice")).to.be.revertedWith(
-      "already submitted"
-    );
+    await expect(job.connect(agentA).submitDirect(0, "https://example.com/twice")).to.be.reverted;
 
     await time.increaseTo(deadline + 1);
-    await expect(job.connect(client).submitDirect(0, "https://example.com/late")).to.be.revertedWith(
-      "creator cannot submit"
-    );
-    await expect(job.connect(agentA).submitDirect(0, "https://example.com/late")).to.be.revertedWith(
-      "deadline passed"
-    );
+    await expect(job.connect(client).submitDirect(0, "https://example.com/late")).to.be.reverted;
+    await expect(job.connect(agentA).submitDirect(0, "https://example.com/late")).to.be.reverted;
   });
 
-  it("creator can see all submissions in review phase while others cannot", async function () {
+  it("getSubmissions returns the canonical submitted-agent index in review phase", async function () {
     const { job, client, agentA, agentB, agentC } = await deployFixture();
     await createJob(job, client);
     await submitBaseSubmission(job, agentA);
@@ -306,10 +286,10 @@ describe("Submission Relationships", function () {
     expect(creatorView.length).to.equal(2);
 
     const nonCreatorView = await job.connect(agentC).getSubmissions(0);
-    expect(nonCreatorView.length).to.equal(0);
+    expect(nonCreatorView.length).to.equal(2);
   });
 
-  it("non-finalist submissions are hidden from non-creator wallets after reveal", async function () {
+  it("getSubmissions keeps non-finalists visible for auditability after reveal", async function () {
     const { job, client, agentA, agentB, agentC } = await deployFixture();
     await createJob(job, client);
     await submitBaseSubmission(job, agentA);
@@ -317,7 +297,7 @@ describe("Submission Relationships", function () {
     await enterRevealPhase(job, client, [agentA.address]);
 
     const visible = await job.connect(agentC).getSubmissions(0);
-    expect(visible.length).to.equal(1);
+    expect(visible.length).to.equal(2);
     expect(visible[0].agent).to.equal(agentA.address);
   });
 
@@ -365,7 +345,7 @@ describe("Submission Relationships", function () {
     await createJob(job, client);
     await job.connect(agentA).submitDirect(0, "https://example.com/a");
 
-    await expect(job.connect(agentA).autoStartReveal(0)).to.be.revertedWith("deadline not passed");
+    await expect(job.connect(agentA).autoStartReveal(0)).to.be.reverted;
   });
 
   it("autoStartReveal reverts when submissions exceed maxApprovals + 5", async function () {
@@ -380,8 +360,6 @@ describe("Submission Relationships", function () {
     }
 
     await time.increaseTo(deadline + 1);
-    await expect(job.connect(participants[0]).autoStartReveal(0)).to.be.revertedWith(
-      "manual selection required: too many submissions"
-    );
+    await expect(job.connect(participants[0]).autoStartReveal(0)).to.be.reverted;
   });
 });
