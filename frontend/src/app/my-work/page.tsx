@@ -22,7 +22,7 @@ function submissionActionLabel(submission: SubmissionRecord | null) {
   if (!submission) return "Submit Work";
   if (submission.status === 1) return "Check Status";
   if (submission.status === 2 && !submission.credentialClaimed) return "Claim Credential";
-  if (submission.status === 2 && submission.credentialClaimed) return "Completed";
+  if (submission.status === 2 && submission.credentialClaimed) return "Credential Claimed";
   if (submission.status === 3) return "Resubmit Work";
   return "Open Job";
 }
@@ -129,11 +129,11 @@ export default function MyWorkPage() {
                       <span
                         className="rounded-full px-2 py-1 text-xs"
                         style={{
-                          color: deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd).color,
+                          color: deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd, job.submissionCount).color,
                           background: "rgba(255,255,255,0.05)"
                         }}
                       >
-                        {deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd).label}
+                        {deriveDisplayStatus(job.status, job.deadline, job.revealPhaseEnd, job.submissionCount).label}
                       </span>
                     </div>
                     <p className="mt-2 text-xs">Submissions: {job.submissionCount}</p>

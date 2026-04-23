@@ -2,13 +2,15 @@ import { ethers } from "ethers";
 import deploymentRaw from "@/lib/generated/contracts.json";
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-export const JOB_STATUS_LABELS: Record<number, string> = {
+export type TaskStatusLabel = "Open" | "Under Review" | "Reveal Phase" | "Closed";
+
+export const JOB_STATUS_LABELS: Record<number, TaskStatusLabel> = {
   0: "Open",
   1: "Open",
-  2: "Submitted",
+  2: "Under Review",
   3: "Under Review",
   4: "Reveal Phase",
-  5: "Completed",
+  5: "Closed",
   6: "Closed"
 };
 export const JOB_STATUS_COLORS: Record<number, string> = {
@@ -17,13 +19,13 @@ export const JOB_STATUS_COLORS: Record<number, string> = {
   2: "#F5A623",
   3: "#F5A623",
   4: "#00E5FF",
-  5: "#F5A623",
+  5: "#7A9BB5",
   6: "#7A9BB5"
 };
 export const SUBMISSION_STATUS_LABELS = ["Not Submitted", "Submitted", "Approved", "Rejected"] as const;
 
 export interface DerivedTaskStatus {
-  label: string;
+  label: TaskStatusLabel;
   color: string;
   code: number;
   revealActive: boolean;
@@ -603,12 +605,22 @@ export function deriveTaskStatus(
   const revealActive = contractStatus === 4 && revealEnd > 0 && nowSec <= revealEnd;
   const revealEnded = contractStatus === 4 && revealEnd > 0 && nowSec > revealEnd;
 
-  let label = getJobStatusLabel(contractStatus);
-  let color = getJobStatusColor(contractStatus);
-  if (revealEnded) {
-    label = "Ready to Finalize";
-    color = "#FF6B35";
-  }
+  const label: TaskStatusLabel =
+    contractStatus === 5 || contractStatus === 6 || revealEnded
+      ? "Closed"
+      : revealActive
+        ? "Reveal Phase"
+        : contractStatus === 2 || contractStatus === 3
+          ? "Under Review"
+          : "Open";
+  const color =
+    label === "Open"
+      ? "#00FFA3"
+      : label === "Under Review"
+        ? "#F5A623"
+        : label === "Reveal Phase"
+          ? "#00E5FF"
+          : "#7A9BB5";
 
   return {
     label,
@@ -629,42 +641,40 @@ export function deriveDisplayStatus(
   contractStatus: number,
   deadline: bigint | number,
   revealPhaseEnd?: bigint | number,
-  viewerAddress?: string,
-  viewerSubmitted?: boolean,
-  isCreator?: boolean
+  submissionCount = 0,
+  viewerSubmitted = false,
+  isCreator = false
 ): DerivedTaskStatus {
-  void viewerAddress;
   const nowSec = Math.floor(Date.now() / 1000);
   const deadlineSec = Number(deadline ?? 0);
   const revealEndSec = Number(revealPhaseEnd ?? 0);
   const deadlinePassed = deadlineSec > 0 && nowSec > deadlineSec;
-  const revealActive = contractStatus === 4 && (revealEndSec === 0 || nowSec <= revealEndSec);
+  const revealActive = contractStatus === 4 && revealEndSec > 0 && nowSec <= revealEndSec;
   const revealEnded = contractStatus === 4 && revealEndSec > 0 && nowSec > revealEndSec;
 
-  let label: string;
+  let label: TaskStatusLabel;
   let color: string;
 
-  if (contractStatus === 6) {
+  if (
+    contractStatus === 5 ||
+    contractStatus === 6 ||
+    revealEnded ||
+    (deadlinePassed && submissionCount === 0)
+  ) {
     label = "Closed";
     color = "#7A9BB5";
-  } else if (contractStatus === 5) {
-    label = "Completed";
-    color = "#F5A623";
-  } else if (contractStatus === 4) {
-    label = revealEnded ? "Ready to Finalize" : "Reveal Phase";
-    color = revealEnded ? "#FF6B35" : "#00E5FF";
-  } else if (contractStatus === 3) {
+  } else if (
+    deadlinePassed &&
+    (contractStatus === 0 || contractStatus === 1 || contractStatus === 2 || contractStatus === 3)
+  ) {
     label = "Under Review";
     color = "#F5A623";
-  } else if (contractStatus === 2) {
-    label = deadlinePassed ? "Under Review" : "Open";
-    color = deadlinePassed ? "#F5A623" : "#00FFA3";
-  } else if (contractStatus === 0 || contractStatus === 1) {
-    label = deadlinePassed ? "Closed" : "Open";
-    color = deadlinePassed ? "#7A9BB5" : "#00FFA3";
+  } else if (revealActive) {
+    label = "Reveal Phase";
+    color = "#00E5FF";
   } else {
-    label = "Unknown";
-    color = "#7A9BB5";
+    label = "Open";
+    color = "#00FFA3";
   }
 
   return {
@@ -674,19 +684,21 @@ export function deriveDisplayStatus(
     revealActive,
     revealEnded,
     canSubmit:
-      !deadlinePassed &&
+      label === "Open" &&
       (contractStatus === 0 || contractStatus === 1 || contractStatus === 2) &&
       !viewerSubmitted &&
       !isCreator,
     canSelectFinalists:
       isCreator === true &&
-      deadlinePassed &&
-      (contractStatus === 2 || contractStatus === 3),
+      label === "Under Review" &&
+      (contractStatus === 0 || contractStatus === 1 || contractStatus === 2 || contractStatus === 3) &&
+      submissionCount > 0,
     canAutoReveal:
-      deadlinePassed &&
-      (contractStatus === 0 || contractStatus === 1 || contractStatus === 2),
+      label === "Under Review" &&
+      (contractStatus === 0 || contractStatus === 1 || contractStatus === 2) &&
+      submissionCount > 0,
     canFinalize: isCreator === true && contractStatus === 4 && revealEnded,
-    canInteract: revealActive && !isCreator,
+    canInteract: label === "Reveal Phase" && !isCreator,
     canClaim: contractStatus === 5 && viewerSubmitted === true
   };
 }

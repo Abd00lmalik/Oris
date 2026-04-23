@@ -149,20 +149,20 @@ function PhaseBanner({
     { status: 2, label: "SUBMITTED", desc: "Creator reviewing submissions", color: "var(--warn)" },
     { status: 3, label: "SELECTION", desc: "Creator selecting finalists", color: "var(--warn)" },
     { status: 4, label: "REVEAL PHASE", desc: "Critique and build-on window open", color: "var(--arc)" },
-    { status: 5, label: "COMPLETED", desc: "Winners selected", color: "var(--pulse)" },
+    { status: 5, label: "CLOSED", desc: "Task closed", color: "var(--text-muted)" },
     { status: 6, label: "CLOSED", desc: "Task closed", color: "var(--text-muted)" }
   ];
 
-  const displayStatus = deriveDisplayStatus(job.status, job.deadline, revealEnd);
+  const displayStatus = deriveDisplayStatus(job.status, job.deadline, revealEnd, job.submissionCount);
   const current = phases.find((phase) => phase.status === displayStatus.code) ?? phases[0];
-  const revealEnded = displayStatus.label === "Ready to Finalize";
+  const revealEnded = job.status === 4 && revealEnd > 0 && Math.floor(Date.now() / 1000) > revealEnd;
   const label = displayStatus.label.toUpperCase();
   const description = awaitingSelection
     ? "Submission deadline passed - awaiting creator finalist selection"
     : revealEnded
       ? "Reveal window closed - awaiting winner finalization"
       : displayStatus.label === "Closed"
-        ? "Submission deadline has passed. Awaiting creator to select finalists."
+        ? "Task closed"
       : current.desc;
   const progress = Math.min(displayStatus.code, 5);
 
@@ -1095,7 +1095,7 @@ export default function JobDetailsPage() {
 
   const revealEndValue = revealPhaseEnd || Number(job?.revealPhaseEnd ?? 0n);
   const displayStatus = job
-    ? deriveDisplayStatus(job.status, job.deadline, revealEndValue, account ?? undefined, hasSubmitted, isCreator)
+    ? deriveDisplayStatus(job.status, job.deadline, revealEndValue, job.submissionCount, hasSubmitted, isCreator)
     : null;
   const canClaim = Boolean(
     displayStatus?.canClaim && isConnected && !viewerIsCreator && viewerSubmissionApproved && !isClaimed && claimCountdown <= 0
@@ -1104,7 +1104,9 @@ export default function JobDetailsPage() {
   const submissionDeadlinePassed = Boolean(
     job && job.deadline > 0 && BigInt(Math.floor(Date.now() / 1000)) > BigInt(job.deadline)
   );
-  const awaitingSelection = Boolean(job && submissionDeadlinePassed && (job.status === 2 || job.status === 0 || job.status === 1));
+  const awaitingSelection = Boolean(
+    job && submissionDeadlinePassed && safeSubmissions.length > 0 && (job.status === 2 || job.status === 0 || job.status === 1)
+  );
   const canAutoReveal = Boolean(
     task?.caps.canAutoReveal &&
       job &&
@@ -1637,7 +1639,7 @@ export default function JobDetailsPage() {
                       letterSpacing: "0.1em"
                     }}
                   >
-                    REVEAL PHASE COMPLETE
+                    REVEAL PHASE CLOSED
                   </div>
                   {pendingReleases.length > 0 ? (
                     <>
@@ -1670,7 +1672,7 @@ export default function JobDetailsPage() {
                     : ""}
                   {job.status === 2 ? "Creator is reviewing submissions" : ""}
                   {job.status === 3 ? "Creator is selecting finalists" : ""}
-                  {job.status === 5 ? "Task is finalized" : ""}
+                  {job.status === 5 ? "Task is closed" : ""}
                   {job.status === 6 ? "Task is closed" : ""}
                 </div>
               ) : null}

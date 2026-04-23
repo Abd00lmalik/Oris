@@ -30,7 +30,7 @@ function formatDeadline(deadline: bigint | number) {
   return `${hours}h ${mins}m left`;
 }
 
-type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed" | "completed";
+type TaskFilter = "all" | "open" | "submitted" | "reveal" | "closed";
 const PAGE_SIZE = 4;
 
 const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
@@ -39,7 +39,6 @@ const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "submitted", label: "SUBMITTED", color: "#F5A623" },
   { value: "reveal", label: "REVEAL PHASE", color: "#00E5FF" },
   { value: "closed", label: "CLOSED", color: "#7A9BB5" },
-  { value: "completed", label: "COMPLETED", color: "#F5A623" },
 ];
 
 function matchesFilter(task: UnifiedTask, filter: TaskFilter): boolean {
@@ -47,24 +46,30 @@ function matchesFilter(task: UnifiedTask, filter: TaskFilter): boolean {
 
   const status = Number(task.status);
   const deadline = Number(task.deadline);
-  const isReveal = status === 4 || Boolean(task.isInRevealPhase);
-  const deadlineActive = deadline > Math.floor(Date.now() / 1000);
+  const revealEnd = Number(task.revealPhaseEnd ?? 0);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const revealEnded = status === 4 && revealEnd > 0 && nowSec > revealEnd;
+  const isReveal = (status === 4 || Boolean(task.isInRevealPhase)) && !revealEnded;
+  const deadlinePassed = deadline > 0 && nowSec > deadline;
+  const deadlineActive = !deadlinePassed;
   const isOpen = (status === 0 || status === 1 || status === 2) && deadlineActive;
 
   if (filter === "open") {
     return isOpen;
   }
   if (filter === "submitted") {
-    return (status === 2 && !deadlineActive) || status === 3;
+    return ((status === 2 && deadlinePassed) || status === 3) && !isReveal;
   }
   if (filter === "reveal") {
     return isReveal;
   }
   if (filter === "closed") {
-    return status === 6 || ((status === 0 || status === 1) && !deadlineActive && !isReveal);
-  }
-  if (filter === "completed") {
-    return status === 5;
+    return (
+      status === 5 ||
+      status === 6 ||
+      revealEnded ||
+      (!isOpen && !isReveal && deadlinePassed && task.submissionCount === 0)
+    );
   }
   return true;
 }
@@ -120,12 +125,13 @@ export default function HomePage() {
     () => allTasks.filter((task) => matchesFilter(task, selectedFilter)),
     [allTasks, selectedFilter]
   );
-  const displayedTasks = selectedFilter === "all" ? allTasks : filteredTasks.slice(0, visibleCount);
-  const hasMore = selectedFilter !== "all" && filteredTasks.length > visibleCount;
+  const displayedTasks = filteredTasks.slice(0, visibleCount);
+  const hasMore = filteredTasks.length > visibleCount;
 
-  useEffect(() => {
+  const handleFilterChange = (newFilter: TaskFilter) => {
+    setSelectedFilter(newFilter);
     setVisibleCount(PAGE_SIZE);
-  }, [selectedFilter]);
+  };
 
   useEffect(() => {
     console.log("[taskFeed] Combined:", allTasks.length);
@@ -183,7 +189,7 @@ export default function HomePage() {
             <button
               key={filter.value}
               type="button"
-              onClick={() => setSelectedFilter(filter.value)}
+              onClick={() => handleFilterChange(filter.value)}
               style={{
                 fontFamily: "JetBrains Mono, monospace",
                 fontSize: 11,
@@ -211,7 +217,12 @@ export default function HomePage() {
           <>
             <div className="grid gap-4 md:grid-cols-2">
               {displayedTasks.map((task) => {
-                const displayStatus = deriveDisplayStatus(task.status, task.deadline, task.revealPhaseEnd);
+                const displayStatus = deriveDisplayStatus(
+                  task.status,
+                  task.deadline,
+                  task.revealPhaseEnd,
+                  task.submissionCount
+                );
                 return (
                   <Link
                     key={`task-${task.displayId}`}
@@ -327,9 +338,9 @@ export default function HomePage() {
                   type="button"
                   onClick={() => setVisibleCount((previous) => previous + PAGE_SIZE)}
                   className="btn-ghost"
-                  style={{ minWidth: 200, fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}
+                  style={{ minWidth: 240, fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}
                 >
-                  Show More ({filteredTasks.length - visibleCount} remaining)
+                  Show more tasks ({filteredTasks.length - visibleCount} remaining)
                 </button>
               </div>
             ) : null}

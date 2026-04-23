@@ -217,7 +217,7 @@ async function settleRevealPhase(taskId) {
 }
 \`\`\`
 
-Callable when task status is Approved, or when task is still RevealPhase and revealEnd + 2 days has passed.
+Callable when the task is finalized/closed, or when it is still RevealPhase and revealEnd + 2 days has passed.
 
 ## Circle Nanopayments
 

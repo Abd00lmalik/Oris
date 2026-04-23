@@ -188,6 +188,21 @@ function squarify(items: PersonSignal[], x: number, y: number, w: number, h: num
   return result;
 }
 
+function ensureTreemapFill(nodes: TreemapItem[], width: number, height: number): TreemapItem[] {
+  if (!nodes.length || width <= 0 || height <= 0) return nodes;
+  const containerArea = width * height;
+  const totalArea = nodes.reduce((sum, node) => sum + node.rect.w * node.rect.h, 0);
+  if (Math.abs(totalArea - containerArea) <= containerArea * 0.02) return nodes;
+
+  const filled = nodes.map((node) => ({ ...node, rect: { ...node.rect } }));
+  const last = filled[filled.length - 1];
+  if (last) {
+    last.rect.w = Math.max(0, width - last.rect.x);
+    last.rect.h = Math.max(0, height - last.rect.y);
+  }
+  return filled;
+}
+
 function MiniSignalBar({ buildsOn, critiques }: { buildsOn: number; critiques: number }) {
   const total = buildsOn + critiques;
   if (total <= 0) return null;
@@ -425,10 +440,10 @@ function PersonBox({
       onDoubleClick={onDoubleClick}
       className="absolute overflow-hidden text-left"
       style={{
-        left: rect.x + 1,
-        top: rect.y + 1,
-        width: Math.max(rect.w - 2, 0),
-        height: Math.max(rect.h - 2, 0),
+        left: rect.x,
+        top: rect.y,
+        width: Math.max(rect.w - 1, 0),
+        height: Math.max(rect.h - 1, 0),
         background: bg,
         border: `1px solid ${isSelected ? border : `${border}80`}`,
         boxShadow: isSelected ? `inset 0 0 0 1px ${border}` : "none"
@@ -684,19 +699,30 @@ export default function SignalMap({
 
   useEffect(() => {
     if (!wrapRef.current) return;
+    const measureNow = () => {
+      if (!wrapRef.current) return;
+      const rect = wrapRef.current.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setMeasured({
+          w: Math.max(320, Math.floor(rect.width)),
+          h: Math.max(360, Math.floor(rect.height))
+        });
+      }
+    };
+    measureNow();
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
       setMeasured({
         w: Math.max(320, Math.floor(entry.contentRect.width)),
-        h: Math.max(320, Math.floor(entry.contentRect.height))
+        h: Math.max(360, Math.floor(entry.contentRect.height))
       });
     });
     observer.observe(wrapRef.current);
     return () => observer.disconnect();
   }, []);
 
-  const resolvedHeight = containerHeight ?? measured.h;
+  const resolvedHeight = Math.max(360, containerHeight ?? measured.h);
   const resolvedWidth = containerWidth ?? measured.w;
   const detailWidth = 0;
   const mapWidth = Math.max(260, resolvedWidth - detailWidth);
@@ -707,7 +733,7 @@ export default function SignalMap({
   );
 
   const items = useMemo(
-    () => squarify(sortedPeople, 0, 0, mapWidth, resolvedHeight),
+    () => ensureTreemapFill(squarify(sortedPeople, 0, 0, mapWidth, resolvedHeight), mapWidth, resolvedHeight),
     [mapWidth, resolvedHeight, sortedPeople]
   );
 
@@ -746,7 +772,7 @@ export default function SignalMap({
   }
 
   return (
-    <div className="signal-map-wrapper flex gap-0 overflow-hidden" style={{ height: resolvedHeight }}>
+    <div className="signal-map-wrapper flex gap-0 overflow-hidden" style={{ height: resolvedHeight, minHeight: 360 }}>
       <div className="flex-1">
         <div
           className="mb-2 flex items-center gap-4 px-1"
@@ -775,6 +801,7 @@ export default function SignalMap({
           style={{
             width: mapWidth,
             height: resolvedHeight,
+            minHeight: 360,
             maxHeight: resolvedHeight,
             background: "var(--surface)",
             border: "1px solid var(--border)"

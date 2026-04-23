@@ -67,6 +67,7 @@ export async function buildTaskHeatmap(
     submissions?: (taskId: number, agent: string) => Promise<unknown>;
     getSelectedFinalists?: (taskId: number) => Promise<string[]>;
     getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
+    submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
     getResponse?: (responseId: bigint | number) => Promise<unknown>;
     getRevealPhaseEnd?: (taskId: number) => Promise<bigint | number>;
     isInRevealPhase?: (taskId: number) => Promise<boolean>;
@@ -112,6 +113,25 @@ export async function buildTaskHeatmap(
     return created;
   };
 
+  let revealPhaseEnd = 0;
+  let isRevealPhase = false;
+  try {
+    revealPhaseEnd = Number((await contract.getRevealPhaseEnd?.(taskId)) ?? 0);
+    isRevealPhase = Boolean((await contract.isInRevealPhase?.(taskId)) ?? false);
+  } catch {
+    revealPhaseEnd = 0;
+    isRevealPhase = false;
+  }
+
+  if (!isRevealPhase) {
+    return {
+      people: [],
+      totalActivity: 0,
+      revealPhaseEnd,
+      isRevealPhase: false
+    };
+  }
+
   let rawSubmissions: unknown[] = [];
   try {
     if (!contract.getSubmissions) throw new Error("getSubmissions unavailable");
@@ -144,15 +164,40 @@ export async function buildTaskHeatmap(
     finalists = [];
   }
 
-  const finalistSet = new Set(finalists.map((address) => address.toLowerCase()));
-  // Strict live rule: finalist submissions drive submitter tiles during reveal.
-  // Responders are added below only when a real non-slashed response exists.
-  const visibleSubmissions = finalistSet.size > 0
-    ? validSubmissions.filter((submission) => finalistSet.has(submission.agent.toLowerCase()))
-    : validSubmissions;
+  const eligibleAddresses = new Set(finalists.map((address) => address.toLowerCase()));
+
+  // Auto-reveal fallback: if no explicit finalists exist, include only submitters
+  // whose submissions have received at least one interaction.
+  if (eligibleAddresses.size === 0) {
+    for (const submission of validSubmissions) {
+      try {
+        const responseCount =
+          Number((await contract.submissionResponseCount?.(BigInt(submission.submissionId))) ?? 0);
+        if (responseCount > 0) {
+          eligibleAddresses.add(submission.agent.toLowerCase());
+          continue;
+        }
+      } catch {
+        // Fall through to the response-list fallback below.
+      }
+
+      try {
+        const responseIds = await contract.getSubmissionResponses?.(BigInt(submission.submissionId)) ?? [];
+        if (Array.from(responseIds).length > 0) {
+          eligibleAddresses.add(submission.agent.toLowerCase());
+        }
+      } catch {
+        // No response visibility for this submission.
+      }
+    }
+  }
+
+  const visibleSubmissions = validSubmissions.filter((submission) =>
+    eligibleAddresses.has(submission.agent.toLowerCase())
+  );
 
   console.log(`[heatmap] task #${taskId} valid submissions: ${validSubmissions.length}`);
-  console.log(`[heatmap] task #${taskId} finalist submissions: ${visibleSubmissions.length}`);
+  console.log(`[heatmap] task #${taskId} eligible finalist tiles: ${visibleSubmissions.length}`);
 
   for (const parsedSubmission of visibleSubmissions) {
     const agent = String(parsedSubmission.agent ?? "");
@@ -176,14 +221,17 @@ export async function buildTaskHeatmap(
           const responseType = Number(response.responseType ?? response[4] ?? 0);
           if (isZero(responder) || stakeSlashed) continue;
 
-          const responderPerson = getOrCreate(responder, "responder");
+          const responderPerson = peopleMap.get(responder.toLowerCase());
+          if (responderPerson && responderPerson.role === "submitter") {
+            responderPerson.role = "both";
+          }
 
           if (responseType === 0) {
             submitter.buildsOnReceived += 1;
-            responderPerson.buildsOnGiven += 1;
+            if (responderPerson) responderPerson.buildsOnGiven += 1;
           } else {
             submitter.critiquesReceived += 1;
-            responderPerson.critiquesGiven += 1;
+            if (responderPerson) responderPerson.critiquesGiven += 1;
           }
         } catch {
           // Skip malformed response rows.
@@ -232,16 +280,6 @@ export async function buildTaskHeatmap(
   );
 
   people.sort((a, b) => b.activityWeight - a.activityWeight);
-
-  let revealPhaseEnd = 0;
-  let isRevealPhase = false;
-  try {
-    revealPhaseEnd = Number((await contract.getRevealPhaseEnd?.(taskId)) ?? 0);
-    isRevealPhase = Boolean((await contract.isInRevealPhase?.(taskId)) ?? false);
-  } catch {
-    revealPhaseEnd = 0;
-    isRevealPhase = false;
-  }
 
   console.log(`[signalMap] task #${taskId} tiles: ${people.length}`);
   people.forEach((person) => {
