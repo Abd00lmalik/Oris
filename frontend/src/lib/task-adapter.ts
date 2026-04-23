@@ -10,7 +10,7 @@ import {
   SubmissionRecord,
   ZERO_ADDRESS
 } from "./contracts";
-import { getDisplayId, TaskSource } from "./task-id";
+import { getDisplayId, makeTaskUrl, TaskSource } from "./task-id";
 
 const V1_JOB_ADDRESS = "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16";
 
@@ -407,8 +407,22 @@ export async function fetchTaskById(
   return tasks.find((task) => task.displayId === displayId) ?? null;
 }
 
+export async function fetchTaskBySourceAndId(
+  source: TaskSource,
+  contractJobId: number,
+  provider: JsonRpcProvider | BrowserProvider
+): Promise<UnifiedTask | null> {
+  if (!Number.isInteger(contractJobId) || contractJobId < 0) return null;
+  if (_cachedTasks) {
+    const cached = _cachedTasks.find((task) => task.source === source && task.jobId === contractJobId);
+    if (cached) return cached;
+  }
+  const tasks = await fetchAllTasks(provider, Boolean(_cachedTasks));
+  return tasks.find((task) => task.source === source && task.jobId === contractJobId) ?? null;
+}
+
 export function getTaskUrl(task: UnifiedTask): string {
-  return `/job/${task.displayId}`;
+  return makeTaskUrl(task.source, task.jobId);
 }
 
 export function invalidateTaskCache() {

@@ -42,7 +42,9 @@ function getDisplayId(source, contractJobId) {
 }
 
 function makeTaskUrl(source, contractJobId) {
-  return "/job/" + getDisplayId(source, contractJobId);
+  if (source === "V1") return "/job/v1-" + contractJobId;
+  if (source === "PrevV2") return "/job/pv2-" + contractJobId;
+  return "/job/" + contractJobId;
 }
 
 function formatUsdc(value) {
@@ -114,10 +116,10 @@ function readSubmissionId(submission, fallbackIndex = 0) {
 
 async function getCounter(contract) {
   try {
-    return Number(await contract.totalJobs());
+    return Number(await contract.nextJobId());
   } catch {
     try {
-      return Number(await contract.nextJobId());
+      return Number(await contract.totalJobs());
     } catch {
       return 0;
     }
@@ -148,9 +150,23 @@ async function discoverAllTasks(provider, contracts) {
 
     if (rows.length === 0) {
       const total = await getCounter(contract);
+      const seen = new Set();
       for (let i = 0; i < total; i += 1) {
         const row = await contract.getJob(i).catch(() => null);
-        if (row) rows.push(row);
+        if (row) {
+          rows.push(row);
+          seen.add(Number(row.jobId ?? row[0] ?? i));
+        }
+      }
+      if (src.archived && rows.length === 0) {
+        for (let i = 1; i <= total; i += 1) {
+          const row = await contract.getJob(i).catch(() => null);
+          if (!row) continue;
+          const jobId = Number(row.jobId ?? row[0] ?? i);
+          if (seen.has(jobId)) continue;
+          rows.push(row);
+          seen.add(jobId);
+        }
       }
     }
 
@@ -453,7 +469,7 @@ async function main() {
 
   console.log("\n-- ABI Verification --");
   try {
-    const total = hasAbiFunction(jobConfig.abi, "totalJobs") ? await JOB.totalJobs() : await JOB.nextJobId();
+    const total = await getCounter(JOB);
     console.log("Current V2 total tasks:", total.toString());
     if (Number(total) > 0) {
       const firstJobId = 0;

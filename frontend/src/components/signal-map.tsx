@@ -190,9 +190,6 @@ function squarify(items: PersonSignal[], x: number, y: number, w: number, h: num
 
 function ensureTreemapFill(nodes: TreemapItem[], width: number, height: number): TreemapItem[] {
   if (!nodes.length || width <= 0 || height <= 0) return nodes;
-  const containerArea = width * height;
-  const totalArea = nodes.reduce((sum, node) => sum + node.rect.w * node.rect.h, 0);
-  if (Math.abs(totalArea - containerArea) <= containerArea * 0.02) return nodes;
 
   const filled = nodes.map((node) => ({ ...node, rect: { ...node.rect } }));
   const last = filled[filled.length - 1];
@@ -442,11 +439,12 @@ function PersonBox({
       style={{
         left: rect.x,
         top: rect.y,
-        width: Math.max(rect.w - 1, 0),
-        height: Math.max(rect.h - 1, 0),
+        width: Math.max(rect.w - 1, 1),
+        height: Math.max(rect.h - 1, 1),
         background: bg,
         border: `1px solid ${isSelected ? border : `${border}80`}`,
-        boxShadow: isSelected ? `inset 0 0 0 1px ${border}` : "none"
+        boxShadow: isSelected ? `inset 0 0 0 1px ${border}` : "none",
+        boxSizing: "border-box"
       }}
     >
       {isMicro ? (
@@ -694,28 +692,24 @@ export default function SignalMap({
   onSlashResponse
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [measured, setMeasured] = useState({ w: 640, h: 400 });
+  const [measured, setMeasured] = useState({ w: 600, h: 360 });
   const [selected, setSelected] = useState<PersonSignal | null>(null);
 
   useEffect(() => {
     if (!wrapRef.current) return;
-    const measureNow = () => {
-      if (!wrapRef.current) return;
-      const rect = wrapRef.current.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        setMeasured({
-          w: Math.max(320, Math.floor(rect.width)),
-          h: Math.max(360, Math.floor(rect.height))
-        });
-      }
-    };
-    measureNow();
+    const rect = wrapRef.current.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      setMeasured({
+        w: Math.floor(rect.width),
+        h: Math.floor(rect.height)
+      });
+    }
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (!entry) return;
+      if (!entry || entry.contentRect.width <= 0) return;
       setMeasured({
-        w: Math.max(320, Math.floor(entry.contentRect.width)),
-        h: Math.max(360, Math.floor(entry.contentRect.height))
+        w: Math.floor(entry.contentRect.width),
+        h: Math.floor(entry.contentRect.height)
       });
     });
     observer.observe(wrapRef.current);

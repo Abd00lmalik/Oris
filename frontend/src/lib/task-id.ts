@@ -1,6 +1,6 @@
 // Canonical task identity across all known testnet job deployments.
-// Display IDs are the canonical human-facing route. Source-prefixed parsing is
-// retained only as a backwards-compatible fallback for old shared links.
+// Display IDs remain the human-facing numbering system while routes use raw
+// contract IDs so current V2 task #0 resolves at /job/0.
 
 export type TaskSource = "V1" | "PrevV2" | "CurrV2";
 
@@ -24,7 +24,9 @@ export function formatDisplayId(source: TaskSource, contractJobId: number): stri
 }
 
 export function makeTaskUrl(source: TaskSource, contractJobId: number): string {
-  return `/job/${getDisplayId(source, contractJobId)}`;
+  if (source === "V1") return `/job/v1-${contractJobId}`;
+  if (source === "PrevV2") return `/job/pv2-${contractJobId}`;
+  return `/job/${contractJobId}`;
 }
 
 export function parseTaskUrl(param: string): { source: TaskSource; contractJobId: number } | null {

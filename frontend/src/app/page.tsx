@@ -36,7 +36,7 @@ const PAGE_SIZE = 4;
 const FILTER_OPTIONS: { value: TaskFilter; label: string; color: string }[] = [
   { value: "all", label: "ALL", color: "#E8F4FD" },
   { value: "open", label: "OPEN", color: "#00FFA3" },
-  { value: "submitted", label: "SUBMITTED", color: "#F5A623" },
+  { value: "submitted", label: "UNDER REVIEW", color: "#F5A623" },
   { value: "reveal", label: "REVEAL PHASE", color: "#00E5FF" },
   { value: "closed", label: "CLOSED", color: "#7A9BB5" },
 ];
@@ -98,7 +98,6 @@ export default function HomePage() {
       setTasks(allTasks);
       setMyCredentials([...unified.v2Credentials, ...unified.legacyCredentials]);
       setMyScore(unified.totalScore);
-      console.log("[taskFeed] Loaded tasks:", allTasks.map((task) => ({ displayId: task.displayId, jobId: task.jobId, status: task.status })));
     } finally {
       setLoading(false);
     }
@@ -132,12 +131,6 @@ export default function HomePage() {
     setSelectedFilter(newFilter);
     setVisibleCount(PAGE_SIZE);
   };
-
-  useEffect(() => {
-    console.log("[taskFeed] Combined:", allTasks.length);
-    console.log("[taskFeed] After filter:", displayedTasks.length);
-    console.log("[taskFeed] Display IDs:", displayedTasks.map((task) => task.displayId));
-  }, [allTasks.length, displayedTasks]);
 
   const hasStoredWallet =
     hydrated && typeof window !== "undefined" && Boolean(window.localStorage.getItem("archon_last_wallet"));

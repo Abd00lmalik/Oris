@@ -1,5 +1,5 @@
 import { Contract } from "ethers";
-import { getReadProvider } from "./contracts";
+import { getReadProvider, getTaskCount } from "./contracts";
 import { fetchLegacyTasks, getLegacyRegistryContract } from "./legacy-contracts";
 import contractsJson from "./generated/contracts.json";
 
@@ -176,15 +176,8 @@ export async function fetchPlatformStats(): Promise<PlatformStats> {
 
   let totalTasks = 0;
   try {
-    if (typeof jobContract.nextJobId === "function") {
-      const nextJobId = await jobContract.nextJobId();
-      totalTasks = readNumber(nextJobId, 0);
-      console.log("[stats] nextJobId:", totalTasks);
-    } else if (typeof jobContract.totalJobs === "function") {
-      const totalJobs = await jobContract.totalJobs();
-      totalTasks = readNumber(totalJobs, 0);
-      console.log("[stats] totalJobs:", totalTasks);
-    }
+    totalTasks = readNumber(await getTaskCount(provider), 0);
+    console.log("[stats] task count:", totalTasks);
   } catch (error) {
     console.error("[stats] task count failed:", error);
   }

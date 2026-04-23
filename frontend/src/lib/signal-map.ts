@@ -212,6 +212,12 @@ export async function buildTaskHeatmap(
         // No response visibility for this submission.
       }
     }
+
+    if (eligibleAddresses.size === 0) {
+      for (const submission of validSubmissions) {
+        eligibleAddresses.add(submission.agent.toLowerCase());
+      }
+    }
   }
 
   const visibleSubmissions = validSubmissions.filter((submission) =>
@@ -265,23 +271,36 @@ export async function buildTaskHeatmap(
   }
 
   const people = Array.from(peopleMap.values());
+  const rawScores = new Map<string, number>();
   for (const person of people) {
-    const receivedSignals = person.buildsOnReceived + person.critiquesReceived;
-    person.totalActivity =
-      (person.submissionCount > 0 ? 1 : 0) +
-      person.buildsOnGiven +
-      person.critiquesGiven +
-      Math.floor(receivedSignals / 2);
+    const rawScore =
+      person.submissionCount * 10 +
+      person.buildsOnGiven * 10 +
+      person.critiquesGiven * 10 +
+      Math.floor(person.buildsOnReceived / 2) * 10 +
+      Math.floor(person.critiquesReceived / 2) * 10;
 
-    if (person.submissionCount > 0 && person.totalActivity === 0) {
-      person.totalActivity = 1;
-    }
+    rawScores.set(person.address.toLowerCase(), rawScore);
+    person.totalActivity = rawScore;
   }
 
-  const globalActivity = people.reduce((sum, person) => sum + person.totalActivity, 0) || people.length;
+  const totalScore = people.reduce(
+    (sum, person) => sum + (rawScores.get(person.address.toLowerCase()) ?? 0),
+    0
+  );
+  const totalActivity = people.reduce(
+    (sum, person) =>
+      sum +
+      person.buildsOnGiven +
+      person.critiquesGiven +
+      person.buildsOnReceived +
+      person.critiquesReceived,
+    0
+  );
 
   for (const person of people) {
-    person.activityWeight = globalActivity > 0 ? Math.round((person.totalActivity / globalActivity) * 100) : 0;
+    const rawScore = rawScores.get(person.address.toLowerCase()) ?? 0;
+    person.activityWeight = totalScore > 0 ? Math.round((rawScore / totalScore) * 100) : Math.round(100 / people.length);
     const buildSignals = person.buildsOnGiven + person.buildsOnReceived;
     const critiqueSignals = person.critiquesGiven + person.critiquesReceived;
     const totalSignals = buildSignals + critiqueSignals;
@@ -292,10 +311,7 @@ export async function buildTaskHeatmap(
 
   const weightSum = people.reduce((sum, person) => sum + person.activityWeight, 0);
   if (weightSum !== 100 && people.length > 0) {
-    const largest = people.reduce((left, right) =>
-      left.activityWeight >= right.activityWeight ? left : right
-    );
-    largest.activityWeight += 100 - weightSum;
+    people[0].activityWeight += 100 - weightSum;
   }
 
   await Promise.all(
@@ -323,7 +339,7 @@ export async function buildTaskHeatmap(
 
   return {
     people,
-    totalActivity: globalActivity,
+    totalActivity,
     revealPhaseEnd,
     isRevealPhase
   };

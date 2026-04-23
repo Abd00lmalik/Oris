@@ -613,7 +613,7 @@ export function submissionStatusLabel(status: number) {
 }
 
 export function getJobStatusLabel(status: number): string {
-  return JOB_STATUS_LABELS[status] ?? "Unknown";
+  return JOB_STATUS_LABELS[status] ?? "Closed";
 }
 
 export function getJobStatusColor(status: number): string {
@@ -687,15 +687,12 @@ export function deriveDisplayStatus(
   ) {
     label = "Closed";
     color = "#7A9BB5";
-  } else if (
-    deadlinePassed &&
-    (contractStatus === 0 || contractStatus === 1 || contractStatus === 2 || contractStatus === 3)
-  ) {
-    label = "Under Review";
-    color = "#F5A623";
   } else if (revealActive) {
     label = "Reveal Phase";
     color = "#00E5FF";
+  } else if (deadlinePassed) {
+    label = "Under Review";
+    color = "#F5A623";
   } else {
     label = "Open";
     color = "#00FFA3";
@@ -1062,6 +1059,21 @@ export function getJobReadContract() {
   return getJobContract(getReadProvider());
 }
 
+export async function getTaskCount(
+  provider: ethers.BrowserProvider | ethers.JsonRpcProvider
+): Promise<number> {
+  const contract = getJobContract(provider);
+  try {
+    return Number(await contract.nextJobId());
+  } catch {
+    try {
+      return Number(await contract.totalJobs());
+    } catch {
+      return 0;
+    }
+  }
+}
+
 function getOptionalJobReadContract() {
   return getJobContract(getReadProvider());
 }
@@ -1416,7 +1428,7 @@ export async function fetchAllJobs(): Promise<JobRecord[]> {
     const parsed = rawJobs.map((item) => parseJob(item)).sort((a, b) => b.jobId - a.jobId);
     return await Promise.all(parsed.map((job) => withRevealEnd(job)));
   } catch {
-    const nextJobId = Number(await contract.nextJobId());
+    const nextJobId = await getTaskCount(getReadProvider());
     const jobs: JobRecord[] = [];
     for (let jobId = 0; jobId < nextJobId; jobId++) {
       try {
@@ -1433,8 +1445,7 @@ export async function fetchAllJobs(): Promise<JobRecord[]> {
 
 export async function fetchTotalJobsCreated(): Promise<number> {
   try {
-    const contract = getOptionalJobReadContract();
-    return Number(await contract.nextJobId());
+    return await getTaskCount(getReadProvider());
   } catch {
     const jobs = await fetchAllJobs();
     return jobs.length;

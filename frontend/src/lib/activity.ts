@@ -1,7 +1,7 @@
 "use client";
 
 import { Contract, EventLog, Log } from "ethers";
-import { formatTaskTitle, getReadProvider } from "./contracts";
+import { formatTaskTitle, getReadProvider, getTaskCount } from "./contracts";
 import { fetchLegacyTaskCount } from "./legacy-contracts";
 import { formatDisplayId } from "./task-id";
 import contractsJson from "./generated/contracts.json";
@@ -41,21 +41,10 @@ const MAX_EVENTS = 10;
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 export function formatTimeAgo(timestampInput: number | bigint): string {
-  const ts = Number(timestampInput);
-  if (!ts || ts <= 0) return "recently";
-
-  const now = Math.floor(Date.now() / 1000);
-  const tsSeconds = ts > 1e12 ? Math.floor(ts / 1000) : ts;
-  const diffSeconds = now - tsSeconds;
-
-  if (diffSeconds < 0 || diffSeconds > 315_360_000) return "recently";
-  if (diffSeconds < 60) return "just now";
-  if (diffSeconds < 3_600) return `${Math.floor(diffSeconds / 60)}m ago`;
-  if (diffSeconds < 86_400) return `${Math.floor(diffSeconds / 3_600)}h ago`;
-  if (diffSeconds < 604_800) return `${Math.floor(diffSeconds / 86_400)}d ago`;
-  if (diffSeconds < 2_592_000) return `${Math.floor(diffSeconds / 604_800)}w ago`;
-  if (diffSeconds < 31_536_000) return `${Math.floor(diffSeconds / 2_592_000)}mo ago`;
-  return `${Math.floor(diffSeconds / 31_536_000)}y ago`;
+  const rawTimestamp = Number(timestampInput);
+  if (!rawTimestamp || rawTimestamp <= 0) return "recently";
+  const timestamp = rawTimestamp > 1e12 ? rawTimestamp : rawTimestamp * 1000;
+  return _calcTimeAgo(timestamp);
 }
 
 function _timeAgo(timestamp: number): string {
@@ -79,14 +68,24 @@ function _makeEventId(prefix: string, log?: EventLog | Log): string {
   return `${prefix}-${log.transactionHash}-${log.index}`;
 }
 
-async function _getBlockTimestampSeconds(provider: ReturnType<typeof getReadProvider>, blockNumber: number): Promise<number> {
+function _calcTimeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  if (diff < 0) return "just now";
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return `${Math.floor(diff / 604_800_000)}w ago`;
+}
+
+async function _getBlockTimestampMs(provider: ReturnType<typeof getReadProvider>, blockNumber: number): Promise<number> {
   try {
     const block = await provider.getBlock(blockNumber);
-    if (block?.timestamp) return Number(block.timestamp);
+    if (block?.timestamp) return Number(block.timestamp) * 1000;
   } catch {
     // Ignore and fall back.
   }
-  return Math.floor(Date.now() / 1000);
+  return Date.now();
 }
 
 async function _checkIsAgent(identityContract: Contract, address: string): Promise<boolean> {
@@ -128,7 +127,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
     );
     console.log("[activity] Found", created.length, "JobCreated events");
     for (const log of created.slice(-5) as EventLog[]) {
-      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
       merged.push({
         id: _makeEventId("hist-created", log),
         type: "task_created",
@@ -149,7 +148,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
     );
     console.log("[activity] Found", submitted.length, "DeliverableSubmitted events");
     for (const log of submitted.slice(-5) as EventLog[]) {
-      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
       const agent = String(log.args?.[1] ?? ZERO);
       merged.push({
         id: _makeEventId("hist-submitted", log),
@@ -170,7 +169,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       latest
     );
     for (const log of claimed.slice(-5) as EventLog[]) {
-      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
       const agent = String(log.args?.[1] ?? ZERO);
       merged.push({
         id: _makeEventId("hist-credential", log),
@@ -195,7 +194,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
       const to = String(log.args?.[1] ?? ZERO);
       if (from !== ZERO) continue;
       if (!to || to.toLowerCase() === ZERO) continue;
-      const timestamp = await _getBlockTimestampSeconds(provider, log.blockNumber);
+      const timestamp = await _getBlockTimestampMs(provider, log.blockNumber);
       merged.push({
         id: _makeEventId("hist-agent", log),
         type: "agent_joined",
@@ -230,16 +229,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
         provider
       );
 
-    let total = 0;
-    try {
-      total = Number(await stateReader.totalJobs());
-    } catch {
-      try {
-        total = Number(await stateReader.nextJobId());
-      } catch {
-        total = 0;
-      }
-    }
+    const total = await getTaskCount(provider);
     console.log("[activity] Reading", total, "tasks from contract state");
 
     const startId = Math.max(0, total - 3);
@@ -259,7 +249,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
             isAgent: false,
             description: `Task posted: "${title.slice(0, 50)}"`,
             taskId: jobId,
-            timestamp: createdAt || Math.floor(Date.now() / 1000),
+            timestamp: createdAt > 0 ? createdAt * 1000 : Date.now(),
             timeAgo: ""
           });
 
@@ -271,7 +261,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
               isAgent: false,
               description: `${submissionCount} submission${submissionCount > 1 ? "s" : ""} on task ${await _taskLabel(jobId)}: "${title.slice(0, 30)}"`,
               taskId: jobId,
-              timestamp: createdAt ? createdAt + 10 * 60 : Math.floor(Date.now() / 1000),
+              timestamp: createdAt > 0 ? createdAt * 1000 + 10 * 60_000 : Date.now(),
               timeAgo: ""
             });
           }
@@ -302,7 +292,7 @@ async function _loadRecentHistory(jobContract: Contract, identityContract: Contr
           actor: "",
           isAgent: false,
           description: `${legacyCount} earlier tasks are still visible in the task feed`,
-          timestamp: Math.floor(Date.now() / 1000) - 86_400,
+          timestamp: Date.now() - 86_400_000,
           timeAgo: "1d ago"
         });
       }
@@ -398,7 +388,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const client = String(args[1] ?? ZERO);
     const title = formatTaskTitle(String(args[2] ?? ""));
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("job-created", log),
       type: "task_created",
@@ -417,7 +407,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("accepted", log),
       type: "task_accepted",
@@ -436,7 +426,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("submitted", log),
       type: "submission_made",
@@ -455,7 +445,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("approved", log),
       type: "submission_approved",
@@ -474,7 +464,7 @@ export function initActivityFeed() {
     const jobId = Number(args[0] ?? 0);
     const agent = String(args[1] ?? ZERO);
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("credential", log),
       type: "credential_minted",
@@ -494,7 +484,7 @@ export function initActivityFeed() {
     const agent = String(args[1] ?? ZERO);
     const net = Number(args[4] ?? 0) / 1_000_000;
     const isAgent = await _checkIsAgent(identityContract, agent);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("reward", log),
       type: "reward_claimed",
@@ -515,7 +505,7 @@ export function initActivityFeed() {
     const parentSubmissionId = Number(args[1] ?? 0);
     const responseId = Number(args[2] ?? 0);
     const responseType = Number(args[3] ?? 0);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId(`response-${responseId}`, log),
       type: "response_added",
@@ -533,7 +523,7 @@ export function initActivityFeed() {
     const log = args[args.length - 1] as EventLog;
     const responseId = Number(args[0] ?? 0);
     const responder = String(args[1] ?? ZERO);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId(`slashed-${responseId}`, log),
       type: "stake_slashed",
@@ -552,7 +542,7 @@ export function initActivityFeed() {
     const to = String(args[1] ?? ZERO);
     if (from !== ZERO) return;
     if (!to || to.toLowerCase() === ZERO) return;
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = Date.now();
     _addEvent({
       id: _makeEventId("agent-joined", log),
       type: "agent_joined",
@@ -608,7 +598,7 @@ export function initActivityFeed() {
           description: `Task: "${formatTaskTitle(String(args[2] ?? "")).slice(0, 50)}"`,
           taskId: Number(args[0] ?? 0),
           txHash: log.transactionHash,
-          timestamp: Math.floor(Date.now() / 1000),
+          timestamp: Date.now(),
           timeAgo: "just now"
         });
       }
@@ -623,7 +613,7 @@ export function initActivityFeed() {
           description: `Submission for task ${await _taskLabel(Number(args[0] ?? 0))}`,
           taskId: Number(args[0] ?? 0),
           txHash: log.transactionHash,
-          timestamp: Math.floor(Date.now() / 1000),
+          timestamp: Date.now(),
           timeAgo: "just now"
         });
       }
