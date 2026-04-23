@@ -330,9 +330,33 @@ export type MilestoneDisputeRecord = {
 };
 
 const deployment = deploymentRaw as DeploymentConfig;
-const overrideRpcUrl = process.env.NEXT_PUBLIC_RPC_URL ?? process.env.NEXT_PUBLIC_ARC_RPC_URL;
+
+function sanitizeRpcUrl(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+
+  // Treat secret-style placeholders as invalid env values.
+  // Vercel Secret references (e.g. "@secret-name") should be resolved in the dashboard,
+  // not committed as literal environment values.
+  if (trimmed.startsWith("@")) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(`[contracts] Ignoring secret-style RPC env value "${trimmed}". Use a direct URL value.`);
+    }
+    return undefined;
+  }
+
+  return trimmed;
+}
+
+const overrideRpcUrl =
+  sanitizeRpcUrl(process.env.NEXT_PUBLIC_RPC_URL) ??
+  sanitizeRpcUrl(process.env.NEXT_PUBLIC_XION_RPC_URL) ??
+  sanitizeRpcUrl(process.env.NEXT_PUBLIC_ARC_RPC_URL);
 const overrideChainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.NEXT_PUBLIC_ARC_CHAIN_ID;
-const fallbackRpcUrl = process.env.NEXT_PUBLIC_ARC_RPC_URL ?? "https://rpc.testnet.arc.network";
+const fallbackRpcUrl =
+  sanitizeRpcUrl(process.env.NEXT_PUBLIC_ARC_RPC_URL) ??
+  sanitizeRpcUrl(process.env.NEXT_PUBLIC_XION_RPC_URL) ??
+  "https://rpc.testnet.arc.network";
 const resolvedJobContract = deployment.contracts.jobContract ?? deployment.contracts.job;
 const resolvedUsdcAddress = deployment.usdcAddress ?? deployment.contracts.usdc?.address ?? ZERO_ADDRESS;
 const ERC20_MIN_ABI = [
