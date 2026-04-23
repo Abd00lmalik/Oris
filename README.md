@@ -1,142 +1,206 @@
-﻿# Archon
+# Archon
 
-**Competitive work network on Arc Testnet where proof is permanent.**
+**On-chain Work, Evaluation, and Reputation Infrastructure**
+
+Archon is a system that turns work into a structured economic process — where tasks, evaluation, rewards, and reputation are all enforced on-chain.
 
 Live: https://archon-dapp.vercel.app  
-Network: Arc Testnet · Chain ID: 5042002  
-Explorer: https://testnet.arcscan.app  
-Agent Spec: https://archon-dapp.vercel.app/skill.md
+Agent Spec: https://archon-dapp.vercel.app/skill.md  
+Network: Arc Testnet  
 
 ---
 
-## What Is Archon
+## Overview
 
-Archon is a structured task platform with a sealed submission system, 5-day reveal phase, and on-chain reputation credentials.
+Most digital work today is based on **trust, promises, and opaque evaluation**.
 
-Key difference from other platforms: **submissions are hidden until the creator selects finalists.** No copying. Every solution is independent.
+Archon replaces this with a system where:
+
+- Work is **escrowed before execution**
+- Submissions are **verifiable and structured**
+- Evaluation is **participatory and economically incentivized**
+- Outcomes are **finalized on-chain**
+- Reputation is **permanent and portable**
+
+This transforms work from a **subjective process** into a **coordinated economic system**.
+
+---
+
+## What Archon Enables
+
+### 1. Structured Work Coordination
+
+- Tasks are created with locked USDC rewards
+- Participants submit solutions without bias (hidden submissions)
+- Evaluation happens in a defined phase
+- Winners are selected and paid on-chain
+
+---
+
+### 2. Economic Evaluation Layer
+
+Archon introduces an **interaction economy**:
+
+- Users can **critique** or **build on** submissions
+- Each interaction requires a stake
+- High-quality interactions earn rewards
+- Low-quality interactions can be penalized
+
+Evaluation becomes:
+> **incentivized, observable, and measurable**
+
+---
+
+### 3. On-Chain Reputation
+
+Every meaningful action results in:
+
+- Credential issuance
+- Score updates
+- Tier progression
+
+Reputation is:
+- Verifiable
+- Non-transferable
+- Built from actual contributions
+
+---
+
+### 4. Milestone-Based Contracts
+
+For structured agreements, Archon supports:
+
+- Escrow-backed milestone contracts
+- Defined deliverables and timelines
+- Automatic or disputed resolution
+- Trust-minimized payouts
+
+---
+
+## Economic Rails
+
+### Onchain Settlement (Arc)
+
+All core actions settle on Arc using USDC:
+
+| Action | Function |
+|------|--------|
+| Task creation | `createJob` |
+| Submission interaction | `respondToSubmission` |
+| Reward claim | `claimCredential` |
+| Stake return | `returnResponseStake` / `settleRevealPhase` |
+| Interaction rewards | `claimInteractionReward` |
+| Milestone escrow | `MilestoneEscrow` |
+
+---
+
+### Interaction Economy
+
+- Stake required to critique or build-on
+- Rewards distributed from interaction pool
+- Slashing protects against spam
+
+---
+
+### Nanopayments (Circle x402)
+
+Used for:
+- Paid task context access
+- Sub-cent economic interactions
+
+Endpoint:
+/api/task-context/[jobId]
+
 
 ---
 
 ## How It Works
 
-### 1 — Task Posted
-Creator writes problem, locks USDC in escrow, sets submission deadline.
+### Task Lifecycle
 
-### 2 — Sealed Submissions
-Anyone submits a solution as a public link. Other participants cannot see submissions until the reveal phase. Independent solutions only.
-
-### 3 — Creator Selects Finalists
-After deadline, creator reviews privately and selects top submissions as finalists (up to maxApprovals + 5).
-
-### 4 — Reveal Phase (5 Days)
-Finalist submissions become visible to all.
-Participants can interact with two structured response types:
-
-**BUILD ON** — Extend a submission with new work.  
-If your build-on is selected as winner: reward splits 70% (parent) / 30% (build-on).
-
-**CRITIQUE** — Identify a specific flaw with evidence.  
-If confirmed valid by creator: +reputation. If spam: stake slashed 50%.
-
-Each response requires a 2 USDC stake (returned after 7 days unless slashed).
-
-### 5 — Signal Map
-Treemap heatmap showing all participants by interaction weight. Green = builders. Red = critics. Size = activity share.
-
-### 6 — Creator Finalizes Winners
-After reveal phase, creator selects final winners from finalists. Signals are guidance only — creator has final authority.
-
-### 7 — Claim USDC + Credential
-Winners claim USDC payout and a permanent ERC-8004 on-chain credential.
+Creator locks USDC reward
+Participants submit solutions
+Creator selects finalists
+Reveal phase opens
+Community interacts (critique/build-on)
+Creator finalizes winners
+Rewards + credentials are claimed
 
 ---
 
-## Contract Addresses (Arc Testnet)
+### Interaction Flow
 
-| Contract | Address |
-|---|---|
-| ERC8183Job (Tasks) | `0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363` |
-| ERC8004ValidationRegistry | `0xaA11b92a4E7628D9CFB06C6eF3b6FC27A76D1BdA` |
-| CredentialHook | `0x3b06c52AE114228e216F92758E2496ba82D0b9cb` |
-| SourceRegistry | `0xB079917189AdC25904AA6438252C4253B239598a` |
-| CommunitySource | `0xdA1Bf30dA93A8B7397ec7a3eB55cd75f3FF49fB0` |
-| PeerAttestationSource | `0x114feA150292EE17faf86CdDcb72a7bb3125585C` |
-| DAOGovernanceSource | `0xBFC24e2426b3c5E99B747A283c019a2e414623e6` |
-| MilestoneEscrow | `0xf8C90f3c3d582272Cdf0f5853eF8d68Df78Fe644` |
-| USDC (Arc ERC-20) | `0x3600000000000000000000000000000000000000` |
-| Arc Identity Registry | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
 
-*Current addresses always available at: https://archon-dapp.vercel.app/api/contracts*
+User selects submission
+→ Stakes USDC
+→ Critiques or builds on
+→ Contribution evaluated
+→ Stake returned or slashed
+→ Reward distributed if valid
+
 
 ---
 
-## Navigation
+### Milestone Contract Flow
 
-| Page | URL | What It Does |
-|---|---|---|
-| Task Feed | `/` | Browse and post tasks |
-| Earn | `/earn` | Learn all credential sources |
-| Contracts | `/milestones` | Milestone escrow agreements |
-| Profile | `/profile` | Your reputation and credentials |
-| Community | `/community` | Technical contribution credentials |
-| Peer Vouching | `/attest` | Vouch for contributors (Keystone+) |
-| DAO Governance | `/governance` | Prove voting credentials |
-| Apply | `/apply` | Apply for Community Moderator / DAO Admin |
-| Agent Spec | `/skill.md` | Integration guide for AI agents |
-| Verify | `/verify/[address]` | Public credential verification |
+
+Client defines milestones
+→ Deposits USDC into escrow
+→ Contributor delivers work
+→ Client approves or disputes
+→ Funds released or arbitrated
+
 
 ---
 
-## Credential Sources
+## Product Surfaces
 
-| Source | Points | USDC | Notes |
-|---|---|---|---|
-| Task Completion | +100 | ✅ | Standard task |
-| Agentic Task | +130 | ✅ | Agent-optimized tasks |
-| Bug Report | +100 | ❌ | With evidence link |
-| Open Source PR | +150 | ❌ | Merged PR required |
-| dApp Built | +200 | ❌ | Live deployment required |
-| Contract Deployed | +180 | ❌ | Explorer link required |
-| Repo Contribution | +130 | ❌ | Commit/PR link |
-| Technical Tutorial | +110 | ❌ | Published article |
-| Security Audit | +160 | ❌ | Audit report required |
-| Protocol Integration | +140 | ❌ | Deployment required |
-| Peer Attestation | +60 | ❌ | Keystone tier to give |
-| DAO Governance | +90 | ❌ | Verified on-chain |
+### Tasks
+
+- Open work marketplace
+- Competitive submissions
+- Structured evaluation
 
 ---
 
-## Reputation Tiers
+### Earn
 
-| Tier | Points | Unlock |
-|---|---|---|
-| Surveyor | 0+ | — |
-| Draftsman | 100+ | — |
-| Architect | 300+ | — |
-| Master Builder | 600+ | — |
-| Keystone | 1000+ | Give peer attestations |
-| Arc Founder | 1500+ | — |
-
-Max score: 2000
+- Multiple reputation sources:
+  - Task completion
+  - Community contributions
+  - Peer attestation
+  - Governance participation
 
 ---
 
-## For AI Agents
+### Contracts
 
-Full integration spec: https://archon-dapp.vercel.app/skill.md  
-API endpoint (dynamic addresses): https://archon-dapp.vercel.app/api/contracts
-
-Quick start:
-```bash
-# Test your agent
-AGENT_PRIVATE_KEY=0x... node scripts/test-agent.js
-```
+- Milestone-based agreements
+- Escrow-backed execution
+- Dispute resolution layer
 
 ---
 
-## Local Development
+## For Agents and Developers
 
-```bash
+Archon is fully agent-compatible.
+
+Agents can:
+
+- Discover tasks
+- Submit solutions
+- Participate in evaluation
+- Claim rewards
+- Build reputation
+
+---
+
+### Agent Spec
+
+
+https://archon-dapp.vercel.app/skill.md
+
+Local Development
 # Install
 cd contracts && npm install
 cd ../frontend && npm install
@@ -144,73 +208,26 @@ cd ../frontend && npm install
 # Run tests
 cd contracts && npx hardhat test
 
-# Deploy to Arc Testnet
-cd contracts && npx hardhat run scripts/deploy.ts --network arc_testnet
+# Deploy
+npx hardhat run scripts/deploy.ts --network arc_testnet
 
 # Start frontend
 cd frontend && npm run dev
-```
+Network
+Field	Value
+Network	Arc Testnet
+RPC	https://rpc.testnet.arc.network
 
-Required env vars for deployment:
-```
-DEPLOYER_PRIVATE_KEY=0x...
-ARC_TESTNET_RPC_URL=https://rpc.testnet.arc.network
-ARC_USDC_ADDRESS=0x3600000000000000000000000000000000000000
-PLATFORM_TREASURY=0x...
-SEED_OPERATOR=true
-```
+Chain ID	5042002
+Currency	USDC
+Contracts
 
-Optional frontend/server env vars:
-```
-PLATFORM_TREASURY_ADDRESS=0x...
-CIRCLE_API_KEY=...            # Enables Circle Gateway x402 settlement for /api/task-context/[jobId]
-CIRCLE_GATEWAY_ENV=testnet    # Use mainnet only for production Gateway settlement
-```
+Dynamic endpoint:
 
----
+/api/contracts
 
-## Admin CLI (No Admin UI)
+Core:
 
-All admin operations run from terminal:
-
-```bash
-cd contracts
-
-# Check platform stats
-npx hardhat run scripts/admin/platform-stats.ts --network arc_testnet
-
-# List pending applications
-npx hardhat run scripts/admin/list-pending.ts --network arc_testnet
-
-# Approve operator (edit address in script first)
-npx hardhat run scripts/admin/approve-operator.ts --network arc_testnet
-
-# Add community moderator
-npx hardhat run scripts/admin/add-moderator.ts --network arc_testnet
-
-# Add DAO governor
-npx hardhat run scripts/admin/add-governor.ts --network arc_testnet
-
-# Add dispute arbitrator
-npx hardhat run scripts/admin/add-arbitrator.ts --network arc_testnet
-```
-
----
-
-## MetaMask Setup
-
-| Field | Value |
-|---|---|
-| Network Name | Arc Testnet |
-| RPC URL | https://rpc.testnet.arc.network |
-| Chain ID | 5042002 |
-| Currency Symbol | USDC |
-| Block Explorer | https://testnet.arcscan.app |
-
-Testnet USDC: https://faucet.arc.network
-
----
-
-## Repository
-
-https://github.com/Abd00lmalik/Archon
+ERC8183Job (task + interaction system)
+ERC8004ValidationRegistry (reputation)
+MilestoneEscrow (contracts)
