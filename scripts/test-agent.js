@@ -1,9 +1,11 @@
 ﻿/**
- * Archon Agent Full Flow Test v2.1
- * Tests: discover all task sources -> submit when possible -> reveal interaction when possible -> reputation check.
+ * Archon Agent Real-State Flow
  *
  * Usage:
  *   AGENT_PRIVATE_KEY=0x... node scripts/test-agent.js
+ *
+ * This script never fabricates targets. It reports honest live-state reasons when
+ * there is no valid open task or reveal interaction available.
  */
 
 const fs = require("node:fs");
@@ -12,51 +14,66 @@ const { ethers } = require("ethers");
 
 const RPC = process.env.ARC_RPC_URL || "https://rpc.testnet.arc.network";
 const USDC_ADDR = "0x3600000000000000000000000000000000000000";
-const V1_ADDRESS = "0xEEF4C172ea2A8AB184CA5d121D142789F78BFb16";
-const PREV_V2_ADDRESS = "0xB099Ad4Bd472a0Ee17cDbe3C29a10E1A84d52363";
+const ZERO = "0x0000000000000000000000000000000000000000";
 const CONTRACTS_PATH = path.resolve(__dirname, "../frontend/src/lib/generated/contracts.json");
-const SOURCE_OFFSETS = { V1: 0, PrevV2: 11, CurrV2: 12 };
-
-const V1_READ_ABI = [
-  "function totalJobs() view returns (uint256)",
-  "function nextJobId() view returns (uint256)",
-  "function getAllJobs() view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded)[])",
-  "function getJob(uint256) view returns (tuple(uint256 jobId,address client,string title,string description,uint256 deadline,uint256 rewardUSDC,uint256 createdAt,uint256 acceptedCount,uint256 submissionCount,uint256 approvedCount,uint256 claimedCount,uint256 paidOutUSDC,bool refunded))",
-  "function getSubmissions(uint256) view returns (tuple(address agent,string deliverableLink,uint8 status,uint256 submittedAt,string reviewerNote,bool credentialClaimed,uint256 allocatedReward)[])",
-  "function acceptJob(uint256) external",
-  "function submitDeliverable(uint256,string) external",
-  "function claimCredential(uint256) external"
-];
 
 function loadContracts() {
   const json = JSON.parse(fs.readFileSync(CONTRACTS_PATH, "utf8"));
   return json.contracts ?? {};
 }
 
-function hasAbiFunction(abi, name) {
-  return Array.isArray(abi) && abi.some((entry) => entry.type === "function" && entry.name === name);
+function contractHasFunction(contract, name) {
+  try {
+    if (typeof contract.interface.hasFunction === "function") {
+      return contract.interface.hasFunction(name);
+    }
+  } catch {}
+
+  try {
+    return Boolean(contract.interface.getFunction(name));
+  } catch {
+    return false;
+  }
 }
 
-function getDisplayId(source, contractJobId) {
-  return (SOURCE_OFFSETS[source] ?? 0) + Number(contractJobId) + 1;
+function readClient(job) {
+  return String(job.client ?? job[1] ?? "");
 }
 
-function makeTaskUrl(source, contractJobId) {
-  if (source === "V1") return "/job/v1-" + contractJobId;
-  if (source === "PrevV2") return "/job/pv2-" + contractJobId;
-  return "/job/" + contractJobId;
+function readJobTitle(job, fallbackId) {
+  return String(job.title ?? job[2] ?? job[3] ?? `Task #${fallbackId}`);
+}
+
+function readJobDeadline(job) {
+  return Number(job.deadline ?? job[4] ?? job[8] ?? 0);
+}
+
+function readJobStatus(job) {
+  return Number(job.status ?? job[14] ?? job[6] ?? 99);
+}
+
+function readSubmissionAgent(submission) {
+  return String(submission.agent ?? submission[1] ?? submission[0] ?? "");
+}
+
+function readSubmissionStatus(submission) {
+  return Number(submission.status ?? submission[3] ?? 0);
+}
+
+function readSubmissionId(submission, fallbackIndex = 0) {
+  return BigInt(submission.submissionId ?? submission[0] ?? submission[7] ?? fallbackIndex);
 }
 
 function formatUsdc(value) {
   try {
-    return (Number(BigInt(value)) / 1e6).toFixed(3);
+    return (Number(BigInt(value)) / 1e6).toFixed(6);
   } catch {
-    return "0.000";
+    return "0.000000";
   }
 }
 
 function isTransientRpcError(error) {
-  const message = String(error?.reason ?? error?.message ?? error ?? "").toLowerCase();
+  const message = String(error?.reason ?? error?.shortMessage ?? error?.message ?? error ?? "").toLowerCase();
   return (
     message.includes("txpool is full") ||
     message.includes("timeout") ||
@@ -72,309 +89,285 @@ async function withRetry(label, action, retries = 3) {
       return await action();
     } catch (error) {
       lastError = error;
+      const reason = error.reason ?? error.shortMessage ?? error.message?.slice(0, 120) ?? String(error);
       if (!isTransientRpcError(error) || attempt === retries) throw error;
       const delayMs = attempt * 2500;
-      console.warn(label + " transient failure (" + (error.reason ?? error.message.slice(0, 120)) + "); retrying in " + delayMs + "ms");
+      console.warn(`${label} transient failure (${reason}); retrying in ${delayMs}ms`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   throw lastError;
 }
 
-function readClient(job) {
-  return String(job.client ?? job[1] ?? "");
-}
-
-function readJobTitle(job, fallbackId) {
-  return String(job.title ?? job[2] ?? ("Task #" + fallbackId));
-}
-
-function readJobReward(job) {
-  return BigInt(job.rewardUSDC ?? job[5] ?? 0n);
-}
-
-function readJobDeadline(job) {
-  return Number(job.deadline ?? job[4] ?? 0);
-}
-
-function readJobStatus(job, source) {
-  if (source === "V1") {
-    const refunded = Boolean(job.refunded ?? job[12] ?? false);
-    if (refunded) return 6;
-    return readJobDeadline(job) > Math.floor(Date.now() / 1000) ? 0 : 2;
-  }
-  return Number(job.status ?? job[14] ?? job[13] ?? 99);
-}
-
-function readSubmissionAgent(submission) {
-  return String(submission.agent ?? submission[1] ?? submission[0] ?? "");
-}
-
-function readSubmissionId(submission, fallbackIndex = 0) {
-  return BigInt(submission.submissionId ?? submission[0] ?? fallbackIndex);
-}
-
-async function getCounter(contract) {
+async function getTaskCount(JOB) {
   try {
-    return Number(await contract.nextJobId());
+    return Number(await JOB.nextJobId());
   } catch {
     try {
-      return Number(await contract.totalJobs());
+      return Number(await JOB.totalJobs());
     } catch {
       return 0;
     }
   }
 }
 
-async function discoverAllTasks(provider, contracts) {
-  const currentJob = contracts.jobContract ?? contracts.job ?? contracts.mockJob;
-  const currentAbi = currentJob?.abi ?? [];
-  const prevAbi = contracts.prevJobContract?.abi ?? currentAbi;
-  const sources = [
-    { source: "V1", address: V1_ADDRESS, abi: V1_READ_ABI, archived: true },
-    { source: "PrevV2", address: contracts.prevJobContract?.address ?? PREV_V2_ADDRESS, abi: prevAbi, archived: false },
-    { source: "CurrV2", address: currentJob.address, abi: currentAbi, archived: false }
-  ].filter((src) => src.address);
+async function getExistingSubmission(JOB, taskId, walletAddress) {
+  const target = walletAddress.toLowerCase();
 
-  const allTasks = [];
-  const ZERO = "0x0000000000000000000000000000000000000000";
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  for (const src of sources) {
-    const contract = new ethers.Contract(src.address, src.abi, provider);
-    let rows = [];
-
-    if (src.archived && hasAbiFunction(src.abi, "getAllJobs")) {
-      rows = Array.from(await contract.getAllJobs().catch(() => []));
-    }
-
-    if (rows.length === 0) {
-      const total = await getCounter(contract);
-      const seen = new Set();
-      for (let i = 0; i < total; i += 1) {
-        const row = await contract.getJob(i).catch(() => null);
-        if (row) {
-          rows.push(row);
-          seen.add(Number(row.jobId ?? row[0] ?? i));
-        }
-      }
-      if (src.archived && rows.length === 0) {
-        for (let i = 1; i <= total; i += 1) {
-          const row = await contract.getJob(i).catch(() => null);
-          if (!row) continue;
-          const jobId = Number(row.jobId ?? row[0] ?? i);
-          if (seen.has(jobId)) continue;
-          rows.push(row);
-          seen.add(jobId);
-        }
-      }
-    }
-
-    for (const row of rows) {
-      const jobId = Number(row.jobId ?? row[0] ?? 0);
-      const client = readClient(row);
-      if (!client || client.toLowerCase() === ZERO) continue;
-
-      const status = readJobStatus(row, src.source);
-      const deadline = readJobDeadline(row);
-      const reveal = !src.archived && hasAbiFunction(src.abi, "isInRevealPhase")
-        ? await contract.isInRevealPhase(jobId).catch(() => false)
-        : false;
-      const revealEnd = !src.archived && hasAbiFunction(src.abi, "getRevealPhaseEnd")
-        ? Number(await contract.getRevealPhaseEnd(jobId).catch(() => 0n))
-        : 0;
-
-      const isOpen = (status === 0 || status === 1 || status === 2) && deadline > nowSec;
-      const isReveal = status === 4 || Boolean(reveal);
-
-      allTasks.push({
-        source: src.source,
-        contractAddress: src.address,
-        abi: src.abi,
-        contract,
-        jobId,
-        displayId: getDisplayId(src.source, jobId),
-        url: makeTaskUrl(src.source, jobId),
-        title: readJobTitle(row, jobId),
-        status,
-        deadline,
-        rewardUSDC: Number(readJobReward(row)) / 1e6,
-        isOpen,
-        isReveal,
-        isClosed: !isOpen && !isReveal,
-        revealEnd,
-        client
-      });
-    }
+  if (contractHasFunction(JOB, "getSubmission")) {
+    try {
+      const submission = await JOB.getSubmission(BigInt(taskId), walletAddress);
+      const agent = readSubmissionAgent(submission).toLowerCase();
+      if (agent === target) return submission;
+    } catch {}
   }
 
-  return allTasks.sort((a, b) => b.displayId - a.displayId);
-}
-
-async function submitToOpenTask(openTasks, wallet, usdc) {
-  console.log("\n-- Submit Flow --");
-  const target = openTasks.find((task) => task.client.toLowerCase() !== wallet.address.toLowerCase());
-  if (!target) {
-    console.log("No open task from another wallet found. Submission skipped.");
+  try {
+    const submissions = Array.from(await JOB.getSubmissions(BigInt(taskId)));
+    return submissions.find((submission) => readSubmissionAgent(submission).toLowerCase() === target) ?? null;
+  } catch {
     return null;
   }
-
-  console.log("Target:", "Display #" + target.displayId, "[" + target.source + " #" + target.jobId + "]", target.title);
-  const taskContract = new ethers.Contract(target.contractAddress, target.abi, wallet);
-  const output = "https://agent-test-output-" + Date.now() + ".example.com";
-
-  let submitted = false;
-  let txHash = null;
-
-  if (hasAbiFunction(target.abi, "submitDirect")) {
-    try {
-      const tx = await withRetry("submitDirect", () => taskContract.submitDirect(BigInt(target.jobId), output));
-      const receipt = await tx.wait();
-      txHash = tx.hash;
-      console.log("Submitted via submitDirect. Tx:", tx.hash, "block:", receipt.blockNumber);
-      submitted = true;
-    } catch (error) {
-      console.warn("submitDirect failed:", error.reason ?? error.message.slice(0, 140));
-    }
-  }
-
-  if (!submitted) {
-    try {
-      const accept = await withRetry("acceptJob", () => taskContract.acceptJob(BigInt(target.jobId)));
-      await accept.wait();
-      const tx = await withRetry("submitDeliverable", () => taskContract.submitDeliverable(BigInt(target.jobId), output));
-      const receipt = await tx.wait();
-      txHash = tx.hash;
-      console.log("Submitted via acceptJob + submitDeliverable. Tx:", tx.hash, "block:", receipt.blockNumber);
-      submitted = true;
-    } catch (error) {
-      console.error("All submit methods failed:", error.reason ?? error.message.slice(0, 140));
-    }
-  }
-
-  void usdc;
-  console.log("Submission:", submitted ? "PASS" : "FAIL");
-  return submitted ? { task: target, txHash } : null;
 }
 
-async function interactWithRevealTask(revealTask, agentWallet, contracts) {
-  console.log("\n-- Reveal Interaction --");
-  console.log("Reveal target:", "Display #" + revealTask.displayId, "[" + revealTask.source + " #" + revealTask.jobId + "]", revealTask.title);
+async function findValidOpenTask(JOB, walletAddress, count) {
+  const now = Math.floor(Date.now() / 1000);
 
-  if (revealTask.source === "V1") {
-    console.log("V1 source has no reveal interaction function. Skipping.");
-    return false;
-  }
-
-  const taskContract = new ethers.Contract(revealTask.contractAddress, revealTask.abi, agentWallet);
-
-  let finalists = [];
-  try {
-    finalists = Array.from(await taskContract.getSelectedFinalists(revealTask.jobId));
-    console.log("Finalists:", finalists);
-  } catch {
-    console.log("getSelectedFinalists not supported; falling back to getSubmissions.");
-    try {
-      const subs = Array.from(await taskContract.getSubmissions(revealTask.jobId));
-      finalists = subs.map(readSubmissionAgent).filter(Boolean);
-      console.log("Submissions as candidates:", finalists);
-    } catch (error) {
-      console.log("getSubmissions failed:", error.message.slice(0, 80));
-      return false;
-    }
-  }
-
-  const submissions = Array.from(await taskContract.getSubmissions(revealTask.jobId).catch(() => []));
-  const agentAddress = agentWallet.address.toLowerCase();
-  let targetAgent = null;
-  let targetSub = null;
-  let targetIndex = -1;
-
-  for (const finalist of finalists) {
-    const candidate = String(finalist);
-    if (!candidate || candidate.toLowerCase() === agentAddress) continue;
-    const index = submissions.findIndex((submission) =>
-      readSubmissionAgent(submission).toLowerCase() === candidate.toLowerCase()
-    );
-    if (index < 0) continue;
-
-    const submission = submissions[index];
-    const submissionId = readSubmissionId(submission, index + 1);
-    const alreadyResponded = hasAbiFunction(revealTask.abi, "hasResponded")
-      ? await taskContract.hasResponded(submissionId, agentWallet.address).catch(() => false)
-      : false;
-    if (alreadyResponded) {
-      console.log("Already responded to submission", submissionId.toString(), "- trying next finalist.");
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const job = await JOB.getJob(i).catch(() => null);
+    if (!job) {
+      console.log(`  Task #${i}: skipping - getJob failed`);
       continue;
     }
 
-    targetAgent = candidate;
-    targetSub = submission;
-    targetIndex = index;
-    break;
+    const client = readClient(job);
+    if (!client || client.toLowerCase() === ZERO) {
+      console.log(`  Task #${i}: skipping - empty client`);
+      continue;
+    }
+
+    const title = readJobTitle(job, i);
+    const status = readJobStatus(job);
+    const deadline = readJobDeadline(job);
+
+    if (status !== 0 && status !== 1) {
+      console.log(`  Task #${i}: skipping - status=${status} is not Open/InProgress`);
+      continue;
+    }
+
+    if (deadline > 0 && now > deadline) {
+      console.log(`  Task #${i}: skipping - deadline passed`);
+      continue;
+    }
+
+    if (client.toLowerCase() === walletAddress.toLowerCase()) {
+      console.log(`  Task #${i}: skipping - agent is creator`);
+      continue;
+    }
+
+    const existing = await getExistingSubmission(JOB, i, walletAddress);
+    if (existing) {
+      const existingStatus = readSubmissionStatus(existing);
+      if (existingStatus > 0) {
+        console.log(`  Task #${i}: skipping - already submitted (status=${existingStatus})`);
+        continue;
+      }
+    }
+
+    console.log(`  Task #${i}: VALID open task - "${title}"`);
+    return { id: i, job, title };
   }
 
-  if (!targetAgent || !targetSub) {
-    console.log("No eligible target submission found (own submissions, already responded, or none exist).");
-    return false;
+  console.log("No valid open task found.");
+  return null;
+}
+
+async function submitToTask(JOB, contractAddress, taskId, outputURL, wallet) {
+  console.log("[submitToTask] taskId:", taskId, "output:", outputURL);
+
+  const USDC = new ethers.Contract(USDC_ADDR, ["function balanceOf(address) view returns (uint256)"], wallet.provider);
+  const bal = await USDC.balanceOf(wallet.address);
+  console.log("[submitToTask] USDC balance:", Number(bal) / 1e6);
+
+  const job = await JOB.getJob(BigInt(taskId));
+  console.log("[submit] taskId:", taskId);
+  console.log("[submit] taskId type:", typeof taskId);
+  console.log("[submit] outputURL:", outputURL);
+  console.log("[submit] wallet:", wallet.address);
+  console.log("[submit] contract:", contractAddress);
+  console.log("[submit] task status:", readJobStatus(job));
+  console.log("[submit] task deadline:", readJobDeadline(job), "now:", Math.floor(Date.now() / 1000));
+  console.log("[submit] task client:", readClient(job));
+
+  const existingSub = await getExistingSubmission(JOB, taskId, wallet.address);
+  console.log(
+    "[submit] existing submission status:",
+    existingSub ? readSubmissionStatus(existingSub) : "none"
+  );
+
+  if (existingSub && readSubmissionStatus(existingSub) > 0) {
+    return { success: false, reason: "already submitted" };
   }
 
-  const parentSubmissionId = readSubmissionId(targetSub, targetIndex + 1);
-  console.log("Target submission agent:", targetAgent);
-  console.log("Parent submissionId:", parentSubmissionId.toString());
+  if (contractHasFunction(JOB, "submitDirect")) {
+    try {
+      const tx = await withRetry("submitDirect", () => JOB.submitDirect(BigInt(taskId), outputURL));
+      const receipt = await tx.wait();
+      console.log("[submitToTask] submitDirect SUCCESS:", receipt.hash);
+      return { success: true, txHash: receipt.hash, method: "submitDirect" };
+    } catch (error) {
+      console.log(
+        "[submitToTask] submitDirect FAILED:",
+        error.reason ?? error.shortMessage ?? error.message?.slice(0, 120) ?? "unknown"
+      );
+    }
+  }
 
-  const contentURI = "data:application/json;base64," + Buffer.from(JSON.stringify({
-    type: "critique",
-    summary: "Agent test critique: submission analysis",
-    content: "This is an automated agent test interaction via the Archon agent spec.",
-    timestamp: Date.now(),
-    agent: agentWallet.address
-  })).toString("base64");
-
-  let stakeAmount = 2_000_000n;
   try {
-    const economy = await taskContract.getTaskEconomy(BigInt(revealTask.jobId));
-    const configured = BigInt(economy.interactionStake ?? economy[0] ?? 0n);
-    if (configured > 0n) stakeAmount = configured;
-  } catch {
-    // Default interaction stake is 2 USDC.
+    console.log("[submitToTask] trying acceptJob...");
+    const acceptTx = await withRetry("acceptJob", () => JOB.acceptJob(BigInt(taskId)));
+    await acceptTx.wait();
+    console.log("[submitToTask] acceptJob SUCCESS");
+
+    const submitTx = await withRetry("submitDeliverable", () => JOB.submitDeliverable(BigInt(taskId), outputURL));
+    const receipt = await submitTx.wait();
+    console.log("[submitToTask] submitDeliverable SUCCESS:", receipt.hash);
+    return { success: true, txHash: receipt.hash, method: "fallback" };
+  } catch (error) {
+    const reason = error.reason ?? error.shortMessage ?? error.message?.slice(0, 120) ?? "unknown";
+    console.log("[submitToTask] fallback FAILED:", reason);
+    return { success: false, reason };
   }
-  console.log("Interaction stake:", formatUsdc(stakeAmount), "USDC");
+}
+
+async function findValidRevealTarget(JOB, walletAddress, taskId) {
+  console.log(`[reveal] Scanning task #${taskId} for valid interaction targets`);
+
+  let finalists = [];
+  try {
+    finalists = Array.from(await JOB.getSelectedFinalists(BigInt(taskId)));
+    console.log("[reveal] finalists from contract:", finalists);
+  } catch {
+    console.log("[reveal] getSelectedFinalists not available, using all submissions");
+  }
+
+  const submissions = Array.from(await JOB.getSubmissions(BigInt(taskId)).catch(() => []));
+  console.log("[reveal] total submissions:", submissions.length);
+
+  const validSubmissions = submissions.filter((submission) => {
+    const agent = readSubmissionAgent(submission);
+    return agent && agent.toLowerCase() !== ZERO;
+  });
+
+  const candidates = finalists.length > 0 ? finalists : validSubmissions.map(readSubmissionAgent);
+  console.log("[reveal] candidate addresses:", candidates);
+
+  for (const candidateAgent of candidates) {
+    if (String(candidateAgent).toLowerCase() === walletAddress.toLowerCase()) {
+      console.log("[reveal] skipping own submission:", candidateAgent);
+      continue;
+    }
+
+    const submission = validSubmissions.find(
+      (sub) => readSubmissionAgent(sub).toLowerCase() === String(candidateAgent).toLowerCase()
+    );
+    if (!submission) {
+      console.log("[reveal] no submission found for finalist:", candidateAgent);
+      continue;
+    }
+
+    const submissionId = readSubmissionId(submission);
+    if (submissionId === undefined || submissionId === null) {
+      console.log("[reveal] submissionId missing for agent:", candidateAgent);
+      continue;
+    }
+
+    const alreadyResponded = contractHasFunction(JOB, "hasResponded")
+      ? await JOB.hasResponded(submissionId, walletAddress).catch(() => false)
+      : false;
+    if (alreadyResponded) {
+      console.log("[reveal] already responded to submission:", submissionId.toString());
+      continue;
+    }
+
+    console.log(
+      "[reveal] VALID target found - agent:",
+      candidateAgent,
+      "submissionId:",
+      submissionId.toString()
+    );
+    return {
+      parentAgent: String(candidateAgent),
+      parentSubmissionId: submissionId,
+      submission
+    };
+  }
+
+  console.log("[reveal] No valid interaction target found.");
+  console.log("[reveal] Reason: all candidates are own submissions, already responded, or have no submissionId.");
+  return null;
+}
+
+async function getInteractionStake(JOB, parentSubmissionId) {
+  let stake = 2_000_000n;
+  try {
+    const taskId = await JOB.submissionIdToTaskId(parentSubmissionId);
+    const economy = await JOB.getTaskEconomy(taskId);
+    const configured = BigInt(economy.interactionStake ?? economy[0] ?? 0n);
+    if (configured > 0n) stake = configured;
+  } catch {
+    // Contract default is 2 USDC.
+  }
+  return stake;
+}
+
+async function interactWithSubmission(JOB, wallet, contractAddress, parentSubmissionId, responseType, contentURI) {
+  console.log("[interact] parentSubmissionId:", parentSubmissionId.toString());
+  console.log("[interact] responseType:", responseType, "(0=BuildsOn, 1=Critiques)");
+  console.log("[interact] wallet:", wallet.address);
+
+  const stake = await getInteractionStake(JOB, parentSubmissionId);
+  console.log("[interact] stake required:", Number(stake) / 1e6, "USDC");
 
   const usdc = new ethers.Contract(USDC_ADDR, [
     "function approve(address,uint256) returns (bool)",
     "function allowance(address,address) view returns (uint256)",
+    "function balanceOf(address) view returns (uint256)",
     "function DOMAIN_SEPARATOR() view returns (bytes32)"
-  ], agentWallet);
+  ], wallet);
 
-  let interacted = false;
-  if (revealTask.source === "CurrV2" && hasAbiFunction(revealTask.abi, "respondWithAuthorization")) {
+  const balance = await usdc.balanceOf(wallet.address);
+  console.log("[interact] USDC balance:", Number(balance) / 1e6);
+  if (balance < stake) {
+    return { success: false, reason: "insufficient USDC for interaction stake" };
+  }
+
+  if (contractHasFunction(JOB, "respondWithAuthorization")) {
     try {
-      console.log("Attempting EIP-3009 respondWithAuthorization...");
-      const nonce = ethers.hexlify(ethers.randomBytes(32));
       const validAfter = 0n;
       const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      const from = agentWallet.address;
-      const to = revealTask.contractAddress;
+      const nonce = ethers.hexlify(ethers.randomBytes(32));
+      const from = wallet.address;
+      const to = contractAddress;
       const domainSeparator = await usdc.DOMAIN_SEPARATOR();
       const transferTypeHash = ethers.keccak256(ethers.toUtf8Bytes(
         "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
       ));
       const transferHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
         ["bytes32", "address", "address", "uint256", "uint256", "uint256", "bytes32"],
-        [transferTypeHash, from, to, stakeAmount, validAfter, validBefore, nonce]
+        [transferTypeHash, from, to, stake, validAfter, validBefore, nonce]
       ));
       const digest = ethers.keccak256(ethers.concat(["0x1901", domainSeparator, transferHash]));
-      const sig = agentWallet.signingKey.sign(digest);
+      const sig = wallet.signingKey.sign(digest);
 
       const tx = await withRetry("respondWithAuthorization", () =>
-        taskContract.respondWithAuthorization(
-          parentSubmissionId,
-          1,
+        JOB.respondWithAuthorization(
+          BigInt(parentSubmissionId),
+          responseType,
           contentURI,
           from,
           to,
-          stakeAmount,
+          stake,
           validAfter,
           validBefore,
           nonce,
@@ -384,40 +377,50 @@ async function interactWithRevealTask(revealTask, agentWallet, contracts) {
         )
       );
       const receipt = await tx.wait();
-      console.log("respondWithAuthorization tx:", tx.hash, "block:", receipt.blockNumber);
-      interacted = true;
+      console.log("[interact] respondWithAuthorization SUCCESS:", receipt.hash);
+      return { success: true, txHash: receipt.hash, method: "EIP-3009" };
     } catch (error) {
-      console.warn("EIP-3009 path failed:", error.reason ?? error.message.slice(0, 100));
+      console.log(
+        "[interact] EIP-3009 path failed:",
+        error.reason ?? error.shortMessage ?? error.message?.slice(0, 120) ?? "unknown"
+      );
     }
   }
 
-  if (!interacted) {
-    try {
-      console.log("Using classic respondToSubmission...");
-      const allowance = await usdc.allowance(agentWallet.address, revealTask.contractAddress);
-      if (allowance < stakeAmount) {
-        const approveTx = await withRetry("approve interaction stake", () => usdc.approve(revealTask.contractAddress, stakeAmount * 2n));
-        await approveTx.wait();
-        console.log("USDC approved");
-      }
-      const tx = await withRetry("respondToSubmission", () => taskContract.respondToSubmission(parentSubmissionId, 1, contentURI));
-      const receipt = await tx.wait();
-      console.log("respondToSubmission tx:", tx.hash, "block:", receipt.blockNumber);
-      interacted = true;
-    } catch (error) {
-      console.error("Classic path failed:", error.reason ?? error.message.slice(0, 140));
+  console.log("[interact] trying fallback: approve + respondToSubmission");
+  try {
+    const allowance = await usdc.allowance(wallet.address, contractAddress);
+    if (allowance < stake) {
+      const approveTx = await withRetry("approve interaction stake", () => usdc.approve(contractAddress, stake * 2n));
+      await approveTx.wait();
+      console.log("[interact] USDC approved for fallback");
     }
-  }
 
-  return interacted;
+    const tx = await withRetry("respondToSubmission", () =>
+      JOB.respondToSubmission(BigInt(parentSubmissionId), responseType, contentURI)
+    );
+    const receipt = await tx.wait();
+    console.log("[interact] respondToSubmission fallback SUCCESS:", receipt.hash);
+    return { success: true, txHash: receipt.hash, method: "fallback" };
+  } catch (error) {
+    const reason = error.reason ?? error.shortMessage ?? error.message?.slice(0, 120) ?? "unknown";
+    console.log("[interact] fallback FAILED:", reason);
+    return { success: false, reason };
+  }
 }
 
 async function main() {
   console.log("\n+------------------------------------------+");
-  console.log("|   ARCHON AGENT TEST v2.1                |");
+  console.log("|   ARCHON AGENT - REAL STATE FLOW         |");
   console.log("+------------------------------------------+\n");
 
+  if (!process.env.AGENT_PRIVATE_KEY) {
+    console.error("Set AGENT_PRIVATE_KEY=0x... to run submit/reveal flows.");
+    process.exit(1);
+  }
+
   const provider = new ethers.JsonRpcProvider(RPC);
+  const wallet = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY, provider);
   const contracts = loadContracts();
   const jobConfig = contracts.jobContract ?? contracts.job ?? contracts.mockJob;
   const registryConfig = contracts.validationRegistry ?? contracts.credentialRegistry;
@@ -427,111 +430,123 @@ async function main() {
     process.exit(1);
   }
 
-  if (!process.env.AGENT_PRIVATE_KEY) {
-    console.log("Wallet: not configured (set AGENT_PRIVATE_KEY=0x... to run submit/reveal flows)");
-    console.log("Current job contract:", jobConfig.address);
-    console.log("\n-- Task Discovery (all sources) --");
-    const allTasks = await discoverAllTasks(provider, contracts);
-    for (const task of allTasks) {
-      const state = task.isOpen ? "OPEN" : task.isReveal ? "REVEAL" : "CLOSED";
-      console.log(
-        "Display #" + task.displayId + " [" + task.source + " #" + task.jobId + "]: \"" + task.title + "\"",
-        "status=" + task.status,
-        state,
-        "reward=" + task.rewardUSDC.toFixed(3) + " USDC",
-        "url=" + task.url
-      );
-    }
-    console.log("Total tasks discovered:", allTasks.length);
-    console.log(
-      "Open:",
-      allTasks.filter((task) => task.isOpen).length + ", Reveal:",
-      allTasks.filter((task) => task.isReveal).length
-    );
-    console.error("Set AGENT_PRIVATE_KEY=0x... to continue with submission and reveal interaction.");
-    process.exit(1);
-  }
-
-  const wallet = new ethers.Wallet(process.env.AGENT_PRIVATE_KEY, provider);
-  const JOB = new ethers.Contract(jobConfig.address, jobConfig.abi, wallet);
-  const REGISTRY = registryConfig?.address
-    ? new ethers.Contract(registryConfig.address, registryConfig.abi ?? [], provider)
-    : null;
-  const USDC = new ethers.Contract(USDC_ADDR, [
-    "function balanceOf(address) view returns (uint256)",
-    "function approve(address,uint256) returns (bool)",
-    "function allowance(address,address) view returns (uint256)"
-  ], wallet);
-
   console.log("Wallet:", wallet.address);
-  console.log("Current job contract:", jobConfig.address);
-  console.log("Registry:", registryConfig?.address ?? "not configured");
+  console.log("Contract:", jobConfig.address);
 
-  console.log("\n-- ABI Verification --");
-  try {
-    const total = await getCounter(JOB);
-    console.log("Current V2 total tasks:", total.toString());
-    if (Number(total) > 0) {
-      const firstJobId = 0;
-      const job = await JOB.getJob(firstJobId);
-      console.log("getJob(" + firstJobId + ") works");
-      console.log("   title:", readJobTitle(job, firstJobId));
-      console.log("   status:", readJobStatus(job, "CurrV2"));
-      console.log("   reward:", formatUsdc(readJobReward(job)), "USDC");
-    }
-  } catch (error) {
-    console.error("ABI mismatch:", error.message);
-    process.exit(1);
-  }
-
+  const JOB = new ethers.Contract(jobConfig.address, jobConfig.abi, wallet);
+  const USDC = new ethers.Contract(USDC_ADDR, ["function balanceOf(address) view returns (uint256)"], provider);
   const balance = await USDC.balanceOf(wallet.address);
-  console.log("Balance:", formatUsdc(balance), "USDC");
+  console.log("Balance:", Number(balance) / 1e6, "USDC\n");
 
-  if (REGISTRY) {
-    const score = await REGISTRY.getWeightedScore(wallet.address).catch(() => 0n);
-    const creds = await REGISTRY.credentialCount(wallet.address).catch(() => 0n);
-    console.log("Reputation:", score.toString(), "/ 2000");
-    console.log("Credentials:", creds.toString());
-  }
+  const count = await getTaskCount(JOB);
+  console.log("Total V2 tasks:", count, "\n");
 
-  console.log("\n-- Task Discovery (all sources) --");
-  const allTasks = await discoverAllTasks(provider, contracts);
-  for (const task of allTasks) {
-    const state = task.isOpen ? "OPEN" : task.isReveal ? "REVEAL" : "CLOSED";
-    console.log(
-      "Display #" + task.displayId + " [" + task.source + " #" + task.jobId + "]: \"" + task.title + "\"",
-      "status=" + task.status,
-      state,
-      "reward=" + task.rewardUSDC.toFixed(3) + " USDC",
-      "url=" + task.url
-    );
-  }
-
-  console.log("Total tasks discovered:", allTasks.length);
-  const openTasks = allTasks.filter((task) => task.isOpen);
-  const revealTasks = allTasks.filter((task) => task.isReveal);
-  console.log("Open:", openTasks.length + ", Reveal:", revealTasks.length);
-
-  const submitResult = await submitToOpenTask(openTasks, wallet, USDC);
-  if (submitResult?.txHash) {
-    console.log("Submission tx hash:", submitResult.txHash);
-  }
-
-  if (revealTasks.length > 0 && balance >= 3_000_000n) {
-    await interactWithRevealTask(revealTasks[0], wallet, contracts);
-  } else if (revealTasks.length > 0) {
-    console.log("Reveal tasks found but balance too low to stake. Fund wallet and re-run.");
+  console.log("-- Phase 1: Submit to open task --");
+  const openTarget = await findValidOpenTask(JOB, wallet.address, count);
+  if (openTarget) {
+    const outputURL = `https://agent-output-${Date.now()}.example.com/result.json`;
+    const result = await submitToTask(JOB, jobConfig.address, openTarget.id, outputURL, wallet);
+    if (result.success) {
+      console.log("Submit result:", result.method, result.txHash);
+    } else {
+      console.log("Submit failed. Real-state reason:", result.reason);
+    }
   } else {
-    console.log("No reveal-phase tasks found across all sources.");
+    console.log("No valid open task - agent has either submitted to all open tasks or none exist.");
+    console.log("This is a real state condition, not an error.");
   }
 
-  if (REGISTRY) {
-    const finalScore = await REGISTRY.getWeightedScore(wallet.address).catch(() => 0n);
-    console.log("\nFinal reputation score:", finalScore.toString(), "/ 2000");
+  console.log("\n-- Phase 2: Interact with reveal task --");
+  const now = Math.floor(Date.now() / 1000);
+  let revealInteracted = false;
+
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const job = await JOB.getJob(i).catch(() => null);
+    if (!job) {
+      console.log(`Task #${i}: getJob failed, skipping`);
+      continue;
+    }
+
+    const client = readClient(job);
+    if (!client || client.toLowerCase() === ZERO) {
+      console.log(`Task #${i}: empty client, skipping`);
+      continue;
+    }
+
+    const status = readJobStatus(job);
+    if (status !== 4) {
+      console.log(`Task #${i}: status=${status}, not reveal phase`);
+      continue;
+    }
+
+    let revealEnd = 0;
+    try {
+      revealEnd = Number(await JOB.getRevealPhaseEnd(BigInt(i)));
+    } catch {}
+    const revealActive = revealEnd > 0 && now <= revealEnd;
+    if (!revealActive) {
+      console.log(`Task #${i}: reveal phase ended, skipping`);
+      continue;
+    }
+
+    console.log(`Task #${i}: in active reveal phase`);
+    const target = await findValidRevealTarget(JOB, wallet.address, i);
+    if (!target) {
+      console.log(`Task #${i}: no valid interaction target in this task`);
+      continue;
+    }
+
+    const contentURI = "data:application/json;base64," + Buffer.from(JSON.stringify({
+      type: "critiques",
+      summary: "Agent automated critique - identifying output format inconsistency",
+      timestamp: Date.now(),
+      agent: wallet.address
+    })).toString("base64");
+
+    const result = await interactWithSubmission(
+      JOB,
+      wallet,
+      jobConfig.address,
+      target.parentSubmissionId,
+      1,
+      contentURI
+    );
+
+    if (result.success) {
+      console.log("Interaction result:", result.method, result.txHash);
+      revealInteracted = true;
+      break;
+    }
+
+    console.log("Interaction failed:", result.reason);
   }
+
+  if (!revealInteracted) {
+    console.log("\nNo valid reveal interaction performed.");
+    console.log("Real-state reasons may include:");
+    console.log("  - No tasks in active reveal phase");
+    console.log("  - Agent already responded to all eligible submissions");
+    console.log("  - Agent submitted all finalists (own submissions)");
+    console.log("This is correct behavior - not fabricating targets.");
+  }
+
+  if (registryConfig?.address) {
+    try {
+      const REGISTRY = new ethers.Contract(
+        registryConfig.address,
+        ["function getWeightedScore(address) view returns (uint256)"],
+        provider
+      );
+      const score = await REGISTRY.getWeightedScore(wallet.address);
+      console.log("\nReputation:", score.toString(), "/ 2000");
+    } catch {}
+  }
+
+  console.log("\nProfile: https://archon-dapp.vercel.app/agents/" + wallet.address);
+  console.log("skill.md: https://archon-dapp.vercel.app/skill.md/raw");
 }
 
 main().catch((error) => {
-  console.error("\nFATAL:", error.reason ?? error.message);
+  console.error("\nFATAL:", error.reason ?? error.shortMessage ?? error.message ?? error);
   process.exit(1);
 });
