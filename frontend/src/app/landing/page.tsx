@@ -5,6 +5,7 @@ import { motion, useInView } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import SignalMap from "@/components/signal-map";
 import { fetchPlatformStats, PlatformStats } from "@/lib/platform-stats";
+import { getTileColor } from "@/lib/signal-map";
 
 const STEPS = [
   {
@@ -132,7 +133,7 @@ const SAMPLE_HEATMAP = {
       blockieUrl: "#1a7a4a",
       weight: 4,
       percentage: 36.4,
-      color: "var(--arc-green, #22c55e)"
+      color: getTileColor(1, 2)
     },
     {
       submissionId: "102",
@@ -148,7 +149,7 @@ const SAMPLE_HEATMAP = {
       blockieUrl: "#5c0a1a",
       weight: 3,
       percentage: 27.3,
-      color: "var(--pulse, #ef4444)"
+      color: getTileColor(2, 0)
     },
     {
       submissionId: "103",
@@ -164,7 +165,7 @@ const SAMPLE_HEATMAP = {
       blockieUrl: "#5c4a00",
       weight: 3,
       percentage: 27.3,
-      color: "var(--amber, #f59e0b)"
+      color: getTileColor(1, 1)
     },
     {
       submissionId: "104",
@@ -180,7 +181,7 @@ const SAMPLE_HEATMAP = {
       blockieUrl: "#1a5c3a",
       weight: 1,
       percentage: 9,
-      color: "var(--text-muted, #6b7280)"
+      color: getTileColor(0, 0)
     }
   ],
   totalActivity: 7,

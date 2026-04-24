@@ -141,6 +141,22 @@ describe("MilestoneEscrow", function () {
     expect(await usdc.balanceOf(freelancer.address)).to.equal(freelancerBefore + payout);
   });
 
+  it("freelancer can auto-release after review window expires", async function () {
+    const { client, freelancer, escrow } = await deployFixture();
+    const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);
+
+    await escrow.connect(client).fundMilestone(milestoneId);
+    await escrow.connect(freelancer).submitDeliverable(milestoneId, "https://example.com/work");
+
+    const reviewWindow = await escrow.DISPUTE_WINDOW();
+    await time.increase(Number(reviewWindow) + 60);
+
+    await expect(escrow.connect(freelancer).autoRelease(milestoneId)).to.emit(escrow, "AutoReleased");
+
+    const milestone = await escrow.getMilestone(milestoneId);
+    expect(Number(milestone.status)).to.equal(2);
+  });
+
   it("autoRelease reverts before 48h window", async function () {
     const { client, freelancer, escrow } = await deployFixture();
     const { milestoneId } = await createSingleMilestoneProject(escrow, client, freelancer);

@@ -9,10 +9,8 @@ import { decodeInteractionContent, DecodedInteraction } from "@/lib/content-deco
 import { getContractForSource } from "@/lib/task-adapter";
 import { fetchUserProfile } from "@/lib/user-profiles";
 
-const COLOR_NEUTRAL = "var(--text-muted, #6b7280)";
-const COLOR_GREEN = "var(--arc-green, #22c55e)";
-const COLOR_RED = "var(--pulse, #ef4444)";
-const COLOR_MIXED = "var(--amber, #f59e0b)";
+const COLOR_NEUTRAL = "#3A4A5A";
+const COLOR_MIXED = "#F5A623";
 
 export interface SignalResponse {
   responseId: string;
@@ -90,12 +88,22 @@ function mapResponseType(responseType: number): "critique" | "builds_on" | "othe
 
 async function loadResponseIds(
   contract: {
+    getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
     getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
     submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
     submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
   },
   submissionId: bigint | number
 ): Promise<Array<bigint | number>> {
+  if (contract.getResponses) {
+    const rows = await contract.getResponses(submissionId).catch(() => null);
+    if (rows && Array.isArray(rows)) {
+      return rows
+        .map((row) => (row as Record<string, unknown> & unknown[]).responseId ?? (row as unknown[])[0])
+        .filter((value): value is bigint | number => value !== null && value !== undefined);
+    }
+  }
+
   if (contract.getSubmissionResponses) {
     const explicit = await contract.getSubmissionResponses(submissionId).catch(() => null);
     if (explicit) return Array.from(explicit);
@@ -124,6 +132,7 @@ export async function buildSignalMapData(
     getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
     submissions?: (taskId: number, agent: string) => Promise<unknown>;
     getSelectedFinalists?: (taskId: number) => Promise<string[]>;
+    getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
     getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
     submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
     submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
@@ -170,9 +179,19 @@ export async function buildSignalMapData(
     for (const submission of validSubmissions) {
       const sid = BigInt(submission.submissionId);
       let hasInteractions = false;
+      if (jobContract.getResponses) {
+        try {
+          const directResponses = await jobContract.getResponses(sid);
+          hasInteractions = Array.from(directResponses).length > 0;
+        } catch {
+          hasInteractions = false;
+        }
+      }
       try {
-        const count = Number((await jobContract.submissionResponseCount?.(sid)) ?? 0n);
-        hasInteractions = count > 0;
+        if (!hasInteractions) {
+          const count = Number((await jobContract.submissionResponseCount?.(sid)) ?? 0n);
+          hasInteractions = count > 0;
+        }
       } catch {
         hasInteractions = false;
       }
@@ -210,11 +229,28 @@ export async function buildSignalMapData(
     let critiquesReceived = 0;
     let buildOnsReceived = 0;
 
-    for (const rid of responseIds) {
-      const raw = (await jobContract.getResponse?.(rid).catch(() => null)) as
-        | (Record<string, unknown> & unknown[])
-        | null;
-      if (!raw) continue;
+    let responseRows: Array<Record<string, unknown> & unknown[]> = [];
+    if (jobContract.getResponses) {
+      try {
+        responseRows = Array.from(await jobContract.getResponses(BigInt(submissionId))) as Array<
+          Record<string, unknown> & unknown[]
+        >;
+      } catch {
+        responseRows = [];
+      }
+    }
+
+    if (responseRows.length === 0) {
+      for (const rid of responseIds) {
+        const raw = (await jobContract.getResponse?.(rid).catch(() => null)) as
+          | (Record<string, unknown> & unknown[])
+          | null;
+        if (raw) responseRows.push(raw);
+      }
+    }
+
+    for (const raw of responseRows) {
+      const rid = raw.responseId ?? raw[0] ?? 0n;
 
       const responseType = Number(raw.responseType ?? raw[4] ?? raw[3] ?? 0);
       const responder = String(raw.responder ?? raw[3] ?? raw[1] ?? "");
@@ -224,10 +260,8 @@ export async function buildSignalMapData(
       const createdAt = Number(raw.createdAt ?? raw[7] ?? 0);
 
       const typeLabel = mapResponseType(responseType);
-      if (!stakeSlashed) {
-        if (typeLabel === "critique") critiquesReceived += 1;
-        if (typeLabel === "builds_on") buildOnsReceived += 1;
-      }
+      if (typeLabel === "critique") critiquesReceived += 1;
+      if (typeLabel === "builds_on") buildOnsReceived += 1;
 
       let decoded: DecodedInteraction | null = null;
       try {
@@ -279,12 +313,22 @@ export function computeTileWeights(
   }));
 }
 
+export function getTileColor(critiquesReceived: number, buildOnsReceived: number): string {
+  const total = critiquesReceived + buildOnsReceived;
+  if (total === 0) return COLOR_NEUTRAL;
+  if (critiquesReceived === buildOnsReceived) return COLOR_MIXED;
+  if (critiquesReceived > buildOnsReceived) {
+    const intensity = Math.min(critiquesReceived / total, 1);
+    const r = Math.round(180 + intensity * 75);
+    return `rgb(${r}, 60, 80)`;
+  }
+  const intensity = Math.min(buildOnsReceived / total, 1);
+  const g = Math.round(160 + intensity * 75);
+  return `rgb(60, ${g}, 100)`;
+}
+
 export function deriveTileColor(tile: SignalTile): string {
-  const { critiquesReceived, buildOnsReceived } = tile;
-  if (critiquesReceived === 0 && buildOnsReceived === 0) return COLOR_NEUTRAL;
-  if (critiquesReceived > buildOnsReceived) return COLOR_RED;
-  if (buildOnsReceived > critiquesReceived) return COLOR_GREEN;
-  return COLOR_MIXED;
+  return getTileColor(tile.critiquesReceived, tile.buildOnsReceived);
 }
 
 export async function buildTaskHeatmap(
@@ -301,6 +345,7 @@ export async function buildTaskHeatmap(
     getSubmission?: (taskId: number, agent: string) => Promise<unknown>;
     submissions?: (taskId: number, agent: string) => Promise<unknown>;
     getSelectedFinalists?: (taskId: number) => Promise<string[]>;
+    getResponses?: (submissionId: bigint | number) => Promise<unknown[]>;
     getSubmissionResponses?: (submissionId: bigint | number) => Promise<Array<bigint | number>>;
     submissionResponses?: (submissionId: bigint | number, index: bigint | number) => Promise<bigint | number>;
     submissionResponseCount?: (submissionId: bigint | number) => Promise<bigint | number>;
@@ -336,6 +381,21 @@ export async function buildTaskHeatmap(
     blockieUrl: generateBlockie(tile.agent),
     color: deriveTileColor(tile)
   }));
+
+  if (typeof window !== "undefined") {
+    try {
+      const profileStore = JSON.parse(window.localStorage.getItem("archon_profiles") ?? "{}") as Record<
+        string,
+        { username?: string; avatar?: string }
+      >;
+      for (const tile of people) {
+        const cached = profileStore[tile.agent.toLowerCase()];
+        if (cached?.username) tile.username = cached.username;
+      }
+    } catch {
+      // Ignore local profile store parsing errors.
+    }
+  }
 
   await Promise.all(
     people.map(async (tile) => {

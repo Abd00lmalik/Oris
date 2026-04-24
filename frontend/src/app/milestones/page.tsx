@@ -15,14 +15,11 @@ import {
   fetchNextProjectId,
   formatTimestamp,
   formatUsdc,
+  MILESTONE_ESCROW_ABI,
   MilestoneRecord,
-  txApproveMilestone,
   txApproveUsdcIfNeeded,
-  txAutoReleaseMilestone,
   txFundMilestone,
   txProposeMilestoneProject,
-  txRaiseMilestoneDispute,
-  txSubmitMilestoneDeliverable,
   txVoteOnMilestoneDispute
 } from "@/lib/contracts";
 import { useWallet } from "@/lib/wallet-context";
@@ -50,6 +47,13 @@ function statusLabel(status: number, funded: boolean) {
   return "Unknown";
 }
 
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return "expired";
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return `${h}h ${m}m`;
+}
+
 export default function MilestonesPage() {
   const { account, browserProvider, connect } = useWallet();
   const [tab, setTab] = useState<TabKey>("projects");
@@ -61,6 +65,11 @@ export default function MilestonesPage() {
   const [deliverables, setDeliverables] = useState<Record<number, string>>({});
   const [disputeNotes, setDisputeNotes] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState<number | null>(null);
+  const [submittingMilestoneId, setSubmittingMilestoneId] = useState<number | null>(null);
+  const [approvingMilestoneId, setApprovingMilestoneId] = useState<number | null>(null);
+  const [disputingMilestoneId, setDisputingMilestoneId] = useState<number | null>(null);
+  const [autoReleasingMilestoneId, setAutoReleasingMilestoneId] = useState<number | null>(null);
+  const [milestoneTxHashes, setMilestoneTxHashes] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [status, setStatus] = useState("");
@@ -98,6 +107,16 @@ export default function MilestonesPage() {
       throw new Error(`Switch wallet network to chain ID ${expectedChainId}.`);
     }
     return provider;
+  };
+
+  const withMilestoneContract = async () => {
+    if (!contractAddresses.milestoneEscrow || contractAddresses.milestoneEscrow === ethers.ZeroAddress) {
+      throw new Error("MilestoneEscrow contract is not configured.");
+    }
+    const provider = await withProvider();
+    const signer = await provider.getSigner();
+    const contract = new ethers.Contract(contractAddresses.milestoneEscrow, MILESTONE_ESCROW_ABI, signer);
+    return { provider, signer, contract };
   };
 
   const load = useCallback(async () => {
@@ -160,58 +179,158 @@ export default function MilestonesPage() {
     }
   };
 
-  const onSubmitDeliverable = async (milestoneId: number) => {
-    const deliverable = (deliverables[milestoneId] ?? "").trim();
-    if (!deliverable) return setError("Deliverable link/hash is required.");
-    setBusy(milestoneId);
+  const handleSubmitDeliverable = async (
+    projectId: number,
+    milestoneId: number,
+    deliverableLink: string
+  ) => {
+    const deliverable = deliverableLink.trim();
+    if (!deliverable) {
+      setError("Deliverable link is required");
+      return;
+    }
+
+    setSubmittingMilestoneId(milestoneId);
     setStatus("");
     setError("");
+
     try {
-      const provider = await withProvider();
-      const tx = await txSubmitMilestoneDeliverable(provider, milestoneId, deliverable);
-      await tx.wait();
+      const { signer, contract } = await withMilestoneContract();
+      const wallet = await signer.getAddress();
+      console.log("[milestone-submit] projectId:", projectId, "milestoneId:", milestoneId);
+      console.log("[milestone-submit] deliverableLink:", deliverable);
+      console.log("[milestone-submit] wallet:", wallet);
+      console.log("[milestone-submit] contract:", contractAddresses.milestoneEscrow);
+
+      const gasEst = (await contract.submitDeliverable.estimateGas(
+        BigInt(milestoneId),
+        deliverable
+      ).catch((estimateError: unknown) => {
+        const message =
+          estimateError instanceof Error
+            ? estimateError.message
+            : String(estimateError ?? "Gas estimation failed");
+        throw new Error(message || "Gas estimation failed - tx would revert");
+      })) as bigint;
+
+      const tx = (await contract.submitDeliverable(BigInt(milestoneId), deliverable, {
+        gasLimit: (gasEst * 12n) / 10n
+      })) as ethers.TransactionResponse;
+      setMilestoneTxHashes((previous) => ({ ...previous, [milestoneId]: tx.hash }));
+      console.log("[milestone-submit] tx sent:", tx.hash);
+
+      const receipt = await tx.wait();
+      console.log("[milestone-submit] receipt status:", receipt?.status, "block:", receipt?.blockNumber);
+      console.log("[milestone-submit] logs:", receipt?.logs?.length ?? 0);
+
+      if (!receipt || receipt.status === 0) {
+        throw new Error("Transaction reverted on-chain");
+      }
+
       setStatus(`Milestone #${milestoneId} submitted.`);
       await load();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Failed to submit deliverable.");
+      const message =
+        submitError instanceof Error ? submitError.message : String(submitError ?? "Failed to submit deliverable.");
+      setError(message);
+      console.log("[milestone-submit] FAILED:", message.slice(0, 120));
     } finally {
-      setBusy(null);
+      setSubmittingMilestoneId(null);
     }
   };
 
-  const onApprove = async (milestoneId: number) => {
-    setBusy(milestoneId);
+  const handleApproveMilestone = async (projectId: number, milestoneId: number) => {
+    setApprovingMilestoneId(milestoneId);
     setStatus("");
     setError("");
     try {
-      const provider = await withProvider();
-      const tx = await txApproveMilestone(provider, milestoneId);
+      const { contract } = await withMilestoneContract();
+      const gasEst = (await contract.approveMilestone.estimateGas(
+        BigInt(milestoneId)
+      ).catch((estimateError: unknown) => {
+        const message =
+          estimateError instanceof Error ? estimateError.message : String(estimateError ?? "Approval would revert");
+        throw new Error(message || "Approval would revert");
+      })) as bigint;
+
+      const tx = (await contract.approveMilestone(BigInt(milestoneId), {
+        gasLimit: (gasEst * 12n) / 10n
+      })) as ethers.TransactionResponse;
+      setMilestoneTxHashes((previous) => ({ ...previous, [milestoneId]: tx.hash }));
       await tx.wait();
-      setStatus(`Milestone #${milestoneId} approved.`);
+      setStatus(`Milestone #${milestoneId} approved for project #${projectId}.`);
       await load();
     } catch (approveError) {
-      setError(approveError instanceof Error ? approveError.message : "Failed to approve milestone.");
+      const message =
+        approveError instanceof Error ? approveError.message : String(approveError ?? "Approval failed");
+      setError(message);
     } finally {
-      setBusy(null);
+      setApprovingMilestoneId(null);
     }
   };
 
-  const onDispute = async (milestoneId: number) => {
+  const handleDisputeMilestone = async (projectId: number, milestoneId: number) => {
     const reason = (disputeNotes[milestoneId] ?? "").trim();
-    if (reason.length < 20) return setError("Dispute reason must be at least 20 characters.");
-    setBusy(milestoneId);
+    if (reason.length < 20) {
+      setError("Dispute reason must be at least 20 characters.");
+      return;
+    }
+    setDisputingMilestoneId(milestoneId);
     setStatus("");
     setError("");
     try {
-      const provider = await withProvider();
-      const tx = await txRaiseMilestoneDispute(provider, milestoneId, reason);
+      const { contract } = await withMilestoneContract();
+      const gasEst = (await contract.raiseDispute.estimateGas(
+        BigInt(milestoneId),
+        reason
+      ).catch((estimateError: unknown) => {
+        const message =
+          estimateError instanceof Error ? estimateError.message : String(estimateError ?? "Dispute would revert");
+        throw new Error(message || "Dispute would revert");
+      })) as bigint;
+
+      const tx = (await contract.raiseDispute(BigInt(milestoneId), reason, {
+        gasLimit: (gasEst * 12n) / 10n
+      })) as ethers.TransactionResponse;
+      setMilestoneTxHashes((previous) => ({ ...previous, [milestoneId]: tx.hash }));
       await tx.wait();
-      setStatus(`Dispute raised for #${milestoneId}.`);
+      setStatus(`Dispute raised for milestone #${milestoneId} in project #${projectId}.`);
       await load();
     } catch (disputeError) {
-      setError(disputeError instanceof Error ? disputeError.message : "Failed to raise dispute.");
+      const message =
+        disputeError instanceof Error ? disputeError.message : String(disputeError ?? "Dispute failed");
+      setError(message);
     } finally {
-      setBusy(null);
+      setDisputingMilestoneId(null);
+    }
+  };
+
+  const handleAutoRelease = async (projectId: number, milestoneId: number) => {
+    setAutoReleasingMilestoneId(milestoneId);
+    setStatus("");
+    setError("");
+    try {
+      const { contract } = await withMilestoneContract();
+      const gasEst = (await contract.autoRelease.estimateGas(
+        BigInt(milestoneId)
+      ).catch((estimateError: unknown) => {
+        const message =
+          estimateError instanceof Error ? estimateError.message : String(estimateError ?? "Auto-release would revert");
+        throw new Error(message || "Auto-release would revert");
+      })) as bigint;
+      const tx = (await contract.autoRelease(BigInt(milestoneId), {
+        gasLimit: (gasEst * 12n) / 10n
+      })) as ethers.TransactionResponse;
+      setMilestoneTxHashes((previous) => ({ ...previous, [milestoneId]: tx.hash }));
+      await tx.wait();
+      setStatus(`Milestone #${milestoneId} auto-released for project #${projectId}.`);
+      await load();
+    } catch (autoError) {
+      const message =
+        autoError instanceof Error ? autoError.message : String(autoError ?? "Failed to auto-release milestone.");
+      setError(message);
+    } finally {
+      setAutoReleasingMilestoneId(null);
     }
   };
 
@@ -367,17 +486,165 @@ export default function MilestonesPage() {
                       const isClient = account?.toLowerCase() === milestone.client.toLowerCase();
                       const isFreelancer = account?.toLowerCase() === milestone.freelancer.toLowerCase();
                       const isFunded = funded[milestone.milestoneId] ?? false;
-                      const canAutoRelease = milestone.status === 1 && milestone.submittedAt > 0 && Math.floor(Date.now() / 1000) > milestone.submittedAt + disputeWindow;
+                      const reviewDeadline =
+                        milestone.status === 1 && milestone.submittedAt > 0
+                          ? (milestone.submittedAt + disputeWindow) * 1000
+                          : null;
+                      const reviewExpired = reviewDeadline ? Date.now() > reviewDeadline : false;
+                      const canAutoRelease = milestone.status === 1 && Boolean(reviewDeadline) && reviewExpired;
                       return (
                         <div key={milestone.milestoneId} className="rounded-xl border border-white/10 bg-[#0F1012] p-3 text-sm text-[#9CA3AF]">
                           <p className="font-medium text-[#EAEAF0]">#{milestone.milestoneId} {milestone.title}</p>
                           <p className="mt-1">{milestone.description}</p>
                           <p className="mt-1 text-xs">Amount: {formatUsdc(milestone.amount)} USDC · Status: {statusLabel(milestone.status, isFunded)}</p>
                           <p className="text-xs">Deadline: {formatTimestamp(milestone.deadline)}</p>
-                          {isClient && milestone.status === 0 && !isFunded ? <button type="button" onClick={() => void onFund(milestone)} disabled={busy === milestone.milestoneId} className="archon-button-primary mt-2 px-3 py-2 text-xs">{busy === milestone.milestoneId ? "Funding..." : "Fund Milestone"}</button> : null}
-                          {isFreelancer && milestone.status === 0 && isFunded ? <div className="mt-2 flex flex-wrap gap-2"><input className="archon-input grow" placeholder="Deliverable link/hash" value={deliverables[milestone.milestoneId] ?? ""} onChange={(event) => setDeliverables((prev) => ({ ...prev, [milestone.milestoneId]: event.target.value }))} /><button type="button" onClick={() => void onSubmitDeliverable(milestone.milestoneId)} disabled={busy === milestone.milestoneId} className="archon-button-primary px-3 py-2 text-xs">Submit</button></div> : null}
-                          {isClient && milestone.status === 1 ? <div className="mt-2 space-y-2"><div className="flex gap-2"><button type="button" onClick={() => void onApprove(milestone.milestoneId)} disabled={busy === milestone.milestoneId} className="archon-button-primary px-3 py-2 text-xs">Approve</button><button type="button" onClick={() => void onDispute(milestone.milestoneId)} disabled={busy === milestone.milestoneId} className="archon-button-secondary px-3 py-2 text-xs">Dispute</button></div><textarea className="archon-input min-h-20" value={disputeNotes[milestone.milestoneId] ?? ""} onChange={(event) => setDisputeNotes((prev) => ({ ...prev, [milestone.milestoneId]: event.target.value }))} placeholder="Dispute reason (min 20 chars)" /></div> : null}
-                          {isFreelancer && canAutoRelease ? <button type="button" onClick={async () => { try { setBusy(milestone.milestoneId); const provider = await withProvider(); const tx = await txAutoReleaseMilestone(provider, milestone.milestoneId); await tx.wait(); setStatus(`Milestone #${milestone.milestoneId} auto-released.`); await load(); } catch (autoError) { setError(autoError instanceof Error ? autoError.message : "Failed to auto-release milestone."); } finally { setBusy(null); } }} disabled={busy === milestone.milestoneId} className="archon-button-primary mt-2 px-3 py-2 text-xs">Auto-Release</button> : null}
+
+                          {milestoneTxHashes[milestone.milestoneId] ? (
+                            <div className="mt-2 text-[11px] text-[#00FFA3]">
+                              Tx:{" "}
+                              <a
+                                href={`https://explorer.testnet.arc.network/tx/${milestoneTxHashes[milestone.milestoneId]}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: "#00FFA3" }}
+                              >
+                                {milestoneTxHashes[milestone.milestoneId].slice(0, 18)}…
+                              </a>
+                            </div>
+                          ) : null}
+
+                          {isClient && milestone.status === 0 && !isFunded ? (
+                            <button
+                              type="button"
+                              onClick={() => void onFund(milestone)}
+                              disabled={busy === milestone.milestoneId}
+                              className="archon-button-primary mt-2 px-3 py-2 text-xs"
+                            >
+                              {busy === milestone.milestoneId ? "Funding..." : "Fund Milestone"}
+                            </button>
+                          ) : null}
+
+                          {isFreelancer && milestone.status === 0 && isFunded ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <input
+                                className="archon-input grow"
+                                placeholder="Deliverable link/hash"
+                                value={deliverables[milestone.milestoneId] ?? ""}
+                                onChange={(event) =>
+                                  setDeliverables((prev) => ({ ...prev, [milestone.milestoneId]: event.target.value }))
+                                }
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleSubmitDeliverable(
+                                    milestone.projectId,
+                                    milestone.milestoneId,
+                                    deliverables[milestone.milestoneId] ?? ""
+                                  )
+                                }
+                                disabled={
+                                  submittingMilestoneId === milestone.milestoneId ||
+                                  !(deliverables[milestone.milestoneId] ?? "").trim()
+                                }
+                                className="archon-button-primary px-3 py-2 text-xs"
+                                style={{ opacity: submittingMilestoneId === milestone.milestoneId ? 0.6 : 1 }}
+                              >
+                                {submittingMilestoneId === milestone.milestoneId ? "Submitting…" : "Submit Deliverable"}
+                              </button>
+                            </div>
+                          ) : null}
+
+                          {milestone.status === 1 && milestone.deliverableHash ? (
+                            <div
+                              style={{
+                                background: "rgba(0,255,163,0.08)",
+                                border: "1px solid rgba(0,255,163,0.3)",
+                                borderRadius: 8,
+                                padding: "12px 16px",
+                                marginTop: 12
+                              }}
+                            >
+                              <div style={{ fontSize: 12, color: "#7A9BB5", marginBottom: 4 }}>
+                                Submitted deliverable:
+                              </div>
+                              <a
+                                href={milestone.deliverableHash}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: "#00FFA3", fontSize: 14, wordBreak: "break-all" }}
+                              >
+                                {milestone.deliverableHash}
+                              </a>
+                            </div>
+                          ) : null}
+
+                          {milestone.status === 1 && reviewDeadline && !reviewExpired ? (
+                            <div style={{ fontSize: 12, color: "#F5A623", marginTop: 8 }}>
+                              ⏱ Creator review window: {formatCountdown(reviewDeadline - Date.now())} remaining
+                            </div>
+                          ) : null}
+
+                          {isClient && milestone.status === 1 ? (
+                            <div className="mt-2 space-y-2">
+                              <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleApproveMilestone(milestone.projectId, milestone.milestoneId)}
+                                  disabled={approvingMilestoneId === milestone.milestoneId}
+                                  style={{
+                                    background: "#00FFA3",
+                                    color: "#0D1117",
+                                    fontWeight: 700,
+                                    padding: "10px 20px",
+                                    borderRadius: 8
+                                  }}
+                                >
+                                  {approvingMilestoneId === milestone.milestoneId ? "Approving…" : "✅ Approve & Release"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDisputeMilestone(milestone.projectId, milestone.milestoneId)}
+                                  disabled={disputingMilestoneId === milestone.milestoneId}
+                                  style={{
+                                    background: "#FF4A4A",
+                                    color: "#fff",
+                                    fontWeight: 700,
+                                    padding: "10px 20px",
+                                    borderRadius: 8
+                                  }}
+                                >
+                                  {disputingMilestoneId === milestone.milestoneId ? "Disputing…" : "⚠️ Dispute"}
+                                </button>
+                              </div>
+                              <textarea
+                                className="archon-input min-h-20"
+                                value={disputeNotes[milestone.milestoneId] ?? ""}
+                                onChange={(event) =>
+                                  setDisputeNotes((prev) => ({ ...prev, [milestone.milestoneId]: event.target.value }))
+                                }
+                                placeholder="Dispute reason (min 20 chars)"
+                              />
+                            </div>
+                          ) : null}
+
+                          {isFreelancer && canAutoRelease ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleAutoRelease(milestone.projectId, milestone.milestoneId)}
+                              disabled={autoReleasingMilestoneId === milestone.milestoneId}
+                              style={{
+                                background: "#00B4FF",
+                                color: "#fff",
+                                fontWeight: 700,
+                                padding: "10px 20px",
+                                borderRadius: 8,
+                                marginTop: 12
+                              }}
+                            >
+                              {autoReleasingMilestoneId === milestone.milestoneId ? "Releasing…" : "🔓 Auto-Release Funds"}
+                            </button>
+                          ) : null}
                         </div>
                       );
                     })}
